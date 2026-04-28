@@ -1,0 +1,378 @@
+#include "USB_HID.h"
+#include "../USB_Main.h"
+#include "../../../../Module/DriverBinary.h"
+#include "../../../../../Sync/Spinlock.h"
+
+#define USB_HID_QUEUE_SIZE 64
+extern const driver_binary_t *g_api;
+
+typedef struct {
+    uint8_t dev_addr;
+    uint8_t interface;
+    uint8_t ep_in;
+    uint16_t mps;
+    bool valid;
+    void     *dma_buf;
+    uint64_t  dma_phys;
+    bool      pending;
+    uint8_t   hc_type;
+} usb_hid_device_t;
+
+static usb_hid_device_t g_usd_kbd   = {0};
+static usb_hid_device_t g_usd_mouse = {0};
+
+static driver_keyboard_event_t g_kbd_queue[USB_HID_QUEUE_SIZE];
+static uint32_t g_kbd_head = 0, g_kbd_tail = 0, g_kbd_count = 0;
+static spinlock_t g_kbd_lock = {0};
+
+static driver_mouse_event_t g_mouse_queue[USB_HID_QUEUE_SIZE];
+static uint32_t g_mouse_head = 0, g_mouse_tail = 0, g_mouse_count = 0;
+static spinlock_t g_mouse_lock = {0};
+
+static uint8_t  g_last_kbd_report[8] = {0};
+static uint8_t  g_last_mouse_buttons = 0;
+
+static uint32_t g_mouse_poll_count = 0;
+
+void usb_hid_init(void)
+{
+    if ((g_usd_kbd.valid && g_usd_kbd.dma_buf) ||
+        (g_usd_mouse.valid && g_usd_mouse.dma_buf)) {
+        return;
+    }
+    g_usd_kbd.valid     = false;
+    g_usd_kbd.dma_buf   = NULL;
+    g_usd_kbd.pending   = false;
+    g_usd_mouse.valid   = false;
+    g_usd_mouse.dma_buf = NULL;
+    g_usd_mouse.pending = false;
+    
+    spinlock_init(&g_kbd_lock);
+    spinlock_init(&g_mouse_lock);
+}
+
+static bool hid_alloc_dma(usb_hid_device_t *dev)
+{
+    if (dev->dma_buf) return true;
+    if (!g_api || !g_api->dma_alloc) return false;
+    dev->dma_buf = g_api->dma_alloc(64, &dev->dma_phys);
+    return dev->dma_buf != NULL;
+}
+
+static bool hid_sync_interrupt_in(usb_hid_device_t *dev, uint16_t len)
+{
+    if (!dev->valid || !dev->dma_buf) return false;
+    if (g_api && g_api->memset)
+        g_api->memset(dev->dma_buf, 0, 64);
+    return usb_submit_interrupt_in_sync(dev->dev_addr, dev->ep_in,
+                                         dev->mps, dev->dma_buf, len);
+}
+
+void usb_hid_add_keyboard(uint8_t dev_addr, uint8_t interface,
+                           uint8_t ep_in, uint16_t mps)
+{
+    g_usd_kbd.dev_addr  = dev_addr;
+    g_usd_kbd.interface = interface;
+    g_usd_kbd.ep_in     = ep_in;
+    g_usd_kbd.mps       = mps;
+    g_usd_kbd.hc_type   = usb_get_hc_type();
+
+    usb_device_request_t req;
+    req.bmRequestType = 0x21; req.bRequest = 0x0B;
+    req.wValue = 0; req.wIndex = interface; req.wLength = 0;
+    usb_control_transfer(dev_addr, 0, 8, &req, NULL);
+
+    req.bRequest = 0x0A;
+    usb_control_transfer(dev_addr, 0, 8, &req, NULL);
+
+    g_usd_kbd.valid = true;
+
+    if (!hid_alloc_dma(&g_usd_kbd)) {
+        return;
+    }
+
+    if (g_usd_kbd.hc_type == 4) {
+        bool submit_ok = usb_submit_interrupt_in_async(dev_addr, ep_in,
+                                                        g_usd_kbd.mps,
+                                                        g_usd_kbd.dma_buf, g_usd_kbd.dma_phys, 8);
+        if (submit_ok) {
+            g_usd_kbd.pending = true;
+        }
+    }
+}
+
+void usb_hid_add_mouse(uint8_t dev_addr, uint8_t interface,
+                        uint8_t ep_in, uint16_t mps)
+{
+    g_usd_mouse.dev_addr  = dev_addr;
+    g_usd_mouse.interface = interface;
+    g_usd_mouse.ep_in     = ep_in;
+    g_usd_mouse.mps       = mps;
+    g_usd_mouse.hc_type   = usb_get_hc_type();
+
+    usb_device_request_t req;
+    req.bmRequestType = 0x21; req.bRequest = 0x0B;
+    req.wValue = 0; req.wIndex = interface; req.wLength = 0;
+    usb_control_transfer(dev_addr, 0, 8, &req, NULL);
+
+    req.bRequest = 0x0A;
+    usb_control_transfer(dev_addr, 0, 8, &req, NULL);
+
+    g_usd_mouse.valid = true;
+
+    if (!hid_alloc_dma(&g_usd_mouse)) {
+        return;
+    }
+
+    if (g_usd_mouse.hc_type == 4) {
+        bool submit_ok = usb_submit_interrupt_in_async(dev_addr, ep_in,
+                                                        g_usd_mouse.mps,
+                                                        g_usd_mouse.dma_buf, g_usd_mouse.dma_phys, 4);
+        if (submit_ok) {
+            g_usd_mouse.pending = true;
+        }
+    }
+}
+
+static void push_kbd_event(uint16_t keycode, uint8_t pressed, uint8_t modifiers)
+{
+    uint64_t flags = irq_save_disable();
+    spinlock_lock(&g_kbd_lock);
+    
+    if (g_kbd_count >= USB_HID_QUEUE_SIZE) {
+        spinlock_unlock(&g_kbd_lock);
+        irq_restore(flags);
+        return;
+    }
+    driver_keyboard_event_t evt = {0};
+    evt.keycode   = keycode;
+    evt.pressed   = pressed;
+    evt.modifiers = modifiers;
+    if (pressed) {
+        bool shift = (modifiers & 0x22) != 0;
+        if (keycode >= 0x04 && keycode <= 0x1D)
+            evt.ascii = (uint8_t)(shift ? ('A' + (keycode - 0x04))
+                                        : ('a' + (keycode - 0x04)));
+        else if (keycode >= 0x1E && keycode <= 0x26)
+            evt.ascii = (uint8_t)('1' + (keycode - 0x1E));
+        else if (keycode == 0x27) evt.ascii = '0';
+        else if (keycode == 0x28) evt.ascii = '\n';
+        else if (keycode == 0x2A) evt.ascii = '\b';
+        else if (keycode == 0x2C) evt.ascii = ' ';
+    }
+    g_kbd_queue[g_kbd_head] = evt;
+    g_kbd_head = (g_kbd_head + 1) % USB_HID_QUEUE_SIZE;
+    g_kbd_count++;
+    
+    spinlock_unlock(&g_kbd_lock);
+    irq_restore(flags);
+}
+
+static void process_kbd_report(uint8_t *report)
+{
+    bool changed = false;
+    for (int i = 0; i < 8; i++) {
+        if (report[i] != g_last_kbd_report[i]) { changed = true; break; }
+    }
+    if (!changed) return;
+
+    uint8_t mods = report[0];
+    uint8_t ps2_mods = 0;
+    if (mods & 0x02) ps2_mods |= DRIVER_KBD_MOD_SHIFT;
+    if (mods & 0x20) ps2_mods |= DRIVER_KBD_MOD_SHIFT;
+    if (mods & 0x01) ps2_mods |= DRIVER_KBD_MOD_CTRL;
+    if (mods & 0x10) ps2_mods |= DRIVER_KBD_MOD_CTRL;
+    if (mods & 0x04) ps2_mods |= DRIVER_KBD_MOD_ALT;
+    if (mods & 0x40) ps2_mods |= DRIVER_KBD_MOD_ALT;
+
+    for (int i = 2; i < 8; i++) {
+        if (report[i] != 0) {
+            bool found = false;
+            for (int j = 2; j < 8; j++)
+                if (g_last_kbd_report[j] == report[i]) { found = true; break; }
+            if (!found) push_kbd_event(report[i], 1, ps2_mods);
+        }
+    }
+
+    for (int i = 2; i < 8; i++) {
+        if (g_last_kbd_report[i] != 0) {
+            bool found = false;
+            for (int j = 2; j < 8; j++)
+                if (report[j] == g_last_kbd_report[i]) { found = true; break; }
+            if (!found) push_kbd_event(g_last_kbd_report[i], 0, ps2_mods);
+        }
+    }
+    for (int i = 0; i < 8; i++) g_last_kbd_report[i] = report[i];
+}
+
+static void poll_keyboard(void)
+{
+    if (!g_usd_kbd.valid || !g_usd_kbd.dma_buf) return;
+
+    if (g_usd_kbd.hc_type == 4) {
+        int event_code = usb_check_interrupt_event(g_usd_kbd.dev_addr, g_usd_kbd.ep_in);
+        
+        if (event_code > 0) {
+            process_kbd_report((uint8_t *)g_usd_kbd.dma_buf);
+            if (usb_submit_interrupt_in_async(g_usd_kbd.dev_addr, g_usd_kbd.ep_in,
+                                              g_usd_kbd.mps,
+                                              g_usd_kbd.dma_buf, g_usd_kbd.dma_phys, 8)) {
+                g_usd_kbd.pending = true;
+            }
+        }
+    } else {
+        if (hid_sync_interrupt_in(&g_usd_kbd, 8)) {
+            process_kbd_report((uint8_t *)g_usd_kbd.dma_buf);
+        }
+    }
+}
+
+static void process_mouse_report(uint8_t *report)
+{
+    int8_t  dx      = (int8_t)report[1];
+    int8_t  dy      = (int8_t)report[2];
+    uint8_t buttons = report[0];
+
+    if (dx == 0 && dy == 0 && buttons == g_last_mouse_buttons) {
+        return;
+    }
+
+    uint64_t flags = irq_save_disable();
+    spinlock_lock(&g_mouse_lock);
+
+    g_last_mouse_buttons = buttons;
+
+    if (g_mouse_count < USB_HID_QUEUE_SIZE) {
+        driver_mouse_event_t evt = {0};
+        evt.x = (uint16_t)(int16_t)dx;
+        evt.y = (uint16_t)(int16_t)dy;
+        evt.buttons = buttons;
+        g_mouse_queue[g_mouse_head] = evt;
+        g_mouse_head = (g_mouse_head + 1) % USB_HID_QUEUE_SIZE;
+        g_mouse_count++;
+    }
+    
+    spinlock_unlock(&g_mouse_lock);
+    irq_restore(flags);
+}
+
+static void poll_mouse(void)
+{
+    if (!g_usd_mouse.valid || !g_usd_mouse.dma_buf) return;
+
+    g_mouse_poll_count++;
+    
+    if (g_usd_mouse.hc_type == 4) {
+        int event_code = usb_check_interrupt_event(g_usd_mouse.dev_addr, g_usd_mouse.ep_in);
+        
+        if (event_code > 0) {
+            process_mouse_report((uint8_t *)g_usd_mouse.dma_buf);
+            if (usb_submit_interrupt_in_async(g_usd_mouse.dev_addr, g_usd_mouse.ep_in,
+                                              g_usd_mouse.mps,
+                                              g_usd_mouse.dma_buf, g_usd_mouse.dma_phys, 4)) {
+                g_usd_mouse.pending = true;
+            }
+        }
+    } else {
+        if (hid_sync_interrupt_in(&g_usd_mouse, 4)) {
+            process_mouse_report((uint8_t *)g_usd_mouse.dma_buf);
+        }
+    }
+}
+
+void usb_hid_poll(void)
+{
+    poll_keyboard();
+    poll_mouse();
+}
+
+int32_t usb_hid_read_keyboard(driver_keyboard_event_t *out_event)
+{
+    usb_hid_poll();
+    
+    uint64_t flags = irq_save_disable();
+    spinlock_lock(&g_kbd_lock);
+    
+    if (g_kbd_count == 0) {
+        spinlock_unlock(&g_kbd_lock);
+        irq_restore(flags);
+        return 0;
+    }
+    *out_event = g_kbd_queue[g_kbd_tail];
+    g_kbd_tail = (g_kbd_tail + 1) % USB_HID_QUEUE_SIZE;
+    g_kbd_count--;
+    
+    spinlock_unlock(&g_kbd_lock);
+    irq_restore(flags);
+    return 1;
+}
+
+int32_t usb_hid_read_mouse(driver_mouse_event_t *out_event)
+{
+    usb_hid_poll();
+    
+    uint64_t flags = irq_save_disable();
+    spinlock_lock(&g_mouse_lock);
+    
+    if (g_mouse_count == 0) {
+        spinlock_unlock(&g_mouse_lock);
+        irq_restore(flags);
+        return 0;
+    }
+    
+    *out_event = g_mouse_queue[g_mouse_tail];
+    g_mouse_tail = (g_mouse_tail + 1) % USB_HID_QUEUE_SIZE;
+    g_mouse_count--;
+    
+    spinlock_unlock(&g_mouse_lock);
+    irq_restore(flags);
+    return 1;
+}
+
+void usb_hid_drain_keyboard(driver_keyboard_event_t *tmp,
+                             void (*forward)(driver_keyboard_event_t *))
+{
+    uint64_t flags = irq_save_disable();
+    spinlock_lock(&g_kbd_lock);
+    
+    while (g_kbd_count > 0) {
+        *tmp = g_kbd_queue[g_kbd_tail];
+        g_kbd_tail = (g_kbd_tail + 1) % USB_HID_QUEUE_SIZE;
+        g_kbd_count--;
+        
+        spinlock_unlock(&g_kbd_lock);
+        irq_restore(flags);
+        
+        if (forward) forward(tmp);
+        
+        flags = irq_save_disable();
+        spinlock_lock(&g_kbd_lock);
+    }
+    
+    spinlock_unlock(&g_kbd_lock);
+    irq_restore(flags);
+}
+
+void usb_hid_drain_mouse(driver_mouse_event_t *tmp,
+                          void (*forward)(driver_mouse_event_t *))
+{
+    uint64_t flags = irq_save_disable();
+    spinlock_lock(&g_mouse_lock);
+    
+    while (g_mouse_count > 0) {
+        *tmp = g_mouse_queue[g_mouse_tail];
+        g_mouse_tail = (g_mouse_tail + 1) % USB_HID_QUEUE_SIZE;
+        g_mouse_count--;
+        
+        spinlock_unlock(&g_mouse_lock);
+        irq_restore(flags);
+        
+        if (forward) forward(tmp);
+        
+        flags = irq_save_disable();
+        spinlock_lock(&g_mouse_lock);
+    }
+    
+    spinlock_unlock(&g_mouse_lock);
+    irq_restore(flags);
+}

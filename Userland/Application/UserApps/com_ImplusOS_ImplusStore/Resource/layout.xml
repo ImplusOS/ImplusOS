@@ -1,0 +1,9 @@
+<Layout>
+  <Panel name="header" x="0" y="0" width="580" height="40"
+         bgColor="0xFF1A1A2E">
+    <Label name="app_title" x="16" y="8" width="200" height="24"
+           color="0xFFFFFFFF" fontSize="18">Implus Store</Label>
+  </Panel>
+  <Label name="subtitle" x="16" y="50" width="400" height="20"
+         color="0xFFCCCCCC" fontSize="14">Featured Apps</Label>
+</Layout>

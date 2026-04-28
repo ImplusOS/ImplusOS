@@ -1,0 +1,17 @@
+.PHONY: musl_lib musl_clean musl_rebuild
+
+MUSL_DIR := musl
+MUSL_MAKE := $(MAKE) -C $(MUSL_DIR) \
+	ARCH=implus \
+	CC=x86_64-elf-gcc \
+	AR=x86_64-elf-ar \
+	RANLIB="x86_64-elf-ar s" \
+	CFLAGS="-fno-stack-protector -fno-pic -fno-builtin -mcmodel=large -mno-red-zone -nostdlib -nostartfiles -nodefaultlibs -D__IMPLUSOS__ -O2"
+
+musl_lib:
+	$(MUSL_MAKE) lib/libc.a
+
+musl_clean:
+	$(MUSL_MAKE) clean
+
+musl_rebuild: musl_clean musl_lib

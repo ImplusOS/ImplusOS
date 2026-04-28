@@ -1,0 +1,241 @@
+Third Party Licenses
+
+This OS includes third-party software listed below.
+
+stb (stb_image.h, stb_truetype.h)
+
+Copyright (c) Sean Barrett
+
+Licensed under the MIT License.
+See:
+https://github.com/nothings/stb/blob/master/LICENSE
+
+License file:
+Thirdparty/LICENSEFILE/stb_image
+Thirdparty/LICENSEFILE/stb_truetype
+
+Noto Sans Japanese
+
+Copyright 2014 Google Inc.
+Copyright 2014 Adobe Systems Incorporated
+
+Licensed under the SIL Open Font License, Version 1.1
+See:
+https://fonts.google.com/noto/specimen/Noto+Sans+JP/license
+
+License file:
+Thirdparty/LICENSEFILE/Noto_Sans_Japanese
+
+OVMF_CODE_4M
+
+Open Virtual Machine Firmware (OVMF)
+Part of the TianoCore EDK II project
+
+Copyright (c) TianoCore contributors
+
+Licensed under the BSD 2-Clause Patent License.
+See:
+https://github.com/tianocore/edk2/blob/master/License.txt
+
+License file:
+Thirdparty/LICENSEFILE/OVMF_CODE_4M
+
+FFmpeg
+
+Copyright (c) FFmpeg contributors
+
+Licensed under the GNU Lesser General Public License version 2.1
+See:
+https://github.com/FFmpeg/FFmpeg/blob/master/LICENSE.md
+
+License file:
+Thirdparty/LICENSEFILE/FFmpeg
+
+musl libc
+
+Copyright (c) 2005-2020 Rich Felker, et al.
+
+Licensed under the MIT License.
+See:
+https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT
+
+License file:
+Thirdparty/LICENSEFILE/musl
+
+Wayland
+
+Copyright (c) 2008-2012 Kristian Høgsberg
+
+Licensed under the MIT Expat License.
+See:
+https://gitlab.freedesktop.org/wayland/wayland/blob/main/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/wayland
+
+GLib
+
+Copyright (c) 1995-2024 The GLib Authors (GNOME Project)
+
+Licensed under the GNU Lesser General Public License version 2.1
+See:
+https://gitlab.gnome.org/GNOME/glib/-/blob/main/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/glib
+
+cairo
+
+Copyright (c) 2003-2024 The cairo Authors
+
+Licensed under the GNU Lesser General Public License version 2.1 / Mozilla Public License 1.1
+See:
+https://gitlab.freedesktop.org/cairo/cairo/-/blob/master/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/cairo
+
+FreeType
+
+Copyright (c) 1996-2024 David Turner, Robert Wilhelm, and Werner Lemberg
+
+Licensed under the FreeType License (BSD-style) or the GNU General Public License version 2
+See:
+https://gitlab.freedesktop.org/freetype/freetype/-/blob/master/LICENSE.TXT
+
+License file:
+Thirdparty/LICENSEFILE/freetype
+
+fontconfig
+
+Copyright (c) 2000-2024 Keith Packard, et al.
+
+Licensed under the MIT License.
+See:
+https://gitlab.freedesktop.org/fontconfig/fontconfig/-/blob/main/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/fontconfig
+
+HarfBuzz
+
+Copyright (c) 2010-2024 Google, Inc.
+Copyright (c) 2015-2024 Ebrahim Byagowi
+Copyright (c) 2019-2024 Facebook, Inc.
+
+Licensed under the MIT License (Old MIT).
+See:
+https://github.com/harfbuzz/harfbuzz/blob/main/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/harfbuzz
+
+Pango
+
+Copyright (c) 1999-2024 The Pango Authors (GNOME Project)
+
+Licensed under the GNU Lesser General Public License version 2.1
+See:
+https://gitlab.gnome.org/GNOME/pango/-/blob/main/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/pango
+
+gdk-pixbuf
+
+Copyright (c) 1999-2024 The gdk-pixbuf Authors (GNOME Project)
+
+Licensed under the GNU Lesser General Public License version 2.1
+See:
+https://gitlab.gnome.org/GNOME/gdk-pixbuf/-/blob/master/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/gdk-pixbuf
+
+ATK
+
+Copyright (c) 2001-2024 The ATK Authors (GNOME Project)
+
+Licensed under the GNU Lesser General Public License version 2.1
+See:
+https://gitlab.gnome.org/GNOME/atk/-/blob/master/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/atk
+
+libepoxy
+
+Copyright (c) 2013-2024 The libepoxy Authors
+
+Licensed under the MIT License.
+See:
+https://github.com/anholt/libepoxy/blob/master/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/libepoxy
+
+D-Bus
+
+Copyright (c) 2002-2024 Red Hat, Inc. and others
+
+Licensed under the Academic Free License version 2.1 or the GNU General Public License version 2
+See:
+https://gitlab.freedesktop.org/dbus/dbus/-/blob/master/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/dbus
+
+GTK3
+
+Copyright (c) 1995-2024 The GTK Authors (GNOME Project)
+
+Licensed under the GNU Lesser General Public License version 2.1
+See:
+https://gitlab.gnome.org/GNOME/gtk/-/blob/gtk-3-24/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/gtk3
+
+FriBidi
+
+Copyright (c) 2004-2024 Behdad Esfahbod and contributors
+
+Licensed under the GNU Lesser General Public License version 2.1
+See:
+https://github.com/fribidi/fribidi/blob/master/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/fribidi
+
+zlib
+
+Copyright (c) 1995-2024 Jean-loup Gailly and Mark Adler
+
+Licensed under the zlib License.
+See:
+https://github.com/madler/zlib/blob/develop/LICENSE
+
+License file:
+Thirdparty/LICENSEFILE/zlib
+
+libpng
+
+Copyright (c) 1995-2024 The PNG Reference Library Authors
+
+Licensed under the libpng License.
+See:
+https://github.com/pnggroup/libpng/blob/libpng16/LICENSE
+
+License file:
+Thirdparty/LICENSEFILE/libpng
+
+NetSurf
+
+Copyright (c) 2003-2024 The NetSurf Developers
+
+Licensed under the GNU General Public License version 2
+See:
+https://git.netsurf-browser.org/netsurf.git/plain/COPYING
+
+License file:
+Thirdparty/LICENSEFILE/netsurf/LICENSE

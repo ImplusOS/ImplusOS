@@ -1,0 +1,10 @@
+Image/iso_root
+Image/esp.iso
+Build/
+*.d
+*.o
+Userland/GTKPort/build/
+Userland/GTKPort/sysroot/
+OVMF_VARS_4M.fd
+disk.qcow2
+README_FORME.md
