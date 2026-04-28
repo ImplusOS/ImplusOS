@@ -10,8 +10,8 @@ BUILD_DIR := Build
 IMAGE_DIR := Image
 IMAGE     := $(IMAGE_DIR)/ImplusOS.iso
 
-OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd
-OVMF_VARS := OVMF_VARS_4M.fd
+OVMF_CODE := ./OVMF_CODE_4M.fd
+OVMF_VARS := ./OVMF_VARS_4M.fd
 DISK_IMG  := disk.qcow2
 
 KERNEL_DIR   := Kernel
@@ -192,11 +192,7 @@ all: $(BOOTX64_EFI) \
      $(KERNEL_ELF) \
      $(USERLAND_INIT_ELF) \
      driver_stage \
-     gtkport_build \
      app_build
-
-gtkport_build:
-	@$(MAKE) -C Userland/GTKPort
 
 app_build: $(USERLAND_INIT_OBJS) gtkport_build
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_system
@@ -208,10 +204,6 @@ app_build: $(USERLAND_INIT_OBJS) gtkport_build
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_editor
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_filemanager
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_clock
-	@$(MAKE) -C Userland/Application/UserApps/org_ffmpeg_git_ffmpeg_git
-	@$(MAKE) -C Userland/Application/UserApps/tinywl
-	@$(MAKE) -C Userland/Application/UserApps/gtk_wm
-	@$(MAKE) -C Userland/Application/UserApps/netsurf
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_vm
 
 driver_build:

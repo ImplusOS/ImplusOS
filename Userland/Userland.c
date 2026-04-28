@@ -59,10 +59,6 @@ void _start(void)
         "Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF",
     };
 
-        static const char *const netsurf[] = {
-        "Userland/UserApps/netsurf/netsurf.ELF",
-    };
-
     static const char *const com_ImplusOS_vm[] = {
         "Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF",
     };
@@ -92,10 +88,6 @@ void _start(void)
         process_yield();
     }
     spawn_with_fallbacks(com_ImplusOS_filemanager, sizeof(com_ImplusOS_filemanager) / sizeof(com_ImplusOS_filemanager[0]));
-    for (uint64_t i = 0; i < 10; i++) {
-        process_yield();
-    }
-    spawn_with_fallbacks(netsurf, sizeof(netsurf) / sizeof(netsurf[0]));
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }

@@ -1,2 +1,0 @@
-This file is packaged with the ImplusOS FFmpeg portability demo.
-The demo copies it through the new POSIX-style open/read/write wrappers.
