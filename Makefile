@@ -1,4 +1,4 @@
-.PHONY: all run_usb run_ide clean image app_build driver_build driver_stage gtkport_build
+.PHONY: all run_usb run_ide clean image app_build driver_build driver_stage
 
 ARCH := x86_64
 CC   = x86_64-elf-gcc
@@ -194,7 +194,7 @@ all: $(BOOTX64_EFI) \
      driver_stage \
      app_build
 
-app_build: $(USERLAND_INIT_OBJS) gtkport_build
+app_build: $(USERLAND_INIT_OBJS)
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_system
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_windowmanager
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_mousemanager
@@ -319,7 +319,7 @@ image_esp: all
 __create_esp_iso:
 	@ESP_MOUNT=$$(mktemp -d); \
 	trap "sudo umount $$ESP_MOUNT 2>/dev/null; rmdir $$ESP_MOUNT 2>/dev/null" EXIT; \
-	dd if=/dev/zero of=$(ESP_IMG) bs=1M count=180 2>/dev/null; \
+	dd if=/dev/zero of=$(ESP_IMG) bs=1M count=40 2>/dev/null; \
 	mkfs.fat -F32 $(ESP_IMG) 2>/dev/null; \
 	sync; \
 	sudo mount -o loop $(ESP_IMG) $$ESP_MOUNT || exit 1; \
