@@ -63,10 +63,8 @@ static void pit_set_frequency(uint32_t hz) {
 }
 
 static void timer_irq_handler(void) {
-    // 1. Local tasks (per-CPU)
     process_on_timer_tick();
 
-    // 2. Global tasks (BSP only)
     if (smp_get_current_cpu_id() == 0) {
         if (!g_using_lapic) {
             g_pit_interrupt_count++;

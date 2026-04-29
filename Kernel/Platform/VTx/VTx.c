@@ -542,10 +542,12 @@ int vtx_vm_run(int32_t vm_id)
 
     if (!vm->launched) {
         if (vmx_vmclear(&vm->vmcs_phys) < 0) {
+            serial_write_string("[VTx] vmclear FAILED\n");
             return -1;
         }
     }
     if (vmx_vmptrld(&vm->vmcs_phys) < 0) {
+        serial_write_string("[VTx] vmptrld FAILED\n");
         return -1;
     }
 
@@ -553,6 +555,28 @@ int vtx_vm_run(int32_t vm_id)
         vtx_setup_vmcs_host_state();
         vtx_setup_vmcs_controls(vm);
         vtx_setup_vmcs_guest_state(vm);
+
+        serial_write_string("[VTx] Initial VMCS guest state:\n");
+        serial_write_string("  RIP=0x"); serial_write_uint64(vm->guest_regs.rip);
+        serial_write_string(" CS=0x"); serial_write_uint16(vm->guest_regs.cs);
+        serial_write_string(" CS_BASE=0x"); serial_write_uint32(vm->guest_regs.cs_base);
+        serial_write_string("\n");
+        serial_write_string("  CR0=0x"); serial_write_uint64(vm->guest_regs.cr0);
+        serial_write_string(" CR3=0x"); serial_write_uint64(vm->guest_regs.cr3);
+        serial_write_string(" CR4=0x"); serial_write_uint64(vm->guest_regs.cr4);
+        serial_write_string("\n");
+        uint64_t vmcs_rip = 0, vmcs_cs_base = 0, vmcs_cr0 = 0;
+        vmx_vmread(VMCS_GUEST_RIP, &vmcs_rip);
+        vmx_vmread(VMCS_GUEST_CS_BASE, &vmcs_cs_base);
+        vmx_vmread(VMCS_GUEST_CR0, &vmcs_cr0);
+        serial_write_string("  VMCS_RIP=0x"); serial_write_uint64(vmcs_rip);
+        serial_write_string(" VMCS_CS_BASE=0x"); serial_write_uint64(vmcs_cs_base);
+        serial_write_string(" VMCS_CR0=0x"); serial_write_uint64(vmcs_cr0);
+        serial_write_string("\n");
+        uint64_t vmcs_eptp = 0;
+        vmx_vmread(VMCS_EPT_POINTER, &vmcs_eptp);
+        serial_write_string("  EPTP=0x"); serial_write_uint64(vmcs_eptp);
+        serial_write_string("\n");
     }
 
     g_current_vm = vm;
@@ -563,6 +587,21 @@ int vtx_vm_run(int32_t vm_id)
         uint64_t vm_err = 0;
         vmx_vmread(0x4400, &vm_err);
 
+        serial_write_string("[VTx] VM entry FAILED! ");
+        serial_write_string(vm->launched ? "VMRESUME" : "VMLAUNCH");
+        serial_write_string(" error=0x");
+        serial_write_uint64(vm_err);
+        serial_write_string("\n");
+        
+        uint64_t exit_reason = 0, exit_qual = 0, intr_info = 0;
+        vmx_vmread(0x4402, &exit_reason);
+        vmx_vmread(0x6400, &exit_qual);
+        vmx_vmread(0x4404, &intr_info);
+        serial_write_string("  exit_reason=0x"); serial_write_uint64(exit_reason);
+        serial_write_string(" exit_qual=0x"); serial_write_uint64(exit_qual);
+        serial_write_string(" intr_info=0x"); serial_write_uint64(intr_info);
+        serial_write_string("\n");
+
         g_current_vm = NULL;
         return -1;
     }
@@ -570,11 +609,17 @@ int vtx_vm_run(int32_t vm_id)
     uint64_t raw_exit_reason = 0;
     vmx_vmread(0x4402, &raw_exit_reason);
     if (raw_exit_reason & 0x80000000ULL) {
+        serial_write_string("[VTx] VM-entry failure bit set, reason=0x");
+        serial_write_uint64(raw_exit_reason);
+        serial_write_string("\n");
         g_current_vm = NULL;
         return -1;
     }
 
     if (!vm->launched) {
+        serial_write_string("[VTx] VMLAUNCH succeeded, first exit reason=0x");
+        serial_write_uint64(raw_exit_reason);
+        serial_write_string("\n");
         vm->launched = 1;
     }
 

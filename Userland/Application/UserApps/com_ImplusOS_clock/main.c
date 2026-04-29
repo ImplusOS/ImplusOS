@@ -86,7 +86,7 @@ static void itoa_4d(char *buf, int val) {
 }
 
 static void unix_to_rtc(uint64_t t, rtc_time_t *rtc) {
-    t += 9 * 3600; // JST
+    t += 9 * 3600;
     
     rtc->second = (uint8_t)(t % 60); t /= 60;
     rtc->minute = (uint8_t)(t % 60); t /= 60;

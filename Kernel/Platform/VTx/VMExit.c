@@ -128,6 +128,18 @@ void vtx_handle_vmexit(vmx_regs_t *guest_regs)
                     guest_regs->rcx = 0;
                     guest_regs->rdx = 0;
                     break;
+                case 0x40000000:
+                    guest_regs->rax = 0x40000001;
+                    guest_regs->rbx = 0x6C706D49;
+                    guest_regs->rcx = 0x4F737575;
+                    guest_regs->rdx = 0x0000004D;
+                    break;
+                case 0x40000001:
+                    guest_regs->rax = 0;
+                    guest_regs->rbx = 0;
+                    guest_regs->rcx = 0;
+                    guest_regs->rdx = 0;
+                    break;
                 case 0x80000000:
                     guest_regs->rax = 0x80000008;
                     guest_regs->rbx = 0;
@@ -245,7 +257,21 @@ void vtx_handle_vmexit(vmx_regs_t *guest_regs)
                     vmx_vmwrite(VMCS_GUEST_IA32_EFER, msr_val);
                     break;
                 }
-                default:
+                
+                case 0xFE:
+                case 0x2FF:
+                case 0x250:
+                case 0x258: case 0x259:
+                case 0x268: case 0x269: case 0x26A: case 0x26B:
+                case 0x26C: case 0x26D: case 0x26E: case 0x26F:
+                
+                case 0x200: case 0x201: case 0x202: case 0x203:
+                case 0x204: case 0x205: case 0x206: case 0x207:
+                case 0x208: case 0x209: case 0x20A: case 0x20B:
+                case 0x20C: case 0x20D: case 0x20E: case 0x20F:
+
+                case 0x277:
+                case 0x1B:
                     break;
             }
 

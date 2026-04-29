@@ -114,8 +114,6 @@ void kernel_main(BOOT_INFO *boot_info) {
         boot_info = &g_boot_info_copy;
     }
 
-    debugger_init(boot_info);
-
     {
         uintptr_t sp = (uintptr_t)(kernel_stack + sizeof(kernel_stack));
         sp -= 16;

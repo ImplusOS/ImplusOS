@@ -32,7 +32,6 @@ void serial_init(void) {
 
 void serial_write_char(char c) {
     serial_io_write_char(c);
-    debug_putchar(c);
 }
 
 void serial_write_string(const char* str) {
