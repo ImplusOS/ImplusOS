@@ -1,21 +1,19 @@
 @echo off
 
 "C:\Program Files\qemu\qemu-system-x86_64.exe" ^
-	-enable-kvm ^
-	-machine q35,accel=kvm,smm=on ^
-	-smp 4,sockets=1,cores=4,threads=1 ^
+	-machine q35,accel=whpx ^
+	-smp 4 ^
 	-m 4G ^
-	-cpu host,kvm=on,+vmx,hv_vendor_id=null,-hypervisor ^
+	-cpu qemu64 ^
 	-device intel-iommu ^
 	-device qemu-xhci,id=xhci ^
 	-device usb-kbd,bus=xhci.0 ^
-  -device usb-mouse,bus=xhci.0 ^
+  	-device usb-mouse,bus=xhci.0 ^
 	-netdev user,id=net0 ^
 	-device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56 ^
-  -drive if=pflash,format=raw,readonly=on,file=Resource/OVMF_CODE.fd ^
-  -drive if=none,id=usbstick,format=raw,file=Resource/ImplusOS.iso ^
+  	-drive if=pflash,format=raw,readonly=on,file=Resource/OVMF_CODE.fd ^
+  	-drive file=Resource/ImplusOS.iso,media=cdrom ^
 	-device ich9-ahci,id=sata ^
-	-device nvme,drive=nvme0,serial=deadbeef ^
 	-device ich9-intel-hda ^
 	-device hda-duplex ^
 	-rtc base=localtime,clock=host ^
