@@ -13,9 +13,18 @@ APP_OBJS := $(APP_SRC:%.c=$(BUILD_DIR)/%.o)
 
 include ../../../AppCommon.mk
 
-OBJS := $(APP_OBJS) $(COMMON_OBJS)
+OBJS := $(APP_OBJS) \
+        $(COMMON_LIBS_DIR)/Syscalls.o \
+        $(COMMON_LIBS_DIR)/libc/src/string.o \
+        $(COMMON_LIBS_DIR)/libc/src/stdlib.o \
+        $(COMMON_LIBS_DIR)/libc/src/errno.o \
+        $(COMMON_LIBS_DIR)/libc/src/sys/syscalls.o \
+        $(COMMON_LIBS_DIR)/libc/src/stdio.o \
+        $(COMMON_LIBS_DIR)/libc/src/posix.o \
+        $(COMMON_LIBS_DIR)/NetworkStack/DNS/DNS.o
 
-CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
+CFLAGS := -Os -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
+          -ffunction-sections -fdata-sections \
           -mcmodel=large -mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
           -I../../../../libc/include -I../../../../libc/include/sys \
 		  -I../../../../Userland \
@@ -23,7 +32,7 @@ CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
 		  -Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow -MMD -MP
 
 CXXFLAGS := $(CFLAGS) -fno-exceptions -fno-rtti
-LDFLAGS := -T ../../../../Userland/Userland.ld -e _start -nostdlib --build-id=none
+LDFLAGS := -T ../../../../Userland/Userland.ld -e main -nostdlib --build-id=none --gc-sections
 
 RESOURCE_DIR := Resource
 
@@ -38,6 +47,10 @@ copy_resources:
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(ELF): $(OBJS)
 	@mkdir -p $(dir $@)

@@ -1273,6 +1273,14 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         case SYSCALL_KVM_MMAP: {
             extern void *kvm_client_mmap(int32_t, uint64_t, uint64_t);
             void *p = kvm_client_mmap((int32_t)arg1, arg2, arg3);
+            if (p != NULL) {
+                uint64_t cr3 = process_get_current_cr3();
+                uint64_t start = (uint64_t)(uintptr_t)p;
+                uint64_t aligned_start = start & ~4095ULL;
+                uint64_t aligned_size = (arg3 + 4095ULL) & ~4095ULL;
+                if (aligned_size == 0) aligned_size = 4096;
+                paging_set_user_access(cr3, aligned_start, aligned_size, 1);
+            }
             set_syscall_result(saved_rsp, (uint64_t)(uintptr_t)p);
             break;
         }

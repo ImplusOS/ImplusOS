@@ -26,8 +26,8 @@
 #include "Debbuger/Panic/Panic.h"
 #include "Network/Network_Main.h"
 #include "Debbuger/Serial/Serial.h"
-#include "Platform/VTx/VTx.h"
 #include <stdio.h>
+#include "VMX/VMX.h"
 
 static BOOT_INFO g_boot_info_copy;
 
@@ -139,6 +139,7 @@ void kernel_main(BOOT_INFO *boot_info) {
     platform_interrupts_configure(acpi_get_info());
     syscall_init();
     smp_init();
+    vmx_init();
     timer_init(60);
 
     __asm__ volatile ("sti");
@@ -171,7 +172,6 @@ void kernel_main(BOOT_INFO *boot_info) {
     wm_kernel_init();
     process_manager_init();
     ipc_init();
-    vtx_init();
     syscall_file_init();
     network_stack_init();
 

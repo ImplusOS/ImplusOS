@@ -214,6 +214,10 @@ void init_physical_memory(void *memory_map, size_t map_size, size_t desc_size,
     for (uint64_t i = 0; i < g_max_pages; i++) {
         if (page_bitmap_get(i) == 0u) free_pages++;
     }
+    
+    if (g_max_pages > 0) {
+        page_bitmap_set(0, 1u);
+    }
 
     heap_page_count = HEAP_PAGE_COUNT_MIN;
     if (free_pages / 4 > (uint64_t)HEAP_PAGE_COUNT_MIN) {

@@ -1,154 +1,172 @@
 #include "KVM_Client.h"
-#include "Platform/VTx/VTx.h"
-#include "Platform/VTx/EPT.h"
-#include "Memory/Memory_Main.h"
+#include "VMX/VMX.h"
 #include "ProcessManager/ProcessManager.h"
 #include "Sync/Spinlock.h"
-#include "Debbuger/Serial/Serial.h"
-#include <stddef.h>
+#include "Memory/Memory_Main.h"
 #include <string.h>
 
-#define KVM_MAX_CLIENTS 4
+#define KVM_MAX_VMS   4
+#define KVM_MAX_VCPUS 4
 
 typedef struct {
-    uint8_t  used;
-    int32_t  vm_id;
-} kvm_client_t;
+    uint8_t used;
+    int32_t fd;
+    vmx_vcpu_t vcpus[KVM_MAX_VCPUS];
+} kvm_vm_t;
 
-static kvm_client_t g_clients[KVM_MAX_CLIENTS];
-static spinlock_t   g_kvm_lock;
-static int          g_kvm_init_done = 0;
+static kvm_vm_t g_vms[KVM_MAX_VMS];
+static spinlock_t g_kvm_lock;
+static int g_kvm_init_done = 0;
+static int32_t g_next_fd = 0x7000;
 
-void kvm_client_init(void)
-{
+void kvm_client_init(void) {
     spinlock_init(&g_kvm_lock);
-    memset(g_clients, 0, sizeof(g_clients));
-    for (int i = 0; i < KVM_MAX_CLIENTS; i++) {
-        g_clients[i].vm_id = -1;
-    }
+    memset(g_vms, 0, sizeof(g_vms));
     g_kvm_init_done = 1;
 }
 
-int64_t kvm_client_open(void)
-{
+int64_t kvm_client_open(void) {
     if (!g_kvm_init_done) kvm_client_init();
-    if (!vtx_is_available()) return -95;
-
+    
     spinlock_lock(&g_kvm_lock);
-    for (int i = 0; i < KVM_MAX_CLIENTS; i++) {
-        if (!g_clients[i].used) {
-            g_clients[i].used = 1;
-            g_clients[i].vm_id = -1;
+    for (int i = 0; i < KVM_MAX_VMS; i++) {
+        if (!g_vms[i].used) {
+            g_vms[i].used = 1;
+            g_vms[i].fd = g_next_fd++;
+            memset(g_vms[i].vcpus, 0, sizeof(g_vms[i].vcpus));
             spinlock_unlock(&g_kvm_lock);
-            return (int64_t)(KVM_DEV_FD_BASE + i);
+            return g_vms[i].fd;
         }
     }
     spinlock_unlock(&g_kvm_lock);
-    return -24;
+    return -12; // ENOMEM
 }
 
-static kvm_client_t *fd_to_client(int32_t fd)
-{
-    int idx = fd - KVM_DEV_FD_BASE;
-    if (idx < 0 || idx >= KVM_MAX_CLIENTS) return NULL;
-    if (!g_clients[idx].used) return NULL;
-    return &g_clients[idx];
+static kvm_vm_t *get_vm_by_fd(int32_t fd) {
+    for (int i = 0; i < KVM_MAX_VMS; i++) {
+        if (g_vms[i].used && g_vms[i].fd == fd) {
+            return &g_vms[i];
+        }
+    }
+    return NULL;
 }
 
-int64_t kvm_client_ioctl(int32_t fd, uint64_t request, uint64_t arg)
-{
-    kvm_client_t *c = fd_to_client(fd);
-    if (!c) return -22;
+int64_t kvm_client_ioctl(int32_t fd, uint64_t request, uint64_t arg) {
+    spinlock_lock(&g_kvm_lock);
+    kvm_vm_t *vm = get_vm_by_fd(fd);
+    if (!vm) {
+        spinlock_unlock(&g_kvm_lock);
+        return -9; // EBADF
+    }
+
+    int64_t ret = -22; // EINVAL
 
     switch (request) {
-        case KVM_IOCTL_GET_VERSION: {
-            return 1;
+        case KVM_CREATE_VM: {
+            ret = 0;
+            break;
         }
-
-        case KVM_IOCTL_CREATE_VM: {
-            if (c->vm_id >= 0) return -16;
-            int32_t vm_id = vtx_vm_create();
-            if (vm_id < 0) return -12;
-            c->vm_id = vm_id;
-            return (int64_t)vm_id;
+        case KVM_CREATE_VCPU: {
+            uint32_t vcpu_id = (uint32_t)arg;
+            if (vcpu_id < KVM_MAX_VCPUS) {
+                if (!vm->vcpus[vcpu_id].active) {
+                    if (vmx_vcpu_create(&vm->vcpus[vcpu_id]) == 0) {
+                        ret = 0;
+                    }
+                }
+            }
+            break;
         }
-
-        case KVM_IOCTL_DESTROY_VM: {
-            if (c->vm_id < 0) return -22;
-            vtx_vm_destroy(c->vm_id);
-            c->vm_id = -1;
-            return 0;
+        case KVM_SET_USER_MEMORY_REGION: {
+            kvm_userspace_memory_region_t *region = (kvm_userspace_memory_region_t *)(uintptr_t)arg;
+            if (region) {
+                if (vm->vcpus[0].active) {
+                    if (vmx_vcpu_add_mem_slot(&vm->vcpus[0], region) == 0) {
+                        ret = 0;
+                    }
+                }
+            }
+            break;
         }
-
-        case KVM_IOCTL_SET_REGS: {
-            if (c->vm_id < 0) return -22;
-            vmx_regs_t *regs = (vmx_regs_t *)(uintptr_t)arg;
-            if (!regs) return -14;
-            return vtx_vm_set_regs(c->vm_id, regs);
+        case KVM_SET_REGS: {
+            struct { uint32_t vcpu_id; vmx_regs_t regs; } *args = (void *)(uintptr_t)arg;
+            if (args && args->vcpu_id < KVM_MAX_VCPUS && vm->vcpus[args->vcpu_id].active) {
+                if (vmx_vcpu_set_regs(&vm->vcpus[args->vcpu_id], &args->regs) == 0) {
+                    ret = 0;
+                }
+            }
+            break;
         }
-
-        case KVM_IOCTL_GET_REGS: {
-            if (c->vm_id < 0) return -22;
-            vmx_regs_t *regs = (vmx_regs_t *)(uintptr_t)arg;
-            if (!regs) return -14;
-            return vtx_vm_get_regs(c->vm_id, regs);
+        case KVM_GET_REGS: {
+            struct { uint32_t vcpu_id; vmx_regs_t regs; } *args = (void *)(uintptr_t)arg;
+            if (args && args->vcpu_id < KVM_MAX_VCPUS && vm->vcpus[args->vcpu_id].active) {
+                if (vmx_vcpu_get_regs(&vm->vcpus[args->vcpu_id], &args->regs) == 0) {
+                    ret = 0;
+                }
+            }
+            break;
         }
-
-        case KVM_IOCTL_MAP_MEMORY: {
-            if (c->vm_id < 0) return -22;
-            vmx_memory_region_t *region = (vmx_memory_region_t *)(uintptr_t)arg;
-            if (!region) return -14;
-            return vtx_vm_map_memory(c->vm_id, region);
+        case KVM_SET_SREGS: {
+            struct { uint32_t vcpu_id; vmx_sregs_t sregs; } *args = (void *)(uintptr_t)arg;
+            if (args && args->vcpu_id < KVM_MAX_VCPUS && vm->vcpus[args->vcpu_id].active) {
+                if (vmx_vcpu_set_sregs(&vm->vcpus[args->vcpu_id], &args->sregs) == 0) {
+                    ret = 0;
+                }
+            }
+            break;
         }
-
-        case KVM_IOCTL_RUN: {
-            if (c->vm_id < 0) return -22;
-            return vtx_vm_run(c->vm_id);
+        case KVM_GET_SREGS: {
+            struct { uint32_t vcpu_id; vmx_sregs_t sregs; } *args = (void *)(uintptr_t)arg;
+            if (args && args->vcpu_id < KVM_MAX_VCPUS && vm->vcpus[args->vcpu_id].active) {
+                if (vmx_vcpu_get_sregs(&vm->vcpus[args->vcpu_id], &args->sregs) == 0) {
+                    ret = 0;
+                }
+            }
+            break;
         }
-
-        case KVM_IOCTL_SET_FRAMEBUFFER: {
-            if (c->vm_id < 0) return -22;
-            vmx_framebuffer_t *fb = (vmx_framebuffer_t *)(uintptr_t)arg;
-            if (!fb) return -14;
-            return vtx_vm_set_framebuffer(c->vm_id, fb);
+        case KVM_RUN: {
+            uint32_t vcpu_id = (uint32_t)arg;
+            if (vcpu_id < KVM_MAX_VCPUS && vm->vcpus[vcpu_id].active) {
+                spinlock_unlock(&g_kvm_lock);
+                ret = vmx_vcpu_run(&vm->vcpus[vcpu_id]);
+                return ret; 
+            }
+            break;
         }
-
-        case KVM_IOCTL_GET_EXIT_INFO: {
-            if (c->vm_id < 0) return -22;
-            vmx_exit_info_t *info = (vmx_exit_info_t *)(uintptr_t)arg;
-            if (!info) return -14;
-            return vtx_vm_get_exit_info(c->vm_id, info);
-        }
-
-        case KVM_IOCTL_SET_IO_RESPONSE: {
-            if (c->vm_id < 0) return -22;
-            uint32_t data = (uint32_t)arg;
-            return vtx_vm_set_io_response(c->vm_id, data);
-        }
-
         default:
-            return -22;
+            break;
     }
+
+    spinlock_unlock(&g_kvm_lock);
+    return ret;
 }
 
-int64_t kvm_client_close(int32_t fd)
-{
-    kvm_client_t *c = fd_to_client(fd);
-    if (!c) return -22;
-
+int64_t kvm_client_close(int32_t fd) {
     spinlock_lock(&g_kvm_lock);
-    if (c->vm_id >= 0) {
-        vtx_vm_destroy(c->vm_id);
-        c->vm_id = -1;
+    kvm_vm_t *vm = get_vm_by_fd(fd);
+    if (vm) {
+        for (int i = 0; i < KVM_MAX_VCPUS; i++) {
+            if (vm->vcpus[i].active) {
+                vmx_vcpu_destroy(&vm->vcpus[i]);
+            }
+        }
+        vm->used = 0;
     }
-    c->used = 0;
     spinlock_unlock(&g_kvm_lock);
     return 0;
 }
 
-void *kvm_client_mmap(int32_t fd, uint64_t offset, uint64_t size)
-{
-    (void)fd;
+void *kvm_client_mmap(int32_t fd, uint64_t offset, uint64_t size) {
     (void)size;
-    return (void *)(uintptr_t)offset;
+    spinlock_lock(&g_kvm_lock);
+    kvm_vm_t *vm = get_vm_by_fd(fd);
+    void *ret = NULL;
+    
+    uint32_t vcpu_id = (uint32_t)offset;
+    if (vm && vcpu_id < KVM_MAX_VCPUS && vm->vcpus[vcpu_id].active) {
+        ret = vm->vcpus[vcpu_id].run;
+    }
+    
+    spinlock_unlock(&g_kvm_lock);
+    return ret;
 }

@@ -124,10 +124,9 @@ KERNEL_C_SRCS := \
 	Kernel/Drivers/DrvMain/Client/DRM/DRM_Client.c \
 	Kernel/Drivers/DrvMain/Client/Evdev/Evdev_Client.c \
 	Kernel/Drivers/DrvMain/Client/UnixSocket/UnixSocket.c \
-	Kernel/Platform/VTx/VTx.c \
-	Kernel/Platform/VTx/EPT.c \
-	Kernel/Platform/VTx/VMExit.c \
-	Kernel/Drivers/DrvMain/Client/KVM/KVM_Client.c
+	Kernel/VMX/VMX_Main.c \
+	Kernel/VMX/VMX_EPT.c \
+	Kernel/Drivers/DrvMain/Client/KVM/KVM_Client.c \
 
 KERNEL_ASM_SRCS := \
 	Kernel/Paging/Paging.asm \
@@ -135,7 +134,7 @@ KERNEL_ASM_SRCS := \
 	Kernel/IDT/IDT.asm \
 	Kernel/Syscall/Syscall_Entry.asm \
 	Kernel/SMP/SMP_Trampoline.asm \
-	Kernel/Platform/VTx/VMEntry.asm
+	Kernel/VMX/VMX_Entry.asm
 
 USERLAND_C_SRCS := \
 	libc/src/assert.c \
@@ -170,14 +169,8 @@ USERLAND_APP_C_SRCS := \
 	libc/src/errno.c \
 	libc/src/posix.c \
 	libc/src/sys/syscalls.c \
-	Userland/Application/SystemApps/com_ImplusOS_testApp/UserApp.c \
-	Userland/Application/SystemApps/com_ImplusOS_testApp/PNG_Decoder/PNG_Decoder.c \
-	Userland/Application/SystemApps/com_ImplusOS_ipc_test/UserApp.c \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
-	Userland/Application/UserApps/com_ImplusOS_exampleApp/exampleApp.c \
-	Userland/Application/UserApps/com_ImplusOS_NetworkTest/networkTest.c \
-	Userland/Application/UserApps/com_ImplusOS_wayland_demo/wayland_demo.c \
 	Userland/NetworkStack/DNS/DNS.c
 
 KERNEL_OBJS       := $(patsubst Kernel/%.c,$(BUILD_DIR)/Kernel/%.o,$(filter Kernel/%.c,$(KERNEL_C_SRCS))) \
@@ -357,10 +350,6 @@ __create_esp_iso:
 			sudo mkdir -p $$(dirname $$dest_file); \
 			sudo cp $$f $$dest_file; \
 		done; \
-	fi; \
-	if [ -f /usr/share/OVMF/OVMF_CODE_4M.fd ]; then \
-		sudo mkdir -p $$ESP_MOUNT/Userland/UserApps/com_ImplusOS_vm; \
-		sudo cp /usr/share/OVMF/OVMF_CODE_4M.fd $$ESP_MOUNT/Userland/UserApps/com_ImplusOS_vm/OVMF.fd; \
 	fi; \
 	\
 	sync; \
