@@ -3,6 +3,7 @@ section .text
 
 global vmx_vmlaunch_asm
 global vmx_vmresume_asm
+extern g_vmx_current_guest_regs
 
 ;; ──────────────────────────────────────────────────────────────
 ;; int vmx_vmlaunch_asm(vmx_regs_t *guest_regs)
@@ -36,7 +37,6 @@ vmx_vmlaunch_asm:
     push r13
     push r14
     push r15
-    push rdi            ; save guest_regs pointer
 
     ;; Write current RSP to VMCS_HOST_RSP (0x6C14)
     ;; VMWRITE is vmwrite <value>, <field>.
@@ -78,7 +78,6 @@ vmx_vmresume_asm:
     push r13
     push r14
     push r15
-    push rdi            ; save guest_regs pointer
 
     ;; Write current RSP to VMCS_HOST_RSP (0x6C14)
     ;; VMWRITE is vmwrite <value>, <field>.
@@ -112,20 +111,12 @@ vmx_vmresume_asm:
 ;; The VMCS Host RIP is set to this label.
 global vmx_vmexit_handler
 vmx_vmexit_handler:
-    ;; We just exited the guest. The host RSP was restored by hardware
-    ;; (it was set to point to the stacked guest_regs pointer).
-    ;; The host callee-saved regs + guest_regs ptr are on the stack.
-
-    ;; Recover guest_regs pointer (was pushed last before guest regs load)
-    ;; Host RSP was set to point just above the pushed rdi
-    ;; Stack: [r15][r14][r13][r12][rbp][rbx][rdi=guest_regs_ptr]
-    ;; Host RSP → top of this frame
-
-    ;; We need to save guest regs first. Push rdi (guest value) temporarily.
+    ;; We just exited the guest. Host RSP was restored by hardware and the
+    ;; GPRs still hold guest values, so grab the save area from the global
+    ;; slot that vmx_vcpu_run() prepared before entry.
     push rdi
 
-    ;; Get guest_regs pointer from stack (it's at RSP + 8, was the top before push)
-    mov rdi, [rsp + 8]
+    mov rdi, [rel g_vmx_current_guest_regs]
 
     ;; Save guest general-purpose regs
     mov [rdi +   0], rax
@@ -147,9 +138,6 @@ vmx_vmexit_handler:
     mov [rdi + 112], r14
     mov [rdi + 120], r15
 
-    ;; Pop the saved guest_regs pointer (still on stack)
-    pop rdi
-
     ;; Restore host callee-saved registers
     pop r15
     pop r14
@@ -165,9 +153,6 @@ vmx_vmexit_handler:
 
 vm_fail:
     ;; VMLAUNCH/VMRESUME failed
-    ;; Pop the saved guest_regs pointer
-    pop rdi
-
     ;; Restore host callee-saved registers
     pop r15
     pop r14

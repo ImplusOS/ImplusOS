@@ -20,8 +20,12 @@ static bool                        g_ready  = false;
 static volatile uint32_t g_cmd_cc = 0;
 static volatile uint8_t  g_cmd_slot = 0;
 static volatile bool     g_cmd_ready = false;
+static volatile uint32_t g_last_cmd_cc = 0;
+static volatile uint8_t  g_last_cmd_slot = 0;
+static uint32_t g_last_reset_port = 0;
 
 static uint8_t g_slot_map[256];
+static uint8_t g_addr_from_slot[XHCI_MAX_SLOTS + 1];
 
 static volatile uint64_t *g_dcbaa      = NULL;
 static uint64_t           g_dcbaa_phys = 0;
@@ -66,7 +70,7 @@ static void    *g_dev_ctx[XHCI_MAX_SLOTS];
 static uint64_t g_dev_ctx_phys[XHCI_MAX_SLOTS];
 static void    *g_inp_ctx[XHCI_MAX_SLOTS];
 static uint64_t g_inp_ctx_phys[XHCI_MAX_SLOTS];
-static uint8_t g_completion_flags[256];
+static uint8_t g_completion_flags[256][XHCI_MAX_EP_PER_SLOT];
 
 #define XHCI_DMA_BOUNCE_SIZE  65536u
 static void    *g_dma_bounce     = NULL;
@@ -79,6 +83,131 @@ static bool xhci_ensure_bounce_buf(void)
     if (!g_api || !g_api->dma_alloc) return false;
     g_dma_bounce = g_api->dma_alloc(XHCI_DMA_BOUNCE_SIZE, &g_dma_bounce_phys);
     return g_dma_bounce != NULL;
+}
+
+static uint64_t g_tsc_per_ms = 5000000ULL;
+void xhci_delay_ms(uint32_t ms);
+static inline bool xhci_cc_success(uint32_t cc)
+{
+    return cc == 1u || cc == 13u;
+}
+
+static inline uint64_t xhci_read_tsc(void);
+
+static inline void xhci_relax_poll(uint32_t *spins)
+{
+    if ((*spins & 0x3FFu) == 0) {
+        xhci_delay_ms(1);
+    } else {
+        __asm__ volatile("pause" ::: "memory");
+    }
+    (*spins)++;
+}
+
+static bool xhci_wait_for_portsc(uint32_t port, uint32_t mask,
+                                 uint32_t expected, uint32_t timeout_ms)
+{
+    uint64_t start = xhci_read_tsc();
+    uint64_t limit = (uint64_t)timeout_ms * g_tsc_per_ms;
+    uint32_t spins = 0;
+
+    while ((xhci_read_tsc() - start) < limit) {
+        if ((g_op->ports[port].portsc & mask) == expected) {
+            return true;
+        }
+        xhci_relax_poll(&spins);
+    }
+    return ((g_op->ports[port].portsc & mask) == expected);
+}
+
+static bool xhci_wait_for_usbsts(uint32_t mask, uint32_t expected, uint32_t timeout_ms)
+{
+    uint64_t start = xhci_read_tsc();
+    uint64_t limit = (uint64_t)timeout_ms * g_tsc_per_ms;
+    uint32_t spins = 0;
+
+    while ((xhci_read_tsc() - start) < limit) {
+        if ((g_op->usbsts & mask) == expected) {
+            return true;
+        }
+        xhci_relax_poll(&spins);
+    }
+    return ((g_op->usbsts & mask) == expected);
+}
+
+static bool xhci_wait_for_usbcmd(uint32_t mask, uint32_t expected, uint32_t timeout_ms)
+{
+    uint64_t start = xhci_read_tsc();
+    uint64_t limit = (uint64_t)timeout_ms * g_tsc_per_ms;
+    uint32_t spins = 0;
+
+    while ((xhci_read_tsc() - start) < limit) {
+        if ((g_op->usbcmd & mask) == expected) {
+            return true;
+        }
+        xhci_relax_poll(&spins);
+    }
+    return ((g_op->usbcmd & mask) == expected);
+}
+
+static void xhci_store_completion(uint8_t slot_id, uint8_t ep_idx, uint32_t cc)
+{
+    if (slot_id == 0 || slot_id > XHCI_MAX_SLOTS) return;
+    if (ep_idx >= XHCI_MAX_EP_PER_SLOT) return;
+
+    uint8_t addr = g_addr_from_slot[slot_id];
+    if (addr == 0) {
+        for (uint32_t a = 1; a < 256; a++) {
+            if (g_slot_map[a] == slot_id) {
+                addr = (uint8_t)a;
+                g_addr_from_slot[slot_id] = addr;
+                break;
+            }
+        }
+    }
+    if (addr == 0) return;
+    g_completion_flags[addr][ep_idx] = xhci_cc_success(cc) ? 1u : 2u;
+}
+
+static inline bool xhci_interrupt_pending(void)
+{
+    if (!g_intr) return false;
+    return (g_intr->iman & XHCI_IMAN_IP) != 0;
+}
+
+static void xhci_wait_for_work(uint64_t rflags, uint32_t *idle_spins)
+{
+    if ((rflags & (1ull << 9)) == 0) {
+        __asm__ volatile("pause" ::: "memory");
+        return;
+    }
+
+    if (xhci_interrupt_pending()) {
+        __asm__ volatile("pause" ::: "memory");
+        return;
+    }
+
+    if ((*idle_spins & 0x7u) != 0) {
+        __asm__ volatile("pause" ::: "memory");
+        (*idle_spins)++;
+        return;
+    }
+
+    __asm__ volatile("sti; hlt; cli" ::: "memory");
+    (*idle_spins)++;
+}
+
+static uint8_t xhci_take_completion(uint8_t slot_id, uint8_t ep_idx)
+{
+    if (slot_id == 0 || slot_id > XHCI_MAX_SLOTS) return 0;
+    if (ep_idx >= XHCI_MAX_EP_PER_SLOT) return 0;
+
+    uint8_t addr = g_addr_from_slot[slot_id];
+    if (addr == 0) return 0;
+
+    uint8_t state = g_completion_flags[addr][ep_idx];
+    g_completion_flags[addr][ep_idx] = 0;
+    return state;
 }
 
 static inline uint32_t max_ports(void) { return (g_cap->hcsparams1 >> 24) & 0xFFu; }
@@ -114,8 +243,6 @@ void xhci_delay_ms(uint32_t ms) {
 }
 
 bool xhci_is_ready(void) { return g_ready; }
-
-static uint64_t g_tsc_per_ms = 5000000ULL;
 
 static inline uint64_t xhci_read_tsc(void) {
     uint32_t lo, hi;
@@ -298,6 +425,7 @@ static bool xhci_wait_event(uint32_t expected_type,
 
     bool result = false;
     uint64_t rflags;
+    uint32_t idle_spins = 0;
     
     __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
 
@@ -309,18 +437,13 @@ static bool xhci_wait_event(uint32_t expected_type,
         spinlock_lock(&g_xhci_lock);
 
         if (expected_type == 32u && expected_slot != 0) {
-            for (uint32_t a = 1; a < 256; a++) {
-                if (g_slot_map[a] == expected_slot) {
-                    if (g_completion_flags[a] != 0) {
-                        if (status_out) *status_out = (g_completion_flags[a] == 1) ? 1u : 0u;
-                        result = (g_completion_flags[a] == 1);
-                        g_completion_flags[a] = 0;
-                        spinlock_unlock(&g_xhci_lock);
-                        if (rflags & (1ull << 9)) __asm__ volatile("sti" ::: "memory");
-                        return result;
-                    }
-                    break;
-                }
+            uint8_t state = xhci_take_completion(expected_slot, expected_ep);
+            if (state != 0) {
+                if (status_out) *status_out = (state == 1u) ? 1u : 0u;
+                result = (state == 1u);
+                spinlock_unlock(&g_xhci_lock);
+                if (rflags & (1ull << 9)) __asm__ volatile("sti" ::: "memory");
+                return result;
             }
         } else if (expected_type == 33u) {
             if (g_cmd_ready && (expected_slot == 0 || g_cmd_slot == expected_slot)) {
@@ -336,12 +459,14 @@ static bool xhci_wait_event(uint32_t expected_type,
         volatile xhci_trb_t *trb = &g_evt_ring[g_evt_deq];
         if ((trb->control & 1u) != g_evt_cycle) {
             spinlock_unlock(&g_xhci_lock);
+            xhci_wait_for_work(rflags, &idle_spins);
             continue;
         }
 
         uint32_t trb_type = (trb->control >> 10) & 0x3Fu;
         uint32_t cc       = (trb->status  >> 24) & 0xFFu;
         uint8_t ev_slot   = (uint8_t)((trb->control >> 24) & 0xFFu);
+        uint8_t ev_ep     = (uint8_t)((trb->control >> 16) & 0xFFu);
         
         int match = (expected_type == 0) || (trb_type == expected_type);
 
@@ -349,7 +474,6 @@ static bool xhci_wait_event(uint32_t expected_type,
             if (ev_slot != expected_slot) match = 0;
         }
         if (match && expected_ep != 0 && trb_type == 32u) {
-            uint8_t ev_ep = (uint8_t)((trb->control >> 16) & 0xFFu);
             if (ev_ep != expected_ep) match = 0;
         }
         
@@ -366,24 +490,26 @@ static bool xhci_wait_event(uint32_t expected_type,
              
         if (!match) {
             if (trb_type == 32u) {
-                for (uint32_t a = 1; a < 256; a++) {
-                    if (g_slot_map[a] == ev_slot) {
-                        g_completion_flags[a] = (cc == 1u || cc == 13u) ? 1 : 2;
-                        break;
-                    }
-                }
+                xhci_store_completion(ev_slot, ev_ep, cc);
             } else if (trb_type == 33u) {
                 g_cmd_cc = cc;
                 g_cmd_slot = ev_slot;
                 g_cmd_ready = true;
+                g_last_cmd_cc = cc;
+                g_last_cmd_slot = ev_slot;
             }
         }
 
         spinlock_unlock(&g_xhci_lock);
+        idle_spins = 0;
 
         if (match) {
+            if (trb_type == 33u) {
+                g_last_cmd_cc = cc;
+                g_last_cmd_slot = ev_slot;
+            }
             if (status_out) *status_out = cc;
-            result = (cc == 1u || cc == 13u);
+            result = xhci_cc_success(cc);
             break;
         }
     }
@@ -459,8 +585,6 @@ bool xhci_port_valid(uint32_t port) {
     return v != 0 && v != 0xFFFFFFFFu;
 }
 
-static uint32_t g_last_reset_port = 0;
-
 bool xhci_reset_port(uint32_t port)
 {
     g_last_reset_port = port;
@@ -471,35 +595,26 @@ bool xhci_reset_port(uint32_t port)
 
     if (!(p & XHCI_PORTSC_PP)) {
         g_op->ports[port].portsc = (p & 0x0E000200u) | XHCI_PORTSC_PP;
-        xhci_delay_ms(20);
-        p = g_op->ports[port].portsc;
-    }
-
-    if (!(p & XHCI_PORTSC_CCS)) {
-        for (int i = 0; i < 500; i++) {
+        if (!xhci_wait_for_portsc(port, XHCI_PORTSC_PP, XHCI_PORTSC_PP, 20u)) {
             p = g_op->ports[port].portsc;
-            if (p & XHCI_PORTSC_CCS) break;
-            xhci_delay_ms(1);
+        } else {
+            p = g_op->ports[port].portsc;
         }
-        if (!(p & XHCI_PORTSC_CCS)) return false;
     }
 
-    if (!(p & XHCI_PORTSC_PP)) {
-        g_op->ports[port].portsc = p | XHCI_PORTSC_PP;
-        xhci_delay_ms(20);
-        p = g_op->ports[port].portsc;
+    if (!(p & XHCI_PORTSC_CCS) &&
+        !xhci_wait_for_portsc(port, XHCI_PORTSC_CCS, XHCI_PORTSC_CCS, 500u)) {
+        return false;
     }
+    p = g_op->ports[port].portsc;
 
     uint8_t speed = (uint8_t)((p >> XHCI_PORTSC_SPEED_SHIFT) & XHCI_PORTSC_SPEED_MASK);
     uint32_t rw1c_mask = XHCI_PORTSC_CSC | XHCI_PORTSC_PEC |
                           XHCI_PORTSC_PRC | XHCI_PORTSC_PLC | XHCI_PORTSC_WRC;
 
     g_op->ports[port].portsc = (p & 0x0E000200u) | XHCI_PORTSC_PR;
-    xhci_delay_ms(50);
-
-    for (int i = 0; i < 2000; i++) {
-        if (!(g_op->ports[port].portsc & XHCI_PORTSC_PR)) break;
-        xhci_delay_ms(1);
+    if (!xhci_wait_for_portsc(port, XHCI_PORTSC_PR, 0u, 2000u)) {
+        return false;
     }
 
     {
@@ -508,24 +623,20 @@ bool xhci_reset_port(uint32_t port)
         g_op->ports[port].portsc =
             (sc & 0x0E000200u) | sc_rw1c | XHCI_PORTSC_PRC;
     }
-    xhci_delay_ms(20);
+    xhci_wait_for_portsc(port, XHCI_PORTSC_PRC, 0u, 20u);
 
     uint32_t final_p = g_op->ports[port].portsc;
     speed = (uint8_t)((final_p >> XHCI_PORTSC_SPEED_SHIFT) &
                                XHCI_PORTSC_SPEED_MASK);
 
-     if (speed >= XHCI_SPEED_SUPER_SPEED) {
+    if (speed >= XHCI_SPEED_SUPER_SPEED) {
         if ((final_p & XHCI_PORTSC_PLS_MASK) == XHCI_PORTSC_PLS_U0)
             return true;
 
         uint32_t wp = g_op->ports[port].portsc;
         g_op->ports[port].portsc = (wp & 0x0E000200u) | XHCI_PORTSC_WPR;
-        xhci_delay_ms(50);
-
-        for (int i = 0; i < 2000; i++) {
-            uint32_t sc = g_op->ports[port].portsc;
-            if (!(sc & XHCI_PORTSC_PR) && (sc & XHCI_PORTSC_WRC)) break;
-            xhci_delay_ms(1);
+        if (!xhci_wait_for_portsc(port, XHCI_PORTSC_WRC, XHCI_PORTSC_WRC, 2000u)) {
+            return false;
         }
 
         {
@@ -535,55 +646,41 @@ bool xhci_reset_port(uint32_t port)
                 (sc & 0x0E000200u) | sc_rw1c |
                 XHCI_PORTSC_WRC | XHCI_PORTSC_PRC;
         }
-        xhci_delay_ms(20);
+        xhci_wait_for_portsc(port, XHCI_PORTSC_WRC, 0u, 20u);
         final_p = g_op->ports[port].portsc;
         return (final_p & XHCI_PORTSC_PLS_MASK) == XHCI_PORTSC_PLS_U0;
-        if ((p & XHCI_PORTSC_PED) == 0) {
-            for (int i = 0; i < 500; i++) {
-                p = g_op->ports[port].portsc;
-                if (p & XHCI_PORTSC_PED) break;
-                xhci_delay_ms(1);
-            }
-        }
-        if ((p & XHCI_PORTSC_PED) == 0) {
-            g_op->ports[port].portsc = (p & 0x0E000200u) | XHCI_PORTSC_WPR;
-            xhci_delay_ms(50);
-            for (int i = 0; i < 2000; i++) {
-                uint32_t sc = g_op->ports[port].portsc;
-                if (!(sc & XHCI_PORTSC_PR) && (sc & XHCI_PORTSC_WRC)) break;
-                xhci_delay_ms(1);
-            }
-            uint32_t sc = g_op->ports[port].portsc;
-            g_op->ports[port].portsc = (sc & 0x0E000200u) | (sc & rw1c_mask) | XHCI_PORTSC_WRC | XHCI_PORTSC_PRC;
-            xhci_delay_ms(20);
-            p = g_op->ports[port].portsc;
-        }
-        return (p & XHCI_PORTSC_PED) != 0;
     }
- 
-    return (final_p & XHCI_PORTSC_PED) != 0;
-    g_op->ports[port].portsc = (p & 0x0E000200u) | XHCI_PORTSC_PR;
-    xhci_delay_ms(50);
-
-    for (int i = 0; i < 2000; i++) {
-        if (!(g_op->ports[port].portsc & XHCI_PORTSC_PR)) break;
-        xhci_delay_ms(1);
-    }
-
-    uint32_t sc = g_op->ports[port].portsc;
-    g_op->ports[port].portsc = (sc & 0x0E000200u) | (sc & rw1c_mask) | XHCI_PORTSC_PRC;
-    xhci_delay_ms(20);
-
-    final_p = g_op->ports[port].portsc;
     return (final_p & XHCI_PORTSC_PED) != 0;
 }
 
 void xhci_init(void)
 {
+    if (!g_api) {
+        return;
+    }
+
     spinlock_init(&g_xhci_lock);
     spinlock_init(&g_dma_bounce_lock);
     g_ready = false;
     xhci_calibrate_tsc();
+    g_cap = NULL;
+    g_op = NULL;
+    g_db = NULL;
+    g_intr = NULL;
+    g_evt_ring = NULL;
+    g_cmd_ring = NULL;
+    g_erst = NULL;
+    g_dcbaa = NULL;
+    g_cmd_cc = 0;
+    g_cmd_slot = 0;
+    g_cmd_ready = false;
+    g_last_cmd_cc = 0;
+    g_last_cmd_slot = 0;
+    g_evt_deq = 0;
+    g_evt_cycle = 1;
+    g_cmd_enq = 0;
+    g_cmd_cycle = 1;
+    g_last_reset_port = 0;
 
     uint8_t xhci_bus = 0, xhci_dev = 0, xhci_func = 0;
     bool    found = false;
@@ -642,18 +739,14 @@ void xhci_init(void)
 
     xhci_take_ownership();
 
-    uint32_t spin = 2000;
-    while ((g_op->usbsts & (1u << 11)) && spin--) xhci_delay_ms(1);
+    if (!xhci_wait_for_usbsts(XHCI_STS_CNR, 0u, 2000u)) return;
 
     g_op->usbcmd &= ~(1u << 0);
-    spin = 2000;
-    while (!(g_op->usbsts & (1u << 0)) && spin--) xhci_delay_ms(1);
+    if (!xhci_wait_for_usbsts(XHCI_STS_HCH, XHCI_STS_HCH, 2000u)) return;
 
     g_op->usbcmd |= (1u << 1);
-    spin = 2000;
-    while ((g_op->usbcmd & (1u << 1)) && spin--) xhci_delay_ms(1);
-    spin = 2000;
-    while ((g_op->usbsts & (1u << 11)) && spin--) xhci_delay_ms(1);
+    if (!xhci_wait_for_usbcmd(XHCI_CMD_HCRST, 0u, 2000u)) return;
+    if (!xhci_wait_for_usbsts(XHCI_STS_CNR, 0u, 2000u)) return;
 
     uint32_t db_offset  = g_cap->dboff  & ~0x3u;
     uint32_t rts_offset = g_cap->rtsoff & ~0x1Fu;
@@ -663,8 +756,6 @@ void xhci_init(void)
                  ((uint8_t *)g_cap + rts_offset + 0x20);
 
     g_op->usbsts = 0x0000011Cu;
-
-    xhci_delay_ms(100);
 
     uint32_t slots = max_slots();
     if (slots > XHCI_MAX_SLOTS) slots = XHCI_MAX_SLOTS;
@@ -748,21 +839,10 @@ void xhci_init(void)
     (void)g_op->usbsts;
 
     g_op->usbcmd |= (1u << 0);
-    xhci_delay_ms(20);
-
-    spin = 5000000u;
-    while (spin) {
-        if (!(g_op->usbsts & (1u << 0))) break;
-        __asm__ volatile("pause");
-        spin--;
-        if ((spin & 0xFFFFu) == 0) xhci_delay_ms(1);
-    }
-
-    if (!spin) {
-        return;
-    }
+    if (!xhci_wait_for_usbsts(XHCI_STS_HCH, 0u, 1000u)) return;
 
     g_api->memset(g_slot_map, 0, sizeof(g_slot_map));
+    g_api->memset(g_addr_from_slot, 0, sizeof(g_addr_from_slot));
     g_api->memset(g_completion_flags, 0, sizeof(g_completion_flags));
     g_ready = true;
 }
@@ -777,8 +857,7 @@ static bool xhci_enable_slot(uint8_t *slot_id_out)
         return false;
     }
 
-    uint32_t prev = (g_evt_deq == 0) ? (EVT_RING_SIZE - 1u) : (g_evt_deq - 1u);
-    uint8_t slot = (uint8_t)((g_evt_ring[prev].control >> 24) & 0xFFu);
+    uint8_t slot = g_last_cmd_slot;
 
     if (slot == 0 || slot > XHCI_MAX_SLOTS) return false;
     *slot_id_out = slot;
@@ -793,8 +872,6 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
     if (!xhci_enable_slot(&slot_id)) {
         return false;
     }
-    xhci_delay_ms(10);
-
     uint8_t si = (uint8_t)(slot_id - 1);
     if (si >= XHCI_MAX_SLOTS) {
         return false;
@@ -864,7 +941,6 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
             g_slot_map[0] = 0;
             return false;
         }
-        xhci_delay_ms(10);
     }
 
     g_api->memset(g_inp_ctx[si], 0, 4096);
@@ -894,7 +970,7 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
         uint32_t cc2 = 0;
         if (xhci_issue_command(&cmd2, slot_id, &cc2)) { ok = true; break; }
 
-        xhci_delay_ms(100);
+        xhci_delay_ms(10);
     }
 
     if (!ok) {
@@ -903,7 +979,11 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
     }
 
     g_slot_map[0] = 0;
+    if (g_slot_map[dev_addr] != 0 && g_slot_map[dev_addr] <= XHCI_MAX_SLOTS) {
+        g_addr_from_slot[g_slot_map[dev_addr]] = 0;
+    }
     g_slot_map[dev_addr] = slot_id;
+    g_addr_from_slot[slot_id] = dev_addr;
     return true;
 }
 
@@ -929,8 +1009,8 @@ bool xhci_evaluate_ep0_mps(uint8_t addr, uint16_t new_mps)
 
     ep0_ctx[0] = 0;
     ep0_ctx[1] = ((uint32_t)new_mps << 16) | (4u << 3) | (3u << 1);
-    ep0_ctx[2] = 0;
-    ep0_ctx[3] = 0;
+    ep0_ctx[2] = (uint32_t)(g_xfer[si][1].phys & 0xFFFFFFFFu) | 1u;
+    ep0_ctx[3] = (uint32_t)(g_xfer[si][1].phys >> 32);
     ep0_ctx[4] = 8;
     __asm__ volatile("sfence" ::: "memory");
 
@@ -1052,7 +1132,7 @@ bool xhci_submit_control(uint8_t addr, uint8_t endpoint,
     void    *data_buf  = NULL;
     bool     ctrl_use_bounce = false;
     if (wlen > 0 && data != NULL) {
-        if (wlen <= XHCI_DMA_BOUNCE_SIZE && xhci_ensure_bounce_buf()) {
+        if (xhci_ensure_bounce_buf()) {
             spinlock_lock(&g_dma_bounce_lock);
             data_buf  = g_dma_bounce;
             data_phys = g_dma_bounce_phys;
@@ -1265,6 +1345,7 @@ static void xhci_drain_event_ring(void)
         uint32_t trb_type = (trb->control >> 10) & 0x3Fu;
         uint32_t cc       = (trb->status  >> 24) & 0xFFu;
         uint8_t ev_slot   = (uint8_t)((trb->control >> 24) & 0xFFu);
+        uint8_t ev_ep     = (uint8_t)((trb->control >> 16) & 0xFFu);
 
         g_evt_deq++;
         if (g_evt_deq >= EVT_RING_SIZE) {
@@ -1277,21 +1358,14 @@ static void xhci_drain_event_ring(void)
             (g_evt_ring_phys +
              (uint64_t)g_evt_deq * sizeof(xhci_trb_t)) | (1u << 3));
 
-        if (trb_type == 32u) { 
-            for (uint32_t a = 1; a < 256; a++) {
-                if (g_slot_map[a] == ev_slot) {
-                    if (cc == 1u || cc == 13u) {
-                        g_completion_flags[a] = 1;
-                    } else {
-                        g_completion_flags[a] = 2;
-                    }
-                    break;
-                }
-            }
+        if (trb_type == 32u) {
+            xhci_store_completion(ev_slot, ev_ep, cc);
         } else if (trb_type == 33u) {
             g_cmd_cc = cc;
             g_cmd_slot = ev_slot;
             g_cmd_ready = true;
+            g_last_cmd_cc = cc;
+            g_last_cmd_slot = ev_slot;
         }
     }
 
@@ -1303,17 +1377,19 @@ static void xhci_drain_event_ring(void)
 
 int xhci_check_interrupt_event(uint8_t addr, uint8_t ep_num)
 {
-    (void)ep_num;
     if (!g_ready) return -1;
     if (g_slot_map[addr] == 0) return -1;
 
     xhci_drain_event_ring();
 
-    if (g_completion_flags[addr] == 1) {
-        g_completion_flags[addr] = 0;
+    uint8_t ep_idx = (uint8_t)(ep_num * 2u + 1u);
+    if (ep_idx == 0 || ep_idx >= XHCI_MAX_EP_PER_SLOT) return -1;
+
+    if (g_completion_flags[addr][ep_idx] == 1) {
+        g_completion_flags[addr][ep_idx] = 0;
         return 1;
-    } else if (g_completion_flags[addr] == 2) {
-        g_completion_flags[addr] = 0;
+    } else if (g_completion_flags[addr][ep_idx] == 2) {
+        g_completion_flags[addr][ep_idx] = 0;
         return -1;
     }
     return 0;

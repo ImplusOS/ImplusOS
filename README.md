@@ -100,7 +100,6 @@ make run_ide (IDE BOOT)
 - NX (No-Execute) bit paging support for enhanced security.
 - Berkeley-style Socket API support in userland.
 - XML Parser utility library in userland.
-- `musl` standard C library integration.
 - Preliminary Wayland compositor port and dependencies.
 
 ## Current Constraints
@@ -148,7 +147,6 @@ ImplusOS/
 │   ├── API/           Userland syscall wrapper headers
 │   └── Application/   System and user applications
 ├── libc/              Minimal C library (string, stdlib, stdio, math)
-├── musl/              musl standard C library
 ├── WaylandPort/       Wayland compositor port and dependencies
 ├── Docs/              Documentation (architecture, user guides)
 ├── Makefile           Top-level build system

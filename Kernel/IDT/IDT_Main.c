@@ -7,6 +7,7 @@
 #include "../Platform/Interrupts/Interrupts.h"
 #include "../SMP/SMP_Main.h"
 #include "../Debbuger/Serial/Serial.h"
+#include "../Debbuger/Panic/Panic.h"
 
 #include <stdint.h>
 
@@ -365,6 +366,9 @@ int32_t page_fault_handler(uint64_t error_code,
         serial_write_string("\n");
 
         syscall_enter_user_from_frame(next_saved_rsp, next_user_rsp);
+    } else {
+        kernel_panic("PAGE_FAULT", "Page fault in kernel mode");
+        serial_write_string("[OS] [PF] Page fault in kernel mode, halting\n");
     }
 
     panic_exception("page_fault", 14, error_code, rip, kernel_rsp, rbp, cr2);

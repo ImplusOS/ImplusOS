@@ -38,8 +38,61 @@ static uint32_t bot_block_size = 512;
 static uint32_t bot_max_lba    = 0;
 static uint8_t  bot_bounce_buffer[65536];
 
+static void bot_clear_endpoint_halts(void);
+bool bot_test_unit_ready(void);
+bool bot_request_sense(void);
 static bool bot_execute_command(void *cbw_cb, uint8_t cb_len, uint8_t dir_in,
                                 uint32_t data_len, void *data_buf);
+
+static void bot_wait_ms(uint32_t ms)
+{
+    if (usb_get_hc_type() == USB_HC_XHCI) xhci_delay_ms(ms);
+    else                                   ehci_delay_ms(ms);
+}
+
+static bool bot_wait_ready(uint32_t max_attempts,
+                           uint32_t initial_delay_ms,
+                           uint32_t max_delay_ms)
+{
+    uint32_t delay_ms = initial_delay_ms;
+
+    for (uint32_t i = 0; i < max_attempts; i++) {
+        if (bot_test_unit_ready()) {
+            return true;
+        }
+
+        bot_request_sense();
+
+        if (delay_ms != 0) {
+            bot_wait_ms(delay_ms);
+            if (delay_ms < max_delay_ms) {
+                delay_ms <<= 1;
+                if (delay_ms > max_delay_ms) delay_ms = max_delay_ms;
+            }
+        }
+    }
+
+    return false;
+}
+
+static bool bot_retry_simple_command(bool (*fn)(void),
+                                     uint32_t max_attempts,
+                                     uint32_t retry_delay_ms)
+{
+    for (uint32_t i = 0; i < max_attempts; i++) {
+        if (fn()) {
+            return true;
+        }
+
+        bot_request_sense();
+        bot_clear_endpoint_halts();
+        if (retry_delay_ms != 0) {
+            bot_wait_ms(retry_delay_ms);
+        }
+    }
+
+    return false;
+}
 
 static bool bot_mass_storage_reset(void)
 {
@@ -124,30 +177,27 @@ bool bot_init(void)
 
     bot_mass_storage_reset();
     bot_clear_endpoint_halts();
+    bot_wait_ms(10);
 
-    if (usb_get_hc_type() == USB_HC_XHCI) xhci_delay_ms(100);
-    else                                   ehci_delay_ms(100);
-
-    bot_inquiry();
-
-    for (int i = 0; i < 5; i++) {
-        if (bot_test_unit_ready()) break;
-        bot_request_sense();
-        if (usb_get_hc_type() == USB_HC_XHCI) xhci_delay_ms(200);
-        else                                   ehci_delay_ms(200);
+    if (!bot_retry_simple_command(bot_inquiry, 3, 20)) {
+        return false;
     }
 
-    if (!bot_read_capacity()) return false;
-
-    for (int i = 0; i < 3; i++) {
-        if (bot_test_unit_ready()) break;
-        bot_request_sense();
-        if (usb_get_hc_type() == USB_HC_XHCI) xhci_delay_ms(100);
-        else                                   ehci_delay_ms(100);
+    if (!bot_wait_ready(6, 10, 80)) {
+        bot_mass_storage_reset();
+        bot_clear_endpoint_halts();
+        if (!bot_wait_ready(8, 20, 120)) {
+            return false;
+        }
     }
 
-    if (usb_get_hc_type() == USB_HC_XHCI) xhci_delay_ms(200);
-    else                                   ehci_delay_ms(200);
+    if (!bot_retry_simple_command(bot_read_capacity, 4, 20)) {
+        return false;
+    }
+
+    if (!bot_wait_ready(4, 10, 40)) {
+        return false;
+    }
 
     return true;
 }

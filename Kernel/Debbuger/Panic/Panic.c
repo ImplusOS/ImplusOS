@@ -28,6 +28,8 @@
 
 static uint8_t g_char_bitmap[256 * 256];
 
+static BOOT_INFO* bi = NULL;
+
 #include "../../../Thirdparty/stb_truetype.h"
 
 extern const uint8_t g_panic_font8x8[128][8];
@@ -45,7 +47,14 @@ static inline uint32_t alpha_blend(uint32_t dst, uint8_t r, uint8_t g, uint8_t b
     return (0xFF << 24) | ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | nb;
 }
 
-static void draw_text_ttf(BOOT_INFO* bi, int x, int y, const char* text, float size, uint32_t color) {
+static void panic_init(BOOT_INFO* boot_info) {
+    if (boot_info != NULL) {
+        memcpy(&bi, boot_info, sizeof(BOOT_INFO));
+        boot_info = &bi;
+    }
+}
+
+static void draw_text_ttf(int x, int y, const char* text, float size, uint32_t color) {
     if (!bi->FontDataAddress || bi->FontDataSize == 0) {
         return;
     }
@@ -102,7 +111,7 @@ static void draw_text_ttf(BOOT_INFO* bi, int x, int y, const char* text, float s
     }
 }
 
-void kernel_panic(BOOT_INFO* bi, const char* module_name, const char* message) {
+void kernel_panic(const char* module_name, const char* message) {
     __asm__ volatile ("cli");
 
     if (bi != NULL && bi->FrameBufferBase != 0) {
@@ -121,34 +130,27 @@ void kernel_panic(BOOT_INFO* bi, const char* module_name, const char* message) {
         if (bi->FontDataAddress && bi->FontDataSize > 0) {
             int center_x = (int)width / 2;
             
-            draw_text_ttf(bi, center_x - 40, 100, ":(", 80.0f, 0xFFFFFF);
+            draw_text_ttf(center_x - 40, 100, ":(", 80.0f, 0xFFFFFF);
             
-            draw_text_ttf(bi, center_x - 300, 200, "Your PC ran into a problem", 48.0f, 0xFFFFFF);
-            draw_text_ttf(bi, center_x - 300, 260, "ImplusOS has encountered a critical error.", 24.0f, 0xFFFFFF);
+            draw_text_ttf(center_x - 300, 200, "Your PC ran into a problem", 48.0f, 0xFFFFFF);
+            draw_text_ttf(center_x - 300, 260, "ImplusOS has encountered a critical error.", 24.0f, 0xFFFFFF);
             
             char buf[512];
             if (module_name) {
                 strcpy(buf, "Module: ");
                 strcat(buf, module_name);
-                draw_text_ttf(bi, center_x - 300, 320, buf, 20.0f, 0xCCCCCC);
+                draw_text_ttf(center_x - 300, 320, buf, 20.0f, 0xCCCCCC);
             }
             
             if (message) {
                 strcpy(buf, "Error: ");
                 strcat(buf, message);
-                draw_text_ttf(bi, center_x - 300, 350, buf, 20.0f, 0xFFFFFF);
+                draw_text_ttf(center_x - 300, 350, buf, 20.0f, 0xFFFFFF);
             }
 
-            draw_text_ttf(bi, center_x - 300, 450, "Please reboot your computer manually.", 18.0f, 0xAAAAAA);
+            draw_text_ttf(center_x - 300, 450, "Please reboot your computer manually.", 18.0f, 0xAAAAAA);
         }
     }
-    volatile unsigned long i;
-    for (i = 0; i < 500000000; i++) {
-        __asm__ __volatile__("nop");
-    }
-    outw(0x604, 0x2000);
-    outw(0xB004, 0x2000);
-    outw(0x4004, 0x3400);
 
     while (1) {
         __asm__ volatile ("hlt");

@@ -27,8 +27,8 @@ void _start(void)
     draw_fill_rect(0, 0, get_display_width(), get_display_height(), 0x000000);
     draw_present();
 
-    static const char *const com_ImplusOS_mousemanager[] = {
-        "Userland/SystemApps/com_ImplusOS_mousemanager/com_ImplusOS_mousemanager.ELF",
+    static const char *const com_ImplusOS_version[] = {
+        "Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF",
     };
 
     static const char *const com_ImplusOS_windowmanager[] = {
@@ -37,10 +37,6 @@ void _start(void)
 
     static const char *const com_ImplusOS_shell[] = {
         "Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF",
-    };
-
-    static const char *const com_ImplusOS_system[] = {
-        "Userland/SystemApps/com_ImplusOS_system/com_ImplusOS_system.ELF",
     };
 
     static const char *const com_ImplusOS_clock[] = {
@@ -63,10 +59,6 @@ void _start(void)
         "Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF",
     };
 
-    spawn_with_fallbacks(com_ImplusOS_mousemanager, sizeof(com_ImplusOS_mousemanager) / sizeof(com_ImplusOS_mousemanager[0]));
-    for (uint64_t i = 0; i < 10; i++) {
-        process_yield();
-    }
     spawn_with_fallbacks(com_ImplusOS_windowmanager, sizeof(com_ImplusOS_windowmanager) / sizeof(com_ImplusOS_windowmanager[0]));
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
@@ -75,7 +67,7 @@ void _start(void)
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }
-    spawn_with_fallbacks(com_ImplusOS_system, sizeof(com_ImplusOS_system) / sizeof(com_ImplusOS_system[0]));
+    spawn_with_fallbacks(com_ImplusOS_version, sizeof(com_ImplusOS_version) / sizeof(com_ImplusOS_version[0]));
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }
@@ -91,11 +83,11 @@ void _start(void)
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }
-    spawn_with_fallbacks(com_ImplusOS_vm, sizeof(com_ImplusOS_vm) / sizeof(com_ImplusOS_vm[0]));
+     
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }
-    //spawn_with_fallbacks(com_ImplusOS_clock, sizeof(com_ImplusOS_clock) / sizeof(com_ImplusOS_clock[0]));
+     
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }

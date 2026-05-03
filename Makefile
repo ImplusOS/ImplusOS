@@ -118,8 +118,6 @@ KERNEL_C_SRCS := \
 	Kernel/Syscall/Syscall_VM.c \
 	Kernel/Syscall/Syscall_Epoll.c \
 	Kernel/Syscall/Syscall_Futex.c \
-	Kernel/Syscall/Syscall_Signal_Musl.c \
-	Kernel/Syscall/Syscall_Misc_Musl.c \
 	Kernel/Syscall/Syscall_Clock.c \
 	Kernel/Drivers/DrvMain/Client/DRM/DRM_Client.c \
 	Kernel/Drivers/DrvMain/Client/Evdev/Evdev_Client.c \
@@ -188,10 +186,9 @@ all: $(BOOTX64_EFI) \
      app_build
 
 app_build: $(USERLAND_INIT_OBJS)
-	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_system
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_windowmanager
-	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_mousemanager
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_shell
+	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_version
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_exampleApp
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_NetworkTest
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_editor

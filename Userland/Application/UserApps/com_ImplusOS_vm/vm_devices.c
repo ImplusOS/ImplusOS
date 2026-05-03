@@ -1,17 +1,4 @@
-/*
- * vm_devices.c — Minimal device emulation for OVMF boot
- *
- * Emulates the bare minimum IO/MMIO devices needed to boot OVMF:
- *   - Serial COM1 (0x3F8-0x3FF)
- *   - RTC/CMOS (0x70-0x71)
- *   - PCI config space (0xCF8/0xCFC)
- *   - POST/debug port (0x80)
- *   - PIC (0x20-0x21, 0xA0-0xA1)
- *   - PIT (0x40-0x43)
- *   - Keyboard controller (0x60, 0x64)
- *   - DMA (0x00-0x0F, 0x80-0x8F, 0xC0-0xDF)
- *   - MMIO fallback (return 0xFF for reads, absorb writes)
- */
+ 
 
 #include <stdint.h>
 #include <string.h>
@@ -20,7 +7,7 @@
 #include "../../../Syscalls.h"
 #include "../../../API/Serial.h"
 
-/* ── Guest serial output buffer ────────────────────────────── */
+ 
 #define SERIAL_BUF_SIZE 256
 static char serial_buf[SERIAL_BUF_SIZE];
 static uint32_t serial_buf_pos = 0;
@@ -38,7 +25,7 @@ static void guest_serial_putchar(char c)
     }
 }
 
-/* ── kvm_run_t type (must match kernel definition) ─────────── */
+ 
 typedef struct kvm_run {
     uint8_t  request_interrupt_window;
     uint8_t  immediate_exit;
@@ -50,8 +37,8 @@ typedef struct kvm_run {
 
     union {
         struct {
-            uint8_t  direction;  /* 0 = out, 1 = in */
-            uint8_t  size;       /* 1, 2, or 4 */
+            uint8_t  direction;   
+            uint8_t  size;        
             uint16_t port;
             uint32_t count;
             uint64_t data_offset;
@@ -73,45 +60,45 @@ typedef struct kvm_run {
     uint8_t io_data[64];
 } kvm_run_t;
 
-/* ── Serial COM1 state ─────────────────────────────────────── */
+ 
 #define COM1_BASE 0x3F8
 
-static uint8_t serial_ier = 0;    /* Interrupt Enable Register */
-static uint8_t serial_lcr = 0;    /* Line Control Register */
-static uint8_t serial_mcr = 0;    /* Modem Control Register */
-static uint8_t serial_dll = 0;    /* Divisor Latch Low */
-static uint8_t serial_dlh = 0;    /* Divisor Latch High */
-static uint8_t serial_fcr = 0;    /* FIFO Control Register */
-static uint8_t serial_scr = 0;    /* Scratch Register */
+static uint8_t serial_ier = 0;     
+static uint8_t serial_lcr = 0;     
+static uint8_t serial_mcr = 0;     
+static uint8_t serial_dll = 0;     
+static uint8_t serial_dlh = 0;     
+static uint8_t serial_fcr = 0;     
+static uint8_t serial_scr = 0;     
 
 static void serial_handle_out(uint16_t port, uint8_t val)
 {
     uint16_t off = (uint16_t)(port - COM1_BASE);
 
     if (serial_lcr & 0x80) {
-        /* DLAB set: divisor latch access */
+         
         if (off == 0) { serial_dll = val; return; }
         if (off == 1) { serial_dlh = val; return; }
     }
 
     switch (off) {
-    case 0: /* THR — Transmit Holding Register */
-        /* Forward guest serial output to host serial */
+    case 0:  
+         
         guest_serial_putchar((char)val);
         break;
-    case 1: /* IER */
+    case 1:  
         serial_ier = val;
         break;
-    case 2: /* FCR (write only) */
+    case 2:  
         serial_fcr = val;
         break;
-    case 3: /* LCR */
+    case 3:  
         serial_lcr = val;
         break;
-    case 4: /* MCR */
+    case 4:  
         serial_mcr = val;
         break;
-    case 7: /* Scratch Register */
+    case 7:  
         serial_scr = val;
         break;
     default:
@@ -124,53 +111,53 @@ static uint8_t serial_handle_in(uint16_t port)
     uint16_t off = (uint16_t)(port - COM1_BASE);
 
     if (serial_lcr & 0x80) {
-        /* DLAB set */
+         
         if (off == 0) return serial_dll;
         if (off == 1) return serial_dlh;
     }
 
     switch (off) {
-    case 0: /* RBR — Receive Buffer Register (no input) */
+    case 0:  
         return 0;
-    case 1: /* IER */
+    case 1:  
         return serial_ier;
-    case 2: /* IIR — Interrupt Identification Register */
-        return 0x01; /* No interrupt pending */
-    case 3: /* LCR */
+    case 2:  
+        return 0x01;  
+    case 3:  
         return serial_lcr;
-    case 4: /* MCR */
+    case 4:  
         return serial_mcr;
-    case 5: /* LSR — Line Status Register */
-        return 0x60; /* THRE + TEMT: transmitter empty, ready to accept */
-    case 6: /* MSR — Modem Status Register */
-        return 0xB0; /* CTS + DSR + DCD set */
-    case 7: /* Scratch */
+    case 5:  
+        return 0x60;  
+    case 6:  
+        return 0xB0;  
+    case 7:  
         return serial_scr;
     default:
         return 0;
     }
 }
 
-/* ── RTC/CMOS state ────────────────────────────────────────── */
+ 
 static uint8_t rtc_index = 0;
 static uint8_t rtc_regs[128];
 
 static void rtc_init(void)
 {
     memset(rtc_regs, 0, sizeof(rtc_regs));
-    /* Set reasonable RTC defaults (BCD mode) */
-    rtc_regs[0x00] = 0x00; /* Seconds */
-    rtc_regs[0x02] = 0x00; /* Minutes */
-    rtc_regs[0x04] = 0x12; /* Hours (12:00) */
-    rtc_regs[0x06] = 0x01; /* Day of week */
-    rtc_regs[0x07] = 0x01; /* Day of month */
-    rtc_regs[0x08] = 0x01; /* Month */
-    rtc_regs[0x09] = 0x25; /* Year (2025) */
-    rtc_regs[0x0A] = 0x26; /* Status Register A: divider + rate */
-    rtc_regs[0x0B] = 0x02; /* Status Register B: 24h mode */
-    rtc_regs[0x0C] = 0x00; /* Status Register C */
-    rtc_regs[0x0D] = 0x80; /* Status Register D: valid RAM */
-    rtc_regs[0x32] = 0x20; /* Century (BCD 20) */
+     
+    rtc_regs[0x00] = 0x00;  
+    rtc_regs[0x02] = 0x00;  
+    rtc_regs[0x04] = 0x12;  
+    rtc_regs[0x06] = 0x01;  
+    rtc_regs[0x07] = 0x01;  
+    rtc_regs[0x08] = 0x01;  
+    rtc_regs[0x09] = 0x25;  
+    rtc_regs[0x0A] = 0x26;  
+    rtc_regs[0x0B] = 0x02;  
+    rtc_regs[0x0C] = 0x00;  
+    rtc_regs[0x0D] = 0x80;  
+    rtc_regs[0x32] = 0x20;  
 }
 
 static void rtc_handle_out(uint16_t port, uint8_t val)
@@ -192,7 +179,7 @@ static uint8_t rtc_handle_in(uint16_t port)
     return 0;
 }
 
-/* ── PCI Configuration Space ───────────────────────────────── */
+ 
 static uint32_t pci_config_addr = 0;
 
 static void pci_handle_out(uint16_t port, uint32_t val, uint8_t size)
@@ -200,7 +187,7 @@ static void pci_handle_out(uint16_t port, uint32_t val, uint8_t size)
     if (port == 0xCF8 && size == 4) {
         pci_config_addr = val;
     }
-    /* PCI data writes: absorb (no PCI devices) */
+     
 }
 
 static uint32_t pci_handle_in(uint16_t port, uint8_t size)
@@ -208,17 +195,17 @@ static uint32_t pci_handle_in(uint16_t port, uint8_t size)
     if (port == 0xCF8 && size == 4) {
         return pci_config_addr;
     }
-    /* 0xCFC-0xCFF: no devices → return 0xFFFFFFFF */
+     
     if (port >= 0xCFC && port <= 0xCFF) {
         return 0xFFFFFFFF;
     }
     return 0xFFFFFFFF;
 }
 
-/* ── POST code tracking ────────────────────────────────────── */
+ 
 static uint8_t last_post_code = 0;
 
-/* ── Main IO dispatch ──────────────────────────────────────── */
+ 
 void vm_handle_io(kvm_run_t *run)
 {
     uint16_t port = run->io.port;
@@ -226,7 +213,7 @@ void vm_handle_io(kvm_run_t *run)
     uint8_t  is_in = run->io.direction;
 
     if (is_in) {
-        /* IN instruction — fill io_data with response */
+         
         uint32_t val = 0;
 
         if (port >= COM1_BASE && port <= COM1_BASE + 7) {
@@ -236,35 +223,35 @@ void vm_handle_io(kvm_run_t *run)
         } else if (port >= 0xCF8 && port <= 0xCFF) {
             val = pci_handle_in(port, size);
         } else {
-            /* Default responses for known ports */
+             
             switch (port) {
-            case 0x61:  /* System Port B (NMI status) */
+            case 0x61:   
                 val = 0x20;
                 break;
-            case 0x64:  /* Keyboard status: buffer empty */
+            case 0x64:   
                 val = 0x00;
                 break;
-            case 0x60:  /* Keyboard data */
+            case 0x60:   
                 val = 0x00;
                 break;
-            case 0x20: case 0x21:  /* PIC1 */
-            case 0xA0: case 0xA1:  /* PIC2 */
+            case 0x20: case 0x21:   
+            case 0xA0: case 0xA1:   
                 val = 0x00;
                 break;
-            case 0x40: case 0x41: case 0x42: case 0x43: /* PIT */
+            case 0x40: case 0x41: case 0x42: case 0x43:  
                 val = 0x00;
                 break;
-            case 0x92:  /* System Control Port A (fast A20) */
-                val = 0x02; /* A20 enabled */
+            case 0x92:   
+                val = 0x02;  
                 break;
-            case 0x80:  /* POST/debug port */
+            case 0x80:   
                 val = last_post_code;
                 break;
-            case 0x2F8: case 0x2F9: case 0x2FA: case 0x2FB: /* COM2 */
+            case 0x2F8: case 0x2F9: case 0x2FA: case 0x2FB:  
             case 0x2FC: case 0x2FD: case 0x2FE: case 0x2FF:
-            case 0x3E8: case 0x3E9: case 0x3EA: case 0x3EB: /* COM3 */
+            case 0x3E8: case 0x3E9: case 0x3EA: case 0x3EB:  
             case 0x3EC: case 0x3ED: case 0x3EE: case 0x3EF:
-                val = 0xFF; /* not present */
+                val = 0xFF;  
                 break;
             default:
                 val = 0xFF;
@@ -274,7 +261,7 @@ void vm_handle_io(kvm_run_t *run)
 
         memcpy(run->io_data, &val, size);
     } else {
-        /* OUT instruction — handle writes */
+         
         uint32_t val = 0;
         memcpy(&val, run->io_data, size);
 
@@ -287,62 +274,56 @@ void vm_handle_io(kvm_run_t *run)
         } else if (port == 0x80) {
             last_post_code = (uint8_t)val;
         }
-        /* All other OUT instructions are silently absorbed:
-         * PIC, PIT, DMA, keyboard controller, etc. */
+         
     }
 }
 
-/* ── MMIO dispatch ─────────────────────────────────────────── */
+ 
 void vm_handle_mmio(kvm_run_t *run)
 {
-    /* For unmapped MMIO regions:
-     * - Reads return 0 (or 0xFF for non-existent devices)
-     * - Writes are absorbed
-     *
-     * The APIC at 0xFEE00000 and IOAPIC at 0xFEC00000 are handled
-     * as simple absorb-and-return-zero. */
+     
 
     if (!run->mmio.is_write) {
-        /* MMIO Read: fill data with 0 */
+         
         memset(run->mmio.data, 0, run->mmio.len);
 
-        /* Local APIC reads */
+         
         if (run->mmio.phys_addr >= 0xFEE00000ULL &&
             run->mmio.phys_addr <  0xFEE01000ULL) {
             uint32_t offset = (uint32_t)(run->mmio.phys_addr & 0xFFF);
             uint32_t val = 0;
             switch (offset) {
-            case 0x20:  /* APIC ID */
+            case 0x20:   
                 val = 0;
                 break;
-            case 0x30:  /* APIC Version */
-                val = 0x00050014; /* version 0x14, max LVT=5 */
+            case 0x30:   
+                val = 0x00050014;  
                 break;
-            case 0x80:  /* Task Priority */
+            case 0x80:   
                 val = 0;
                 break;
-            case 0xD0:  /* Logical Destination */
+            case 0xD0:   
                 val = 0;
                 break;
-            case 0xE0:  /* Destination Format */
+            case 0xE0:   
                 val = 0xFFFFFFFF;
                 break;
-            case 0xF0:  /* Spurious Interrupt Vector */
+            case 0xF0:   
                 val = 0xFF;
                 break;
             case 0x100: case 0x110: case 0x120: case 0x130:
             case 0x140: case 0x150: case 0x160: case 0x170:
-                /* ISR */
+                 
                 val = 0;
                 break;
             case 0x180: case 0x190: case 0x1A0: case 0x1B0:
             case 0x1C0: case 0x1D0: case 0x1E0: case 0x1F0:
-                /* TMR */
+                 
                 val = 0;
                 break;
             case 0x200: case 0x210: case 0x220: case 0x230:
             case 0x240: case 0x250: case 0x260: case 0x270:
-                /* IRR */
+                 
                 val = 0;
                 break;
             default:
@@ -352,10 +333,10 @@ void vm_handle_mmio(kvm_run_t *run)
             memcpy(run->mmio.data, &val, 4);
         }
     }
-    /* Writes: silently absorbed */
+     
 }
 
-/* ── Initialization ────────────────────────────────────────── */
+ 
 void vm_devices_init(void)
 {
     rtc_init();

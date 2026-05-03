@@ -1,15 +1,4 @@
-/*
- * vm_main.c — Userland OVMF boot loader
- *
- * Loads OVMF_CODE_4M.fd into guest memory and boots it using the
- * ImplusOS KVM-style VMX interface. Uses Unrestricted Guest mode
- * to start in real mode at the x86 reset vector (0xFFFFFFF0).
- *
- * Memory Layout:
- *   GPA 0x00000000 – 0x07FFFFFF : 128MB guest RAM
- *   GPA 0xFF800000 – 0xFFBFFFFF :   4MB OVMF_CODE.fd (firmware, read-only)
- *   GPA 0xFFC00000 – 0xFFFFFFFF :   4MB OVMF_VARS (NV storage, zeroed)
- */
+ 
 
 #include <stdio.h>
 #include <string.h>
@@ -20,7 +9,7 @@
 #include "../../../Syscalls.h"
 #include "../../../API/KVM.h"
 
-/* ── KVM ioctl commands ────────────────────────────────────── */
+ 
 #define KVM_CREATE_VM               1
 #define KVM_CREATE_VCPU             2
 #define KVM_SET_USER_MEMORY_REGION  3
@@ -30,7 +19,7 @@
 #define KVM_GET_SREGS               7
 #define KVM_SET_SREGS               8
 
-/* ── KVM exit reasons ──────────────────────────────────────── */
+ 
 #define KVM_EXIT_UNKNOWN            0
 #define KVM_EXIT_IO                 2
 #define KVM_EXIT_DEBUG              4
@@ -39,7 +28,7 @@
 #define KVM_EXIT_SHUTDOWN           8
 #define KVM_EXIT_INTERNAL_ERROR     17
 
-/* ── Shared types (must match kernel definitions) ──────────── */
+ 
 typedef struct {
     uint64_t rax, rbx, rcx, rdx;
     uint64_t rsi, rdi, rbp, rsp;
@@ -121,60 +110,35 @@ typedef struct kvm_run {
     uint8_t io_data[64];
 } kvm_run_t;
 
-/* ── Device emulation (from vm_devices.c) ──────────────────── */
+ 
 extern void vm_devices_init(void);
 extern void vm_handle_io(kvm_run_t *run);
 extern void vm_handle_mmio(kvm_run_t *run);
 
-/* ── Guest memory configuration ────────────────────────────── */
-#define GUEST_RAM_SIZE      (128ULL * 1024 * 1024)  /* 128MB */
-#define OVMF_CODE_SIZE      (4ULL * 1024 * 1024)    /* 4MB */
-#define OVMF_VARS_SIZE      (4ULL * 1024 * 1024)    /* 4MB */
+ 
+#define GUEST_RAM_SIZE      (128ULL * 1024 * 1024)   
+#define OVMF_CODE_SIZE      (4ULL * 1024 * 1024)     
+#define OVMF_VARS_SIZE      (4ULL * 1024 * 1024)     
 
-/* OVMF 4M maps to the top of the 32-bit address space:
- *   CODE: 0xFF800000 – 0xFFBFFFFF (4MB)
- *   VARS: 0xFFC00000 – 0xFFFFFFFF (4MB)
- * The reset vector is at 0xFFFFFFF0 (within VARS region end area,
- * but OVMF's actual reset vector jump target is in CODE).
- * For a 4M build: the entire 4MB firmware starts at 0xFF800000,
- * and 0xFFFFFFF0 = VARS_BASE + VARS_SIZE - 0x10.
- * Actually for OVMF 4M: total flash = 4MB CODE + 540KB VARS.
- * But the standard layout puts CODE at top-of-4G minus CODE_SIZE.
- * Let's map CODE at 0xFFC00000 (standard for 4MB image mapped at
- * top of 32-bit space) so that 0xFFFFFFF0 falls inside it. */
-#define OVMF_CODE_GPA       0xFFC00000ULL           /* CODE mapped here */
-#define OVMF_VARS_GPA       0x00000000ULL           /* VARS in low memory (optional area) */
+ 
+#define OVMF_CODE_GPA       0xFFC00000ULL            
+#define OVMF_VARS_GPA       0x00000000ULL            
 
-/* OVMF_CODE_4M.fd is exactly 3653632 bytes (0x37C000) = ~3.5MB.
- * It contains the reset vector at offset (size - 0x10).
- * When mapped at GPA 0xFFC00000, the reset vector lands at:
- *   GPA = 0xFFC00000 + 0x37C000 - 0x10 = 0xFFF7BFF0 ... that's wrong.
- * 
- * The correct approach: OVMF firmware is always mapped at the TOP of 4GB.
- * For a 3.5MB firmware: GPA = 0x100000000 - 0x380000 = 0xFFC80000
- * For OVMF_CODE_4M.fd (3653632 = 0x37C000 bytes):
- *   GPA_start = 0x100000000 - 0x400000 = 0xFFC00000
- *   But the code is only 0x37C000, so we need to map it at:
- *   GPA_start = 0x100000000 - 0x37C000 = 0xFFC84000
- * 
- * Actually, OVMF builds pad to flash size. For "4M" variant:
- *   OVMF_CODE_4M.fd = 3653632 bytes (3.5MB, the CODE portion)
- *   OVMF_VARS_4M.fd = 540672 bytes (528KB, the VARS portion)
- *   Total = 3653632 + 540672 = 4194304 = exactly 4MB
- *   So combined they fill 0xFFC00000 – 0xFFFFFFFF.
- *
- * Layout:
- *   VARS: 0xFFC00000 – 0xFFC83FFF (540672 bytes)
- *   CODE: 0xFFC84000 – 0xFFFFFFFF (3653632 bytes)
- *   Reset vector at 0xFFFFFFF0 = CODE_GPA + CODE_SIZE - 0x10
- */
-#define OVMF_FW_BASE        0xFFC00000ULL           /* Combined firmware base */
-#define OVMF_FW_TOTAL       (4ULL * 1024 * 1024)    /* 4MB total flash */
-#define OVMF_VARS_FW_SIZE   540672ULL               /* OVMF_VARS_4M.fd size */
-#define OVMF_CODE_FW_SIZE   3653632ULL              /* OVMF_CODE_4M.fd size */
-#define OVMF_RESET_REAL_RIP 0xFF10ULL
+ 
+#define OVMF_FW_BASE        0xFFC00000ULL            
+#define OVMF_FW_TOTAL       (4ULL * 1024 * 1024)     
+#define OVMF_VARS_FW_SIZE   540672ULL                
+#define OVMF_CODE_FW_SIZE   3653632ULL               
+#define OVMF_RESET_REAL_RIP 0xFFF0ULL
+#define OVMF_PM_ENTRY_RIP   0xFFFFFEAFULL
+#define OVMF_GDT_BASE       0xFFFFFED0ULL
+#define OVMF_GDT_LIMIT      0x003FULL
+#define OVMF_PMODE_CR0      0x00000023ULL
+#define OVMF_PMODE_CR4      0x00000640ULL
+#define OVMF_CS_SEL32       0x0010U
+#define OVMF_DS_SEL32       0x0018U
 
-/* ── OVMF file path ────────────────────────────────────────── */
+ 
 #define OVMF_CODE_PATH "/Userland/UserApps/com_ImplusOS_vm/Resource/OVMF_CODE_4M.fd"
 #define OVMF_VARS_PATH "/Userland/UserApps/com_ImplusOS_vm/Resource/OVMF_VARS_4M.fd"
 
@@ -197,13 +161,33 @@ static void setup_real_mode_segment(vmx_segment_t *seg,
     seg->s = s;
 }
 
+static void setup_protected_mode_segment(vmx_segment_t *seg,
+                                         uint16_t selector,
+                                         uint64_t base,
+                                         uint32_t limit,
+                                         uint8_t type,
+                                         uint8_t s,
+                                         uint8_t db,
+                                         uint8_t g)
+{
+    memset(seg, 0, sizeof(*seg));
+    seg->selector = selector;
+    seg->base = base;
+    seg->limit = limit;
+    seg->type = type;
+    seg->present = 1;
+    seg->s = s;
+    seg->db = db;
+    seg->g = g;
+}
+
 static void setup_unusable_segment(vmx_segment_t *seg)
 {
     memset(seg, 0, sizeof(*seg));
     seg->unusable = 1;
 }
 
-/* ── Helper: load file into buffer ─────────────────────────── */
+ 
 static int64_t load_file(const char *path, uint8_t *buf, uint64_t max_size)
 {
     int32_t fd = file_open(path, 0);
@@ -225,7 +209,7 @@ static int64_t load_file(const char *path, uint8_t *buf, uint64_t max_size)
     return total;
 }
 
-/* ── Main ──────────────────────────────────────────────────── */
+ 
 int main(int argc, char **argv)
 {
     (void)argc;
@@ -233,10 +217,10 @@ int main(int argc, char **argv)
 
     printf("[VM] ImplusOS Userland VM — OVMF Boot\n");
 
-    /* Initialize device emulation */
+     
     vm_devices_init();
 
-    /* 1. Open KVM */
+     
     int32_t kvm_fd = kvm_open();
     if (kvm_fd < 0) {
         printf("[VM] Failed to open KVM (err=%d)\n", kvm_fd);
@@ -248,7 +232,7 @@ int main(int argc, char **argv)
         process_exit(1);
     }
 
-    /* 2. Allocate guest RAM (128MB) */
+     
     printf("[VM] Allocating %llu MB guest RAM...\n",
            (unsigned long long)(GUEST_RAM_SIZE / (1024 * 1024)));
     void *guest_ram = os_mmap(GUEST_RAM_SIZE, 0);
@@ -258,15 +242,15 @@ int main(int argc, char **argv)
     }
     memset(guest_ram, 0, GUEST_RAM_SIZE);
 
-    /* 3. Allocate firmware region (4MB for combined CODE+VARS flash) */
+     
     void *fw_mem = os_mmap(OVMF_FW_TOTAL, 0);
     if (!fw_mem) {
         printf("[VM] Failed to allocate firmware memory\n");
         process_exit(1);
     }
-    memset(fw_mem, 0xFF, OVMF_FW_TOTAL); /* Flash default = 0xFF */
+    memset(fw_mem, 0xFF, OVMF_FW_TOTAL);  
 
-    /* 4. Load OVMF_VARS_4M.fd into the beginning of firmware region */
+     
     printf("[VM] Loading OVMF_VARS_4M.fd...\n");
     int64_t vars_loaded = load_file(OVMF_VARS_PATH,
                                      (uint8_t *)fw_mem,
@@ -275,11 +259,11 @@ int main(int argc, char **argv)
         printf("[VM] OVMF_VARS loaded: %lld bytes\n", (long long)vars_loaded);
     } else {
         printf("[VM] OVMF_VARS not found, using zeroed NV store\n");
-        /* Fill VARS area with 0xFF (erased flash state) */
+         
         memset(fw_mem, 0xFF, OVMF_VARS_FW_SIZE);
     }
 
-    /* 5. Load OVMF_CODE_4M.fd into firmware region after VARS */
+     
     printf("[VM] Loading OVMF_CODE_4M.fd...\n");
     int64_t code_loaded = load_file(OVMF_CODE_PATH,
                                      (uint8_t *)fw_mem + OVMF_VARS_FW_SIZE,
@@ -290,19 +274,19 @@ int main(int argc, char **argv)
     }
     printf("[VM] OVMF_CODE loaded: %lld bytes\n", (long long)code_loaded);
 
-    /* Verify reset vector exists */
+     
     uint8_t *reset_vec = (uint8_t *)fw_mem + OVMF_FW_TOTAL - 0x10;
     printf("[VM] Reset vector bytes: %02x %02x %02x %02x\n",
            reset_vec[0], reset_vec[1], reset_vec[2], reset_vec[3]);
 
-    /* 6. Create vCPU */
+     
     if (kvm_ioctl(kvm_fd, KVM_CREATE_VCPU, 0) < 0) {
         printf("[VM] Failed to create vCPU\n");
         process_exit(1);
     }
 
-    /* 7. Set up memory regions */
-    /* Slot 0: Guest RAM at GPA 0 */
+     
+     
     kvm_userspace_memory_region_t ram_region = {
         .slot = 0,
         .flags = 0,
@@ -316,7 +300,7 @@ int main(int argc, char **argv)
         process_exit(1);
     }
 
-    /* Slot 1: Firmware at GPA 0xFFC00000 (top of 32-bit space) */
+     
     kvm_userspace_memory_region_t fw_region = {
         .slot = 1,
         .flags = 0,
@@ -330,36 +314,36 @@ int main(int argc, char **argv)
         process_exit(1);
     }
 
-    /* 8. Get kvm_run shared page */
+     
     kvm_run_t *run = (kvm_run_t *)kvm_mmap(kvm_fd, 0, 4096);
     if (!run) {
         printf("[VM] Failed to mmap kvm_run\n");
         process_exit(1);
     }
 
-    /* 9. Set full guest reset state for x86 real-mode firmware entry */
+     
     struct { uint32_t vcpu; vmx_sregs_t sregs; } sregs_cmd;
     memset(&sregs_cmd, 0, sizeof(sregs_cmd));
     sregs_cmd.vcpu = 0;
 
-    sregs_cmd.sregs.cr0 = CR0_ET | CR0_NE;
+    sregs_cmd.sregs.cr0 = OVMF_PMODE_CR0;
     sregs_cmd.sregs.cr3 = 0;
-    sregs_cmd.sregs.cr4 = 0;
+    sregs_cmd.sregs.cr4 = OVMF_PMODE_CR4;
     sregs_cmd.sregs.efer = 0;
 
-    setup_real_mode_segment(&sregs_cmd.sregs.cs, 0xF000, 0xFFFF0000ULL, 0xFFFF, 0xB, 1);
-    setup_real_mode_segment(&sregs_cmd.sregs.ds, 0x0000, 0x00000000ULL, 0xFFFF, 0x3, 1);
-    setup_real_mode_segment(&sregs_cmd.sregs.es, 0x0000, 0x00000000ULL, 0xFFFF, 0x3, 1);
-    setup_real_mode_segment(&sregs_cmd.sregs.fs, 0x0000, 0x00000000ULL, 0xFFFF, 0x3, 1);
-    setup_real_mode_segment(&sregs_cmd.sregs.gs, 0x0000, 0x00000000ULL, 0xFFFF, 0x3, 1);
-    setup_real_mode_segment(&sregs_cmd.sregs.ss, 0x0000, 0x00000000ULL, 0xFFFF, 0x3, 1);
+    setup_protected_mode_segment(&sregs_cmd.sregs.cs, OVMF_CS_SEL32, 0, 0xFFFFFFFFU, 0xB, 1, 1, 1);
+    setup_protected_mode_segment(&sregs_cmd.sregs.ds, OVMF_DS_SEL32, 0, 0xFFFFFFFFU, 0x3, 1, 1, 1);
+    setup_protected_mode_segment(&sregs_cmd.sregs.es, OVMF_DS_SEL32, 0, 0xFFFFFFFFU, 0x3, 1, 1, 1);
+    setup_protected_mode_segment(&sregs_cmd.sregs.fs, OVMF_DS_SEL32, 0, 0xFFFFFFFFU, 0x3, 1, 1, 1);
+    setup_protected_mode_segment(&sregs_cmd.sregs.gs, OVMF_DS_SEL32, 0, 0xFFFFFFFFU, 0x3, 1, 1, 1);
+    setup_protected_mode_segment(&sregs_cmd.sregs.ss, OVMF_DS_SEL32, 0, 0xFFFFFFFFU, 0x3, 1, 1, 1);
     setup_real_mode_segment(&sregs_cmd.sregs.tr, 0x0000, 0x00000000ULL, 0xFFFF, 0xB, 0);
     setup_unusable_segment(&sregs_cmd.sregs.ldt);
 
-    sregs_cmd.sregs.gdt.base = 0;
-    sregs_cmd.sregs.gdt.limit = 0xFFFF;
+    sregs_cmd.sregs.gdt.base = OVMF_GDT_BASE;
+    sregs_cmd.sregs.gdt.limit = OVMF_GDT_LIMIT;
     sregs_cmd.sregs.idt.base = 0;
-    sregs_cmd.sregs.idt.limit = 0xFFFF;
+    sregs_cmd.sregs.idt.limit = 0;
 
     if (kvm_ioctl(kvm_fd, KVM_SET_SREGS,
                   (uint64_t)(uintptr_t)&sregs_cmd) < 0) {
@@ -367,16 +351,14 @@ int main(int argc, char **argv)
         process_exit(1);
     }
 
-    /* 10. Set initial general-purpose registers */
+     
     struct { uint32_t vcpu; vmx_regs_t regs; } regs_cmd;
     regs_cmd.vcpu = 0;
     memset(&regs_cmd.regs, 0, sizeof(regs_cmd.regs));
-    /* Nested KVM on the current host faults on the reset vector's initial
-     * MOV-from-CR0 sequence. Enter at the real-mode branch target instead. */
-    regs_cmd.regs.rax = CR0_ET | CR0_NE;
-    regs_cmd.regs.rip = OVMF_RESET_REAL_RIP;
-    regs_cmd.regs.rflags = 0x02;  /* Reserved bit 1 always set */
-    regs_cmd.regs.rdx = 0x0600;   /* CPUID family/model hint */
+    regs_cmd.regs.rax = 0;
+    regs_cmd.regs.rip = OVMF_PM_ENTRY_RIP;
+    regs_cmd.regs.rflags = 0x02;   
+    regs_cmd.regs.rdx = 0x0600;    
 
     if (kvm_ioctl(kvm_fd, KVM_SET_REGS,
                   (uint64_t)(uintptr_t)&regs_cmd) < 0) {
@@ -384,11 +366,12 @@ int main(int argc, char **argv)
         process_exit(1);
     }
 
-    /* 11. Run the VM */
+     
     printf("[VM] Starting OVMF...\n");
-    printf("[VM] Reset: CS:IP = F000:%04llx -> linear 0x%08llx\n",
-           (unsigned long long)OVMF_RESET_REAL_RIP,
-           (unsigned long long)(0xFFFF0000ULL + OVMF_RESET_REAL_RIP));
+    printf("[VM] Entry: protected CS:IP = %04x:%08llx -> linear 0x%08llx\n",
+           OVMF_CS_SEL32,
+           (unsigned long long)OVMF_PM_ENTRY_RIP,
+           (unsigned long long)OVMF_PM_ENTRY_RIP);
 
     uint64_t exit_count = 0;
     uint64_t io_count = 0;
@@ -401,7 +384,7 @@ int main(int argc, char **argv)
 
         if (ret < 0) {
             printf("[VM] KVM_RUN failed (ret=%d)\n", ret);
-            /* Check kvm_run for details */
+             
             if (run->exit_reason == KVM_EXIT_INTERNAL_ERROR) {
                 printf("[VM] Internal error: suberror=%u\n",
                        run->internal.suberror);
@@ -421,13 +404,13 @@ int main(int argc, char **argv)
             break;
 
         case KVM_EXIT_HLT:
-            /* Guest executed HLT — yield and retry */
+             
             process_yield();
             break;
 
         case KVM_EXIT_SHUTDOWN:
             printf("[VM] Guest shutdown (triple fault)\n");
-            /* Dump state for debugging */
+             
             regs_cmd.vcpu = 0;
             kvm_ioctl(kvm_fd, KVM_GET_REGS,
                       (uint64_t)(uintptr_t)&regs_cmd);
@@ -456,7 +439,7 @@ int main(int argc, char **argv)
             break;
         }
 
-        /* Periodic status (every 100000 exits) */
+         
         if (exit_count % 100000 == 0) {
             printf("[VM] Status: exits=%llu io=%llu mmio=%llu\n",
                    (unsigned long long)exit_count,

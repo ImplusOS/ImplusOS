@@ -145,7 +145,6 @@ ImplusOS/
 │           ├── com_ImplusOS_exampleApp/
 │           ├── com_ImplusOS_filemanager/
 │           ├── com_ImplusOS_ImplusStore/
-│           ├── com_ImplusOS_musl_test/
 │           ├── com_ImplusOS_NetworkTest/
 │           └── org_ffmpeg_git_ffmpeg_git/
 │
@@ -153,8 +152,6 @@ ImplusOS/
 │   ├── include/                   assert.h, math.h, stdio.h, stdlib.h, string.h,
 │   │                              ctype.h, unistd.h, time.h, errno.h
 │   └── src/                      Implementations
-│
-├── musl/                          musl standard C library
 │
 ├── WaylandPort/                   Wayland compositor port and dependencies
 │

@@ -112,6 +112,7 @@ typedef struct {
 #define XHCI_STS_HCH (1u << 0)
 #define XHCI_STS_CNR (1u << 11)
 
+#define XHCI_IMAN_IP (1u << 0)
 #define XHCI_IMAN_IE (1u << 1)
 
 #define XHCI_PORTSC_CCS (1u << 0)
@@ -167,5 +168,4 @@ bool xhci_submit_interrupt_in_async(uint8_t addr, uint8_t ep_num,
                                      uint16_t max_packet_size,
                                      void *dma_buf, uint64_t dma_phys,
                                      uint16_t length);
-int  xhci_check_interrupt_event(uint8_t addr, uint8_t ep_num);
 int  xhci_check_interrupt_event(uint8_t addr, uint8_t ep_num);

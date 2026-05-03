@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* ── MSR constants ─────────────────────────────────────────── */
+ 
 #define IA32_VMX_BASIC                  0x480
 #define IA32_VMX_PINBASED_CTLS          0x481
 #define IA32_VMX_PROCBASED_CTLS         0x482
@@ -39,7 +39,7 @@
 #define FEATURE_CONTROL_LOCKED          (1ULL << 0)
 #define FEATURE_CONTROL_VMXON_OUTSIDE   (1ULL << 2)
 
-/* ── CR bits ───────────────────────────────────────────────── */
+ 
 #define CR0_PE (1ULL << 0)
 #define CR0_MP (1ULL << 1)
 #define CR0_EM (1ULL << 2)
@@ -70,12 +70,12 @@
 #define EFER_LMA  (1ULL << 10)
 #define EFER_NXE  (1ULL << 11)
 
-/* ── Pin-based VM-Exec controls ────────────────────────────── */
+ 
 #define PIN_BASED_EXT_INTR_MASK         (1U << 0)
 #define PIN_BASED_NMI_EXITING           (1U << 3)
 #define PIN_BASED_VIRTUAL_NMIS          (1U << 5)
 
-/* ── Primary Proc-based VM-Exec controls ───────────────────── */
+ 
 #define CPU_BASED_HLT_EXITING           (1U << 7)
 #define CPU_BASED_INVLPG_EXITING        (1U << 9)
 #define CPU_BASED_MWAIT_EXITING         (1U << 10)
@@ -93,7 +93,7 @@
 #define CPU_BASED_PAUSE_EXITING         (1U << 30)
 #define CPU_BASED_ACTIVATE_SECONDARY    (1U << 31)
 
-/* ── Secondary Proc-based VM-Exec controls ─────────────────── */
+ 
 #define SECONDARY_EXEC_VIRTUALIZE_APIC  (1U << 0)
 #define SECONDARY_EXEC_ENABLE_EPT       (1U << 1)
 #define SECONDARY_EXEC_RDTSCP           (1U << 3)
@@ -103,17 +103,17 @@
 #define SECONDARY_EXEC_ENABLE_INVPCID   (1U << 12)
 #define SECONDARY_EXEC_XSAVES           (1U << 20)
 
-/* ── VM-Exit controls ──────────────────────────────────────── */
+ 
 #define VM_EXIT_HOST_ADDR_SPACE_SIZE    (1U << 9)
 #define VM_EXIT_ACK_INTR_ON_EXIT        (1U << 15)
 #define VM_EXIT_SAVE_IA32_EFER          (1U << 20)
 #define VM_EXIT_LOAD_IA32_EFER          (1U << 21)
 
-/* ── VM-Entry controls ─────────────────────────────────────── */
+ 
 #define VM_ENTRY_IA32E_MODE             (1U << 9)
 #define VM_ENTRY_LOAD_IA32_EFER         (1U << 15)
 
-/* ── VM Exit Reasons ───────────────────────────────────────── */
+ 
 #define EXIT_REASON_EXCEPTION_NMI       0
 #define EXIT_REASON_EXTERNAL_INT        1
 #define EXIT_REASON_TRIPLE_FAULT        2
@@ -147,11 +147,11 @@
 #define EXIT_REASON_WBINVD              54
 #define EXIT_REASON_XSETBV              55
 
-/* ── VMCS field encodings ──────────────────────────────────── */
-/* 16-bit control */
+ 
+ 
 #define VMCS_VPID                       0x0000
 
-/* 16-bit guest */
+ 
 #define VMCS_GUEST_ES_SEL               0x0800
 #define VMCS_GUEST_CS_SEL               0x0802
 #define VMCS_GUEST_SS_SEL               0x0804
@@ -161,7 +161,7 @@
 #define VMCS_GUEST_LDTR_SEL             0x080C
 #define VMCS_GUEST_TR_SEL               0x080E
 
-/* 16-bit host */
+ 
 #define VMCS_HOST_ES_SEL                0x0C00
 #define VMCS_HOST_CS_SEL                0x0C02
 #define VMCS_HOST_SS_SEL                0x0C04
@@ -170,25 +170,25 @@
 #define VMCS_HOST_GS_SEL                0x0C0A
 #define VMCS_HOST_TR_SEL                0x0C0C
 
-/* 64-bit control */
+ 
 #define VMCS_IO_BITMAP_A                0x2000
 #define VMCS_IO_BITMAP_B                0x2002
 #define VMCS_MSR_BITMAP                 0x2004
 #define VMCS_EPTP                       0x201A
 #define VMCS_EPTP_HIGH                  0x201B
 
-/* 64-bit guest */
+ 
 #define VMCS_GUEST_VMCS_LINK_PTR        0x2800
 #define VMCS_GUEST_VMCS_LINK_PTR_HIGH   0x2801
 #define VMCS_GUEST_IA32_DEBUGCTL        0x2802
 #define VMCS_GUEST_IA32_EFER            0x2806
 #define VMCS_GUEST_IA32_PAT             0x2804
 
-/* 64-bit host */
+ 
 #define VMCS_HOST_IA32_PAT              0x2C00
 #define VMCS_HOST_IA32_EFER             0x2C02
 
-/* 32-bit control */
+ 
 #define VMCS_PIN_BASED_CONTROLS         0x4000
 #define VMCS_CPU_BASED_CONTROLS         0x4002
 #define VMCS_EXCEPTION_BITMAP           0x4004
@@ -205,7 +205,7 @@
 #define VMCS_ENTRY_INSTR_LENGTH         0x401A
 #define VMCS_SECONDARY_CPU_CONTROLS     0x401E
 
-/* 32-bit guest */
+ 
 #define VMCS_GUEST_ES_LIMIT             0x4800
 #define VMCS_GUEST_CS_LIMIT             0x4802
 #define VMCS_GUEST_SS_LIMIT             0x4804
@@ -229,16 +229,16 @@
 #define VMCS_GUEST_SMBASE               0x4828
 #define VMCS_GUEST_SYSENTER_CS          0x482A
 
-/* 32-bit host */
+ 
 #define VMCS_HOST_SYSENTER_CS           0x4C00
 
-/* Natural-width control */
+ 
 #define VMCS_CR0_GUEST_HOST_MASK        0x6000
 #define VMCS_CR4_GUEST_HOST_MASK        0x6002
 #define VMCS_CR0_READ_SHADOW            0x6004
 #define VMCS_CR4_READ_SHADOW            0x6006
 
-/* Natural-width guest */
+ 
 #define VMCS_GUEST_CR0                  0x6800
 #define VMCS_GUEST_CR3                  0x6802
 #define VMCS_GUEST_CR4                  0x6804
@@ -260,7 +260,7 @@
 #define VMCS_GUEST_SYSENTER_ESP         0x6824
 #define VMCS_GUEST_SYSENTER_EIP         0x6826
 
-/* Natural-width host */
+ 
 #define VMCS_HOST_CR0                   0x6C00
 #define VMCS_HOST_CR3                   0x6C02
 #define VMCS_HOST_CR4                   0x6C04
@@ -274,7 +274,7 @@
 #define VMCS_HOST_RSP                   0x6C14
 #define VMCS_HOST_RIP                   0x6C16
 
-/* Read-only data fields */
+ 
 #define VMCS_EXIT_REASON                0x4402
 #define VMCS_EXIT_QUALIFICATION         0x6400
 #define VMCS_EXIT_INTR_INFO             0x4404
@@ -286,7 +286,7 @@
 #define VMCS_GUEST_PHYS_ADDR            0x2400
 #define VMCS_GUEST_LINEAR_ADDR          0x640A
 
-/* ── EPT constants ─────────────────────────────────────────── */
+ 
 #define EPT_MT_UC       0ULL
 #define EPT_MT_WC       1ULL
 #define EPT_MT_WT       4ULL
@@ -298,11 +298,11 @@
 #define EPT_EXECUTE     (1ULL << 2)
 #define EPT_RWX         (EPT_READ | EPT_WRITE | EPT_EXECUTE)
 
-/* EPTP: WB memory type for page walk, 4-level, accessed/dirty disabled */
+ 
 #define EPTP_WB         (EPT_MT_WB)
 #define EPTP_PAGE_WALK_4 (3ULL << 3)
 
-/* ── KVM ioctl commands (userland interface) ───────────────── */
+ 
 #define KVM_CREATE_VM               1
 #define KVM_CREATE_VCPU             2
 #define KVM_SET_USER_MEMORY_REGION  3
@@ -314,7 +314,7 @@
 #define KVM_TRANSLATE               9
 #define KVM_INTERRUPT               10
 
-/* ── KVM exit reasons (userland interface) ─────────────────── */
+ 
 #define KVM_EXIT_UNKNOWN            0
 #define KVM_EXIT_IO                 2
 #define KVM_EXIT_MMIO               6
@@ -323,7 +323,7 @@
 #define KVM_EXIT_INTERNAL_ERROR     17
 #define KVM_EXIT_DEBUG              4
 
-/* ── Guest register state (shared with userland) ───────────── */
+ 
 typedef struct {
     uint64_t rax, rbx, rcx, rdx;
     uint64_t rsi, rdi, rbp, rsp;
@@ -332,7 +332,7 @@ typedef struct {
     uint64_t rip, rflags;
 } vmx_regs_t;
 
-/* Segment register (shared with userland) */
+ 
 typedef struct {
     uint64_t base;
     uint32_t limit;
@@ -349,14 +349,14 @@ typedef struct {
     uint8_t  _pad;
 } vmx_segment_t;
 
-/* Descriptor table (shared with userland) */
+ 
 typedef struct {
     uint64_t base;
     uint16_t limit;
     uint16_t _pad[3];
 } vmx_dtable_t;
 
-/* Special registers (shared with userland) */
+ 
 typedef struct {
     vmx_segment_t cs, ds, es, fs, gs, ss;
     vmx_segment_t tr, ldt;
@@ -366,7 +366,7 @@ typedef struct {
     uint64_t apic_base;
 } vmx_sregs_t;
 
-/* Memory region (userland → kernel) */
+ 
 typedef struct {
     uint32_t slot;
     uint32_t flags;
@@ -375,29 +375,29 @@ typedef struct {
     uint64_t userspace_addr;
 } kvm_userspace_memory_region_t;
 
-/* kvm_run shared structure (kernel ↔ userland) */
+ 
 typedef struct {
-    /* in */
+     
     uint8_t  request_interrupt_window;
     uint8_t  immediate_exit;
     uint8_t  _pad_in[6];
 
-    /* out */
+     
     uint32_t exit_reason;
     uint8_t  ready_for_interrupt_injection;
     uint8_t  _pad_out[3];
 
     union {
-        /* KVM_EXIT_IO */
+         
         struct {
-            uint8_t  direction;  /* 0 = out, 1 = in */
-            uint8_t  size;       /* 1, 2, or 4 */
+            uint8_t  direction;   
+            uint8_t  size;        
             uint16_t port;
             uint32_t count;
-            uint64_t data_offset; /* offset from start of kvm_run */
+            uint64_t data_offset;  
         } io;
 
-        /* KVM_EXIT_MMIO */
+         
         struct {
             uint64_t phys_addr;
             uint8_t  data[8];
@@ -406,24 +406,24 @@ typedef struct {
             uint8_t  _pad[3];
         } mmio;
 
-        /* KVM_EXIT_INTERNAL_ERROR */
+         
         struct {
             uint32_t suberror;
             uint32_t ndata;
             uint64_t data[16];
         } internal;
 
-        /* padding */
+         
         uint8_t _pad_exit[256];
     };
 
-    /* IO data buffer area (placed at end) */
+     
     uint8_t io_data[64];
 } kvm_run_t;
 
 #define KVM_IO_DATA_OFFSET  ((uint64_t)__builtin_offsetof(kvm_run_t, io_data))
 
-/* ── Internal vCPU state (kernel only) ─────────────────────── */
+ 
 #define VMX_MAX_MEM_SLOTS 16
 
 typedef struct {
@@ -438,28 +438,28 @@ typedef struct {
     uint8_t  launched;
     uint8_t  _pad[6];
 
-    /* VMXON region (4KB aligned) */
+     
     void    *vmxon_region;
 
-    /* VMCS region (4KB aligned) */
+     
     void    *vmcs_region;
 
-    /* EPT root (4KB aligned) */
+     
     uint64_t ept_root_hpa;
     void    *ept_root;
 
-    /* Guest general-purpose registers (not in VMCS) */
+     
     vmx_regs_t guest_regs;
 
-    /* kvm_run shared page */
+     
     kvm_run_t *run;
 
-    /* Memory slots */
+     
     vmx_mem_slot_t mem_slots[VMX_MAX_MEM_SLOTS];
     uint32_t       mem_slot_count;
 } vmx_vcpu_t;
 
-/* ── API ───────────────────────────────────────────────────── */
+ 
 int  vmx_init(void);
 void vmx_shutdown(void);
 int  vmx_is_supported(void);
@@ -473,7 +473,7 @@ int  vmx_vcpu_set_sregs(vmx_vcpu_t *vcpu, const vmx_sregs_t *sregs);
 int  vmx_vcpu_get_sregs(vmx_vcpu_t *vcpu, vmx_sregs_t *sregs);
 int  vmx_vcpu_add_mem_slot(vmx_vcpu_t *vcpu, const kvm_userspace_memory_region_t *region);
 
-/* EPT */
+ 
 int      ept_create(vmx_vcpu_t *vcpu);
 void     ept_destroy(vmx_vcpu_t *vcpu);
 int      ept_map_page(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa, uint64_t flags);
@@ -481,11 +481,12 @@ int      ept_map_range(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa,
                        uint64_t size, uint64_t flags);
 uint64_t ept_translate(vmx_vcpu_t *vcpu, uint64_t gpa);
 
-/* Assembly entry points */
+ 
 extern int  vmx_vmlaunch_asm(vmx_regs_t *guest_regs);
 extern int  vmx_vmresume_asm(vmx_regs_t *guest_regs);
+extern vmx_regs_t *g_vmx_current_guest_regs;
 
-/* Low-level VMCS helpers (used internally and by KVM client) */
+ 
 static inline void vmx_vmwrite(uint64_t field, uint64_t value)
 {
     uint8_t err;
@@ -525,4 +526,4 @@ static inline void vmx_wrmsr(uint32_t msr, uint64_t value)
     __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
 }
 
-#endif /* VMX_H */
+#endif  

@@ -87,22 +87,6 @@ static void syscall_fail(uint64_t saved_rsp,
     set_syscall_status(saved_rsp, status);
 }
 
-static void serial_write_unsigned_decimal(uint64_t value)
-{
-    char buffer[32];
-    uint32_t index = (uint32_t)(sizeof(buffer) - 1U);
-    buffer[index] = '\0';
-
-    do {
-        uint64_t digit = value % 10ULL;
-        --index;
-        buffer[index] = k_decimal_digits[(size_t)digit];
-        value /= 10ULL;
-    } while (value > 0ULL && index > 0U);
-    
-    serial_write_string(&buffer[index]);
-}
-
 static process_capability_mask_t syscall_required_capability(uint64_t syscall_number)
 {
     switch (syscall_number) {

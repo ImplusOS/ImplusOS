@@ -39,7 +39,7 @@ int64_t kvm_client_open(void) {
         }
     }
     spinlock_unlock(&g_kvm_lock);
-    return -12; // ENOMEM
+    return -12;  
 }
 
 static kvm_vm_t *get_vm_by_fd(int32_t fd) {
@@ -56,10 +56,10 @@ int64_t kvm_client_ioctl(int32_t fd, uint64_t request, uint64_t arg) {
     kvm_vm_t *vm = get_vm_by_fd(fd);
     if (!vm) {
         spinlock_unlock(&g_kvm_lock);
-        return -9; // EBADF
+        return -9;  
     }
 
-    int64_t ret = -22; // EINVAL
+    int64_t ret = -22;  
 
     switch (request) {
         case KVM_CREATE_VM: {

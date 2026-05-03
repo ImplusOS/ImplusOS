@@ -143,7 +143,6 @@ void kernel_main(BOOT_INFO *boot_info) {
     timer_init(60);
 
     __asm__ volatile ("sti");
-
     timer_switch_lapic();
     driver_module_manager_init(boot_info);
     driver_module_init_all();

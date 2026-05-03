@@ -5,8 +5,6 @@
 #include <string.h>
 #include <stddef.h>
 
-/* ── EPT page table allocation ─────────────────────────────── */
-
 static void *ept_alloc_table(void)
 {
     void *page = alloc_page();
@@ -24,8 +22,6 @@ static void ept_free_table(void *table)
     }
 }
 
-/* ── EPT create / destroy ──────────────────────────────────── */
-
 int ept_create(vmx_vcpu_t *vcpu)
 {
     if (vcpu == NULL) {
@@ -34,16 +30,11 @@ int ept_create(vmx_vcpu_t *vcpu)
 
     void *root = ept_alloc_table();
     if (root == NULL) {
-        serial_write_string("[VMX] EPT: failed to allocate root table\n");
         return -1;
     }
 
     vcpu->ept_root = root;
     vcpu->ept_root_hpa = (uint64_t)(uintptr_t)root;
-
-    serial_write_string("[VMX] EPT: root table created at 0x");
-    serial_write_uint64(vcpu->ept_root_hpa);
-    serial_write_string("\n");
 
     return 0;
 }
@@ -59,8 +50,7 @@ static void ept_free_level(uint64_t *table, int level)
         if ((entry & EPT_READ) == 0) {
             continue;
         }
-
-        /* If not a leaf entry (has subtable), recurse */
+        
         if (level > 1) {
             uint64_t *subtable = (uint64_t *)(uintptr_t)(entry & 0x000FFFFFFFFFF000ULL);
             ept_free_level(subtable, level - 1);
@@ -79,11 +69,9 @@ void ept_destroy(vmx_vcpu_t *vcpu)
     ept_free_level((uint64_t *)vcpu->ept_root, 4);
     vcpu->ept_root = NULL;
     vcpu->ept_root_hpa = 0;
-
-    serial_write_string("[VMX] EPT: destroyed\n");
 }
 
-/* ── EPT map single 4KB page ──────────────────────────────── */
+ 
 
 int ept_map_page(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa, uint64_t flags)
 {
@@ -93,7 +81,7 @@ int ept_map_page(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa, uint64_t flags)
 
     uint64_t *pml4 = (uint64_t *)vcpu->ept_root;
 
-    /* PML4 index */
+     
     uint32_t pml4_idx = (uint32_t)((gpa >> 39) & 0x1FF);
     if ((pml4[pml4_idx] & EPT_READ) == 0) {
         void *pdpt = ept_alloc_table();
@@ -102,7 +90,7 @@ int ept_map_page(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa, uint64_t flags)
     }
     uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4[pml4_idx] & 0x000FFFFFFFFFF000ULL);
 
-    /* PDPT index */
+     
     uint32_t pdpt_idx = (uint32_t)((gpa >> 30) & 0x1FF);
     if ((pdpt[pdpt_idx] & EPT_READ) == 0) {
         void *pd = ept_alloc_table();
@@ -111,7 +99,7 @@ int ept_map_page(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa, uint64_t flags)
     }
     uint64_t *pd = (uint64_t *)(uintptr_t)(pdpt[pdpt_idx] & 0x000FFFFFFFFFF000ULL);
 
-    /* PD index */
+     
     uint32_t pd_idx = (uint32_t)((gpa >> 21) & 0x1FF);
     if ((pd[pd_idx] & EPT_READ) == 0) {
         void *pt = ept_alloc_table();
@@ -120,14 +108,14 @@ int ept_map_page(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa, uint64_t flags)
     }
     uint64_t *pt = (uint64_t *)(uintptr_t)(pd[pd_idx] & 0x000FFFFFFFFFF000ULL);
 
-    /* PT index */
+     
     uint32_t pt_idx = (uint32_t)((gpa >> 12) & 0x1FF);
     pt[pt_idx] = (hpa & 0x000FFFFFFFFFF000ULL) | flags;
 
     return 0;
 }
 
-/* ── EPT map range ─────────────────────────────────────────── */
+ 
 
 int ept_map_range(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa,
                   uint64_t size, uint64_t flags)
@@ -143,7 +131,7 @@ int ept_map_range(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa,
     return 0;
 }
 
-/* ── EPT translate (GPA → HPA) ─────────────────────────────── */
+ 
 
 uint64_t ept_translate(vmx_vcpu_t *vcpu, uint64_t gpa)
 {

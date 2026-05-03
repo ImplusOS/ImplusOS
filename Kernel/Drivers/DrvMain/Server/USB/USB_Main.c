@@ -34,6 +34,13 @@ static bool g_uhci_ready = false;
 
 usb_hc_type_t usb_get_hc_type(void) { return g_hc_type; }
 
+static void usb_wait_ms(usb_hc_type_t hc, uint32_t ms)
+{
+    if (ms == 0) return;
+    if (hc == USB_HC_EHCI) ehci_delay_ms(ms);
+    else                   xhci_delay_ms(ms);
+}
+
 bool usb_submit_control(uint8_t addr,
                         uint8_t bmRequestType, uint8_t bRequest,
                         uint16_t wValue, uint16_t wIndex, uint16_t wLength,
@@ -49,9 +56,7 @@ bool usb_submit_control(uint8_t addr,
 }
 
 void usb_core_init(void) {
-    xhci_delay_ms(100);
-    if (g_hc_type == USB_HC_XHCI) xhci_delay_ms(200);
-    else if (g_hc_type == USB_HC_EHCI) ehci_delay_ms(200);
+    usb_wait_ms(g_hc_type, 20);
 
     uint8_t next_addr = 1;
     bool any_device = false;
@@ -91,12 +96,7 @@ void usb_core_init(void) {
         }
         if (!port_ok) continue;
 
-        xhci_delay_ms(200);
-
-        if      (port_hc == USB_HC_EHCI) ehci_delay_ms(200);
-        else if (port_hc == USB_HC_OHCI) xhci_delay_ms(200);
-        else if (port_hc == USB_HC_UHCI) xhci_delay_ms(200);
-        else if (port_hc == USB_HC_XHCI) xhci_delay_ms(200);
+        usb_wait_ms(port_hc, 30);
 
         bool connected = false;
         if      (port_hc == USB_HC_EHCI) connected = ehci_port_connected(i);
@@ -114,10 +114,7 @@ void usb_core_init(void) {
 
         usb_set_address(0, current_addr);
 
-        if      (port_hc == USB_HC_EHCI) ehci_delay_ms(50);
-        else if (port_hc == USB_HC_OHCI) xhci_delay_ms(50);
-        else if (port_hc == USB_HC_UHCI) xhci_delay_ms(50);
-        else if (port_hc == USB_HC_XHCI) xhci_delay_ms(50);
+        usb_wait_ms(port_hc, 10);
 
         g_dev_hc[current_addr] = port_hc;
 
@@ -130,10 +127,7 @@ void usb_core_init(void) {
                 desc_ok = true;
                 break;
             }
-            if      (port_hc == USB_HC_EHCI) ehci_delay_ms(200);
-            else if (port_hc == USB_HC_OHCI) xhci_delay_ms(200);
-            else if (port_hc == USB_HC_UHCI) xhci_delay_ms(200);
-            else if (port_hc == USB_HC_XHCI) xhci_delay_ms(200);
+            usb_wait_ms(port_hc, 50);
         }
         if (!desc_ok) {
             continue;
