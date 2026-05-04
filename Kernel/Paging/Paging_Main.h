@@ -47,4 +47,11 @@ void pmm_free_pages(void *virt, size_t num_pages);
 uint64_t get_phys_base(void);
 uint64_t get_virt_base(void);
 
+/**
+ * Translate a virtual address to its physical address using the given
+ * page table hierarchy.  Works for both kernel (identity-mapped) and
+ * user-space addresses.  Returns 0 on failure (unmapped).
+ */
+uint64_t paging_virt_to_phys(uint64_t cr3, uint64_t virt_addr);
+
 #endif

@@ -634,6 +634,49 @@ uint64_t paging_get_active_cr3(void)
     return read_cr3();
 }
 
+uint64_t paging_virt_to_phys(uint64_t cr3, uint64_t virt_addr)
+{
+    if (cr3 == 0) {
+        return 0;
+    }
+
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_MASK);
+    uint64_t pml4e = pml4[PML4_INDEX(virt_addr)];
+    if ((pml4e & PAGE_PRESENT) == 0) {
+        return 0;
+    }
+
+    uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_MASK);
+    uint64_t pdpte = pdpt[PDPT_INDEX(virt_addr)];
+    if ((pdpte & PAGE_PRESENT) == 0) {
+        return 0;
+    }
+    
+    if ((pdpte & PAGE_PS) != 0) {
+        uint64_t phys_base = pdpte & ~(GB - 1ULL);
+        return phys_base | (virt_addr & (GB - 1ULL));
+    }
+
+    uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_MASK);
+    uint64_t pde = pd[PD_INDEX(virt_addr)];
+    if ((pde & PAGE_PRESENT) == 0) {
+        return 0;
+    }
+
+    if ((pde & PAGE_PS) != 0) {
+        uint64_t phys_base = pde & ~(MB2 - 1ULL);
+        return phys_base | (virt_addr & (MB2 - 1ULL));
+    }
+
+    uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_MASK);
+    uint64_t pte = pt[PT_INDEX(virt_addr)];
+    if ((pte & PAGE_PRESENT) == 0) {
+        return 0;
+    }
+
+    return (pte & PAGE_MASK) | (virt_addr & (PAGE_SIZE_BYTES - 1ULL));
+}
+
 void paging_switch_cr3(uint64_t cr3)
 {
     if (cr3 == 0) {

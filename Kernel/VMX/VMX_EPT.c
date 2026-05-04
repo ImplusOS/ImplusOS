@@ -1,9 +1,21 @@
 #include "VMX.h"
 #include "../Memory/Memory_Main.h"
+#include "../Paging/Paging_Main.h"
 #include "../Debbuger/Serial/Serial.h"
 #include "../Sync/Spinlock.h"
 #include <string.h>
 #include <stddef.h>
+
+static uint64_t ept_virt_to_phys(void *virt)
+{
+    return paging_virt_to_phys(paging_get_active_cr3(), (uint64_t)(uintptr_t)virt);
+}
+
+static void *ept_phys_to_virt(uint64_t phys)
+{
+     
+    return (void *)(uintptr_t)phys;
+}
 
 static void *ept_alloc_table(void)
 {
@@ -34,7 +46,7 @@ int ept_create(vmx_vcpu_t *vcpu)
     }
 
     vcpu->ept_root = root;
-    vcpu->ept_root_hpa = (uint64_t)(uintptr_t)root;
+    vcpu->ept_root_hpa = ept_virt_to_phys(root);
 
     return 0;
 }
@@ -52,8 +64,9 @@ static void ept_free_level(uint64_t *table, int level)
         }
         
         if (level > 1) {
-            uint64_t *subtable = (uint64_t *)(uintptr_t)(entry & 0x000FFFFFFFFFF000ULL);
-            ept_free_level(subtable, level - 1);
+            uint64_t subtable_phys = entry & 0x000FFFFFFFFFF000ULL;
+            uint64_t *subtable_virt = (uint64_t *)ept_phys_to_virt(subtable_phys);
+            ept_free_level(subtable_virt, level - 1);
         }
     }
 
@@ -86,27 +99,27 @@ int ept_map_page(vmx_vcpu_t *vcpu, uint64_t gpa, uint64_t hpa, uint64_t flags)
     if ((pml4[pml4_idx] & EPT_READ) == 0) {
         void *pdpt = ept_alloc_table();
         if (pdpt == NULL) return -1;
-        pml4[pml4_idx] = (uint64_t)(uintptr_t)pdpt | EPT_RWX;
+        pml4[pml4_idx] = ept_virt_to_phys(pdpt) | EPT_RWX;
     }
-    uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4[pml4_idx] & 0x000FFFFFFFFFF000ULL);
+    uint64_t *pdpt = (uint64_t *)ept_phys_to_virt(pml4[pml4_idx] & 0x000FFFFFFFFFF000ULL);
 
      
     uint32_t pdpt_idx = (uint32_t)((gpa >> 30) & 0x1FF);
     if ((pdpt[pdpt_idx] & EPT_READ) == 0) {
         void *pd = ept_alloc_table();
         if (pd == NULL) return -1;
-        pdpt[pdpt_idx] = (uint64_t)(uintptr_t)pd | EPT_RWX;
+        pdpt[pdpt_idx] = ept_virt_to_phys(pd) | EPT_RWX;
     }
-    uint64_t *pd = (uint64_t *)(uintptr_t)(pdpt[pdpt_idx] & 0x000FFFFFFFFFF000ULL);
+    uint64_t *pd = (uint64_t *)ept_phys_to_virt(pdpt[pdpt_idx] & 0x000FFFFFFFFFF000ULL);
 
      
     uint32_t pd_idx = (uint32_t)((gpa >> 21) & 0x1FF);
     if ((pd[pd_idx] & EPT_READ) == 0) {
         void *pt = ept_alloc_table();
         if (pt == NULL) return -1;
-        pd[pd_idx] = (uint64_t)(uintptr_t)pt | EPT_RWX;
+        pd[pd_idx] = ept_virt_to_phys(pt) | EPT_RWX;
     }
-    uint64_t *pt = (uint64_t *)(uintptr_t)(pd[pd_idx] & 0x000FFFFFFFFFF000ULL);
+    uint64_t *pt = (uint64_t *)ept_phys_to_virt(pd[pd_idx] & 0x000FFFFFFFFFF000ULL);
 
      
     uint32_t pt_idx = (uint32_t)((gpa >> 12) & 0x1FF);

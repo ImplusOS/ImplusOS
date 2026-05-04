@@ -39,10 +39,10 @@ vmx_vmlaunch_asm:
     push r15
 
     ;; Write current RSP to VMCS_HOST_RSP (0x6C14)
-    ;; VMWRITE is vmwrite <value>, <field>.
+    ;; VMWRITE is vmwrite <field>, <value>.
     mov rax, rsp
     mov rdx, 0x6C14
-    vmwrite rax, rdx
+    vmwrite rdx, rax
 
     ;; Load guest general-purpose regs from vmx_regs_t
     mov rax, [rdi +   0]
@@ -80,10 +80,10 @@ vmx_vmresume_asm:
     push r15
 
     ;; Write current RSP to VMCS_HOST_RSP (0x6C14)
-    ;; VMWRITE is vmwrite <value>, <field>.
+    ;; VMWRITE is vmwrite <field>, <value>.
     mov rax, rsp
     mov rdx, 0x6C14
-    vmwrite rax, rdx
+    vmwrite rdx, rax
 
     ;; Load guest general-purpose regs from vmx_regs_t
     mov rax, [rdi +   0]

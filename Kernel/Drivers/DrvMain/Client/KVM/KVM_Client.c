@@ -3,6 +3,7 @@
 #include "ProcessManager/ProcessManager.h"
 #include "Sync/Spinlock.h"
 #include "Memory/Memory_Main.h"
+#include "Paging/Paging_Main.h"
 #include <string.h>
 
 #define KVM_MAX_VMS   4
@@ -164,7 +165,14 @@ void *kvm_client_mmap(int32_t fd, uint64_t offset, uint64_t size) {
     
     uint32_t vcpu_id = (uint32_t)offset;
     if (vm && vcpu_id < KVM_MAX_VCPUS && vm->vcpus[vcpu_id].active) {
-        ret = vm->vcpus[vcpu_id].run;
+        void *run_page = vm->vcpus[vcpu_id].run;
+        if (run_page) {
+            uint64_t cr3 = process_get_current_cr3();
+            uint64_t start = (uint64_t)(uintptr_t)run_page;
+            uint64_t aligned_start = start & ~4095ULL;
+            paging_set_user_access(cr3, aligned_start, 4096, 1);
+            ret = run_page;
+        }
     }
     
     spinlock_unlock(&g_kvm_lock);

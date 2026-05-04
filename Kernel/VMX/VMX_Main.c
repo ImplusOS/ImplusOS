@@ -1,7 +1,9 @@
 #include "VMX.h"
 #include "../Memory/Memory_Main.h"
 #include "../Debbuger/Serial/Serial.h"
+#include "../Debbuger/printf/printf.h"
 #include "../Sync/Spinlock.h"
+#include "../Paging/Paging_Main.h"
 #include "../KernelConfig.h"
 #include "../GDT/GDT_Main.h"
 #include <string.h>
@@ -97,7 +99,8 @@ int vmx_init(void)
     *(uint32_t *)g_vmxon_region = g_vmcs_revision;
 
      
-    uint64_t vmxon_phys = (uint64_t)(uintptr_t)g_vmxon_region;
+    uint64_t cr3 = paging_get_active_cr3();
+    uint64_t vmxon_phys = paging_virt_to_phys(cr3, (uint64_t)(uintptr_t)g_vmxon_region);
     uint8_t err;
     __asm__ volatile(
         "vmxon %1\n\t"
@@ -148,12 +151,10 @@ static uint64_t vmx_guest_cr0_hw(uint64_t guest_visible_cr0)
 
 static uint64_t vmx_guest_cr4_hw(uint64_t guest_visible_cr0, uint64_t guest_visible_cr4)
 {
+    (void)guest_visible_cr0;
     uint64_t guest_cr4 = guest_visible_cr4 | vmx_rdmsr(IA32_VMX_CR4_FIXED0);
     guest_cr4 &= vmx_rdmsr(IA32_VMX_CR4_FIXED1);
-    if (!(guest_visible_cr0 & CR0_PE)) {
-         
-        guest_cr4 |= CR4_VMXE;
-    }
+
     return guest_cr4;
 }
 
@@ -188,7 +189,8 @@ int vmx_vcpu_create(vmx_vcpu_t *vcpu)
         return -1;
     }
 
-    uint64_t vmcs_phys = (uint64_t)(uintptr_t)vcpu->vmcs_region;
+    uint64_t cr3_active = paging_get_active_cr3();
+    uint64_t vmcs_phys = paging_virt_to_phys(cr3_active, (uint64_t)(uintptr_t)vcpu->vmcs_region);
 
      
     __asm__ volatile("vmclear %0" :: "m"(vmcs_phys) : "cc", "memory");
@@ -241,7 +243,7 @@ static void vmx_setup_vmcs_controls(vmx_vcpu_t *vcpu)
 
      
     uint32_t pin_msr = use_true ? IA32_VMX_TRUE_PINBASED_CTLS : IA32_VMX_PINBASED_CTLS;
-    uint32_t pin = vmx_adjust_controls(0, pin_msr);
+    uint32_t pin = vmx_adjust_controls(PIN_BASED_EXT_INTR_MASK, pin_msr);
     vmx_vmwrite(VMCS_PIN_BASED_CONTROLS, pin);
 
      
@@ -282,13 +284,15 @@ static void vmx_setup_vmcs_controls(vmx_vcpu_t *vcpu)
     );
     vmx_vmwrite(VMCS_ENTRY_CONTROLS, entry_ctl);
 
+    uint64_t cr3 = paging_get_active_cr3();
     vmx_vmwrite(VMCS_EXCEPTION_BITMAP, 0);
 
      
     void *msr_bitmap = alloc_page();
     if (msr_bitmap) {
         memset(msr_bitmap, 0, 4096);
-        vmx_vmwrite(VMCS_MSR_BITMAP, (uint64_t)(uintptr_t)msr_bitmap);
+        uint64_t msr_phys = paging_virt_to_phys(cr3, (uint64_t)(uintptr_t)msr_bitmap);
+        vmx_vmwrite(VMCS_MSR_BITMAP, msr_phys);
     }
 
     vmx_vmwrite(VMCS_EXIT_MSR_STORE_COUNT, 0);
@@ -299,7 +303,14 @@ static void vmx_setup_vmcs_controls(vmx_vcpu_t *vcpu)
     vmx_vmwrite(VMCS_PF_ERROR_CODE_MATCH, 0);
 
      
-    uint64_t eptp = vcpu->ept_root_hpa | EPTP_WB | EPTP_PAGE_WALK_4;
+    uint64_t ept_vpid_cap = vmx_rdmsr(IA32_VMX_EPT_VPID_CAP);
+    uint64_t ept_mem_type = 0;
+    if (ept_vpid_cap & (1ULL << 14)) {
+        ept_mem_type = 6;  
+    } else if (ept_vpid_cap & (1ULL << 8)) {
+        ept_mem_type = 0;  
+    }
+    uint64_t eptp = vcpu->ept_root_hpa | ept_mem_type | EPTP_PAGE_WALK_4;
     vmx_vmwrite(VMCS_EPTP, eptp);
 
      
@@ -348,13 +359,12 @@ static void vmx_setup_vmcs_host(vmx_vcpu_t *vcpu)
 
      
     uint64_t *gdt_entries = (uint64_t *)gdtr.base;
-    uint32_t tr_idx = (tr_sel >> 3);
-    uint64_t tss_lo = gdt_entries[tr_idx];
-    uint64_t tss_hi = gdt_entries[tr_idx + 1];
-    uint64_t tr_base = ((tss_lo >> 16) & 0xFFFF) |
-                       (((tss_lo >> 32) & 0xFF) << 16) |
-                       (((tss_lo >> 56) & 0xFF) << 24) |
-                       ((tss_hi & 0xFFFFFFFF) << 32);
+    uint32_t tr_idx = (uint32_t)(tr_sel >> 3);
+    struct GDTEntry64 *tss_desc = (struct GDTEntry64 *)&gdt_entries[tr_idx];
+    uint64_t tr_base = (uint64_t)tss_desc->base_low |
+                       ((uint64_t)tss_desc->base_mid << 16) |
+                       ((uint64_t)tss_desc->base_high << 24) |
+                       ((uint64_t)tss_desc->base_upper << 32);
     vmx_vmwrite(VMCS_HOST_TR_BASE, tr_base);
 
      
@@ -395,6 +405,7 @@ static void vmx_setup_vmcs_guest(vmx_vcpu_t *vcpu)
 
      
     vmx_vmwrite(VMCS_GUEST_IA32_EFER, 0);
+    vmx_vmwrite(VMCS_GUEST_SMBASE, 0);
 
      
     vmx_vmwrite(VMCS_GUEST_IA32_PAT, 0x0007040600070406ULL);
@@ -473,6 +484,10 @@ static void vmx_setup_vmcs_guest(vmx_vcpu_t *vcpu)
     vmx_vmwrite(VMCS_GUEST_SYSENTER_CS, 0);
     vmx_vmwrite(VMCS_GUEST_SYSENTER_ESP, 0);
     vmx_vmwrite(VMCS_GUEST_SYSENTER_EIP, 0);
+    
+    vmx_vmwrite(VMCS_ENTRY_INTR_INFO, 0);
+    vmx_vmwrite(VMCS_ENTRY_EXCEPTION_ERRCODE, 0);
+    vmx_vmwrite(VMCS_ENTRY_INSTR_LENGTH, 0);
 
     vmx_vmwrite(VMCS_GUEST_IA32_DEBUGCTL, 0);
 
@@ -543,7 +558,9 @@ int vmx_vcpu_set_sregs(vmx_vcpu_t *vcpu, const vmx_sregs_t *sregs)
      
     vmx_vmwrite(VMCS_GUEST_CS_SEL, sregs->cs.selector);
     vmx_vmwrite(VMCS_GUEST_CS_BASE, sregs->cs.base);
-    vmx_vmwrite(VMCS_GUEST_CS_LIMIT, sregs->cs.limit);
+    uint32_t cs_limit = sregs->cs.limit;
+    if (sregs->cs.g && cs_limit == 0xFFFFF) cs_limit = 0xFFFFFFFF;
+    vmx_vmwrite(VMCS_GUEST_CS_LIMIT, cs_limit);
     uint32_t cs_ar = sregs->cs.type | (sregs->cs.s << 4) |
                      (sregs->cs.dpl << 5) | (sregs->cs.present << 7) |
                      (sregs->cs.avl << 12) | (sregs->cs.l << 13) |
@@ -553,7 +570,9 @@ int vmx_vcpu_set_sregs(vmx_vcpu_t *vcpu, const vmx_sregs_t *sregs)
      
     vmx_vmwrite(VMCS_GUEST_DS_SEL, sregs->ds.selector);
     vmx_vmwrite(VMCS_GUEST_DS_BASE, sregs->ds.base);
-    vmx_vmwrite(VMCS_GUEST_DS_LIMIT, sregs->ds.limit);
+    uint32_t ds_limit = sregs->ds.limit;
+    if (sregs->ds.g && ds_limit == 0xFFFFF) ds_limit = 0xFFFFFFFF;
+    vmx_vmwrite(VMCS_GUEST_DS_LIMIT, ds_limit);
     uint32_t ds_ar = sregs->ds.type | (sregs->ds.s << 4) |
                      (sregs->ds.dpl << 5) | (sregs->ds.present << 7) |
                      (sregs->ds.avl << 12) | (sregs->ds.l << 13) |
@@ -563,7 +582,9 @@ int vmx_vcpu_set_sregs(vmx_vcpu_t *vcpu, const vmx_sregs_t *sregs)
      
     vmx_vmwrite(VMCS_GUEST_ES_SEL, sregs->es.selector);
     vmx_vmwrite(VMCS_GUEST_ES_BASE, sregs->es.base);
-    vmx_vmwrite(VMCS_GUEST_ES_LIMIT, sregs->es.limit);
+    uint32_t es_limit = sregs->es.limit;
+    if (sregs->es.g && es_limit == 0xFFFFF) es_limit = 0xFFFFFFFF;
+    vmx_vmwrite(VMCS_GUEST_ES_LIMIT, es_limit);
     uint32_t es_ar = sregs->es.type | (sregs->es.s << 4) |
                      (sregs->es.dpl << 5) | (sregs->es.present << 7) |
                      (sregs->es.avl << 12) | (sregs->es.l << 13) |
@@ -573,7 +594,9 @@ int vmx_vcpu_set_sregs(vmx_vcpu_t *vcpu, const vmx_sregs_t *sregs)
      
     vmx_vmwrite(VMCS_GUEST_SS_SEL, sregs->ss.selector);
     vmx_vmwrite(VMCS_GUEST_SS_BASE, sregs->ss.base);
-    vmx_vmwrite(VMCS_GUEST_SS_LIMIT, sregs->ss.limit);
+    uint32_t ss_limit = sregs->ss.limit;
+    if (sregs->ss.g && ss_limit == 0xFFFFF) ss_limit = 0xFFFFFFFF;
+    vmx_vmwrite(VMCS_GUEST_SS_LIMIT, ss_limit);
     uint32_t ss_ar = sregs->ss.type | (sregs->ss.s << 4) |
                      (sregs->ss.dpl << 5) | (sregs->ss.present << 7) |
                      (sregs->ss.avl << 12) | (sregs->ss.l << 13) |
@@ -734,15 +757,26 @@ int vmx_vcpu_add_mem_slot(vmx_vcpu_t *vcpu, const kvm_userspace_memory_region_t 
     slot->guest_phys_addr = region->guest_phys_addr;
     slot->memory_size = region->memory_size;
     slot->host_virt_addr = region->userspace_addr;
-
-     
-    int rc = ept_map_range(vcpu,
-                           region->guest_phys_addr,
-                           region->userspace_addr,   
-                           region->memory_size,
-                           EPT_RWX | (EPT_MT_WB << 3));
-    if (rc < 0) {
-        return -1;
+    
+    uint64_t cr3 = paging_get_active_cr3();
+    uint64_t offset = 0;
+    while (offset < region->memory_size) {
+        uint64_t uva = region->userspace_addr + offset;
+        uint64_t hpa = paging_virt_to_phys(cr3, uva);
+        if (hpa == 0) {
+            serial_write_string("[VMX] EPT: VA->PA failed for 0x");
+            serial_write_uint64(uva);
+            serial_write_string("\n");
+            return -1;
+        }
+        int rc = ept_map_page(vcpu,
+                              region->guest_phys_addr + offset,
+                              hpa,
+                              EPT_RWX | (EPT_MT_WB << 3));
+        if (rc < 0) {
+            return -1;
+        }
+        offset += 4096;
     }
 
     vcpu->mem_slot_count++;
@@ -796,6 +830,8 @@ int vmx_vcpu_run(vmx_vcpu_t *vcpu)
         if (rc != 0) {
              
             uint64_t vm_err = vmx_vmread(0x4400);
+
+            debug_printf("[VMX] VM-instruction failed: rc=%d, error=%u\n", rc, (uint32_t)vm_err);
 
             vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
             vcpu->run->internal.suberror = (uint32_t)vm_err;
@@ -910,6 +946,48 @@ static int vmx_handle_exit(vmx_vcpu_t *vcpu)
         return 0;
 
     case EXIT_REASON_INVALID_GUEST_STATE:
+        debug_printf("[VMX] Invalid Guest State!\n");
+        debug_printf("G_CR0: %016llx\n", vmx_vmread(VMCS_GUEST_CR0));
+        debug_printf("G_CR3: %016llx\n", vmx_vmread(VMCS_GUEST_CR3));
+        debug_printf("G_CR4: %016llx\n", vmx_vmread(VMCS_GUEST_CR4));
+        debug_printf("G_EFER:%016llx\n", vmx_vmread(VMCS_GUEST_IA32_EFER));
+        debug_printf("MISC:  %016llx\n", vmx_rdmsr(IA32_VMX_MISC));
+        
+        uint64_t hcr0, hcr3, hcr4;
+        __asm__ volatile("mov %%cr0, %0" : "=r"(hcr0));
+        __asm__ volatile("mov %%cr3, %0" : "=r"(hcr3));
+        __asm__ volatile("mov %%cr4, %0" : "=r"(hcr4));
+        debug_printf("H_CR0: %016llx\n", hcr0);
+        debug_printf("H_CR3: %016llx\n", hcr3);
+        debug_printf("H_CR4: %016llx\n", hcr4);
+
+        debug_printf("CS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_CS_SEL), vmx_vmread(VMCS_GUEST_CS_BASE));
+        debug_printf("CS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_CS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_CS_ACCESS));
+        debug_printf("SS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_SS_SEL), vmx_vmread(VMCS_GUEST_SS_BASE));
+        debug_printf("SS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_SS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_SS_ACCESS));
+        debug_printf("DS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_DS_SEL), vmx_vmread(VMCS_GUEST_DS_BASE));
+        debug_printf("DS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_DS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_DS_ACCESS));
+        debug_printf("ES: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_ES_SEL), vmx_vmread(VMCS_GUEST_ES_BASE));
+        debug_printf("ES: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_ES_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_ES_ACCESS));
+        debug_printf("FS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_FS_SEL), vmx_vmread(VMCS_GUEST_FS_BASE));
+        debug_printf("FS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_FS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_FS_ACCESS));
+        debug_printf("GS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_GS_SEL), vmx_vmread(VMCS_GUEST_GS_BASE));
+        debug_printf("GS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_GS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_GS_ACCESS));
+        debug_printf("TR: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_TR_SEL), vmx_vmread(VMCS_GUEST_TR_BASE));
+        debug_printf("TR: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_TR_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_TR_ACCESS));
+        debug_printf("LDTR: SEL=%04x AR=%08x\n", (uint16_t)vmx_vmread(VMCS_GUEST_LDTR_SEL), (uint32_t)vmx_vmread(VMCS_GUEST_LDTR_ACCESS));
+        debug_printf("GDTR: BASE=%016llx LIM=%04x\n", vmx_vmread(VMCS_GUEST_GDTR_BASE), (uint16_t)vmx_vmread(VMCS_GUEST_GDTR_LIMIT));
+        debug_printf("IDTR: BASE=%016llx LIM=%04x\n", vmx_vmread(VMCS_GUEST_IDTR_BASE), (uint16_t)vmx_vmread(VMCS_GUEST_IDTR_LIMIT));
+        debug_printf("EPTP: %016llx\n", vmx_vmread(VMCS_EPTP));
+        debug_printf("RIP:  %016llx\n", vmx_vmread(VMCS_GUEST_RIP));
+        debug_printf("RSP:  %016llx\n", vmx_vmread(VMCS_GUEST_RSP));
+        debug_printf("RFL:  %016llx\n", vmx_vmread(VMCS_GUEST_RFLAGS));
+        debug_printf("SEC:  %08x\n", (uint32_t)vmx_vmread(VMCS_SECONDARY_CPU_CONTROLS));
+        debug_printf("ENT:  %08x\n", (uint32_t)vmx_vmread(VMCS_ENTRY_CONTROLS));
+        debug_printf("EXT:  %08x\n", (uint32_t)vmx_vmread(VMCS_EXIT_CONTROLS));
+        debug_printf("PIN:  %08x\n", (uint32_t)vmx_vmread(VMCS_PIN_BASED_CONTROLS));
+        debug_printf("PRM:  %08x\n", (uint32_t)vmx_vmread(VMCS_CPU_BASED_CONTROLS));
+        
         vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
         vcpu->run->internal.suberror = exit_reason;
         return 1;
@@ -1235,6 +1313,20 @@ static int vmx_handle_cr_access(vmx_vcpu_t *vcpu)
             vmx_vmwrite(VMCS_GUEST_CR0, guest_cr0);
             vmx_vmwrite(VMCS_CR0_READ_SHADOW, guest_visible_cr0);
             vmx_vmwrite(VMCS_GUEST_CR4, guest_cr4);
+
+            uint64_t efer = vmx_vmread(VMCS_GUEST_IA32_EFER);
+            uint32_t entry_ctl = (uint32_t)vmx_vmread(VMCS_ENTRY_CONTROLS);
+            if ((guest_visible_cr0 & CR0_PG) &&
+                (efer & EFER_LME) &&
+                (guest_visible_cr4 & CR4_PAE)) {
+                efer |= EFER_LMA;
+                entry_ctl |= VM_ENTRY_IA32E_MODE;
+            } else {
+                efer &= ~EFER_LMA;
+                entry_ctl &= ~VM_ENTRY_IA32E_MODE;
+            }
+            vmx_vmwrite(VMCS_GUEST_IA32_EFER, efer);
+            vmx_vmwrite(VMCS_ENTRY_CONTROLS, entry_ctl);
         } else if (cr_num == 3) {
             vmx_vmwrite(VMCS_GUEST_CR3, reg_val);
         } else if (cr_num == 4) {

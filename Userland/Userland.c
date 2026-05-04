@@ -83,11 +83,11 @@ void _start(void)
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }
-     
+    spawn_with_fallbacks(com_ImplusOS_vm, sizeof(com_ImplusOS_vm) / sizeof(com_ImplusOS_vm[0]));
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }
-     
+    spawn_with_fallbacks(com_ImplusOS_vm, sizeof(com_ImplusOS_vm) / sizeof(com_ImplusOS_vm[0]));
     for (uint64_t i = 0; i < 10; i++) {
         process_yield();
     }
