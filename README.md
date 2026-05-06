@@ -6,8 +6,8 @@ ImplusOS is a hobby OS tree with a UEFI boot path, a small kernel, and userland 
 - Build is intended for interactive Linux environments.
 - Target host platform is Linux (Ubuntu and similar distributions).
 
-<img width="960" height="540" alt="Qemu_10.2.0(macOS)" src="https://github.com/moon-coffee/ImplusOS/blob/c4619fce4ec78b6b1df997d764fe0ca9075f4eb2/Docs/Images/Qemu_8.2.2(Debian).png" />
-<img width="960" height="540" alt="ImplusOS" src="https://github.com/moon-coffee/ImplusOS/blob/c4619fce4ec78b6b1df997d764fe0ca9075f4eb2/Docs/Images/ImplusOS.png" />
+<img width="960" height="540" alt="Qemu_10.2.0(macOS)" src="https://github.com/ImplusOS/ImplusOS/blob/a65f5e815ea0008a286dd81df7efdf719fb0208e/Docs/Images/Qemu_8.2.2(Debian).png" />
+<img width="960" height="540" alt="ImplusOS" src="https://github.com/ImplusOS/ImplusOS/blob/c4619fce4ec78b6b1df997d764fe0ca9075f4eb2/Docs/Images/ImplusOS.png" />
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Static Badge](https://img.shields.io/badge/Repo-3.6MB-blue)
