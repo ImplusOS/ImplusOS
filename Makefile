@@ -215,7 +215,7 @@ $(BUILD_DIR)/Loader/Loader.o: BootLoader/Loader.c
 
 $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 	mkdir -p $(dir $@)
-	$(LD) -nostdlib -znocombreloc \
+	ld -nostdlib -znocombreloc \
 		-T /usr/lib/elf_x86_64_efi.lds \
 		-shared -Bsymbolic \
 		/usr/lib/crt0-efi-x86_64.o \
@@ -225,7 +225,7 @@ $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 		-o $@.so
 	objcopy -j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
-		--target=efi-app-x86_64 $@.so $@
+		-O efi-app-x86_64 $@.so $@
 	rm -f $@.so
 
 $(BUILD_DIR)/Kernel/%.o: Kernel/%.c
@@ -353,11 +353,10 @@ __create_esp_iso:
 	sudo umount $$ESP_MOUNT || exit 1
 
 QEMU_COMMON = \
-	-enable-kvm \
-	-machine q35,accel=kvm,smm=on \
+	-machine q35,smm=on \
 	-smp 4,sockets=1,cores=4,threads=1 \
 	-m 4G \
-	-cpu host,kvm=on,+vmx,hv_vendor_id=null,-hypervisor \
+	-cpu Skylake-Server,+vmx,hv_vendor_id=null,-hypervisor \
 	-device intel-iommu \
 	-device qemu-xhci,id=xhci \
 	-device usb-kbd,bus=xhci.0 \

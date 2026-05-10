@@ -1120,7 +1120,7 @@ int clock_gettime(clockid_t clk_id, struct timespec *tp)
         return 0;
     }
     if (clk_id == CLOCK_REALTIME) {
-        rtc_time_for_clock_t rtc;
+        rtc_time_t rtc;
         if (sys_get_rtc_time(&rtc) == 0) {
             tp->tv_sec  = (time_t)date_to_epoch_secs(
                 (int)rtc.year, (int)rtc.month,  (int)rtc.day,

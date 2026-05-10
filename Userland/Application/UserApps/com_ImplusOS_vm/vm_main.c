@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <sys/syscalls.h>
 #include <stdarg.h>
+#include <time.h>
 #include <stdio.h>
 #include "../../../Syscalls.h"
 #include "../../../API/KVM.h"
@@ -422,7 +423,7 @@ int main(int argc, char **argv)
             break;
 
         case KVM_EXIT_HLT:
-            nanosleep(1000000);
+            sleep_ms(5);
             break;
 
         case KVM_EXIT_SHUTDOWN:

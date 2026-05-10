@@ -28,6 +28,7 @@
 
 static uint8_t g_char_bitmap[256 * 256];
 
+static BOOT_INFO g_boot_info;
 static BOOT_INFO* bi = NULL;
 
 #include "../../../Thirdparty/stb_truetype.h"
@@ -49,8 +50,8 @@ static inline uint32_t alpha_blend(uint32_t dst, uint8_t r, uint8_t g, uint8_t b
 
 static void panic_init(BOOT_INFO* boot_info) {
     if (boot_info != NULL) {
-        memcpy(&bi, boot_info, sizeof(BOOT_INFO));
-        boot_info = &bi;
+        memcpy(&g_boot_info, boot_info, sizeof(BOOT_INFO));
+        bi = &g_boot_info;
     }
 }
 
