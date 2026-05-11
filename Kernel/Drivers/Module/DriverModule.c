@@ -1,16 +1,16 @@
 #include "DriverModule.h"
 
-#include "Drivers/DrvMain/Client/PCI/PCI_Main.h"
-#include "Drivers/DrvMain/Client/FileSystem/FAT32/FAT32_Main.h"
-#include "Drivers/DrvMain/Server/Display/Display_Driver.h"
-#include "ELF/ELF_Loader.h"
-#include "IO/IO_Main.h"
-#include "Memory/DMA_Memory.h"
-#include "Memory/Memory_Main.h"
-#include "Paging/Paging_Main.h"
-#include "Debbuger/Serial/Serial.h"
-#include "Timer/Timer.h"
-#include "Network/Network_Main.h"
+#include "Drivers/Client/PCI/PCI_Main.h"
+#include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
+#include "Drivers/Server/Display/Display_Driver.h"
+#include "Core/elf/ELF_Loader.h"
+#include "Platform/io/IO_Main.h"
+#include "MemoryManagement/DMA_Memory.h"
+#include "MemoryManagement/Memory_Main.h"
+#include "mmu/Paging_Main.h"
+#include "Debug/serial/Serial.h"
+#include "Core/timer/Timer.h"
+#include "Network/network_main.h"
 
 #include <stddef.h>
 #include <stdint.h>

@@ -1,7 +1,7 @@
 #include "IPC_Main.h"
-#include "../ProcessManager/ProcessManager.h"
-#include "../Memory/Memory_Main.h"
-#include "../Sync/Spinlock.h"
+#include "Core/process/ProcessManager.h"
+#include "MemoryManagement/Memory_Main.h"
+#include "Core/sync/Spinlock.h"
 #include <string.h>
 
 extern int driver_framework_api_is_endpoint_pid(int32_t pid);

@@ -1,4 +1,4 @@
-.PHONY: all run_usb run_ide clean image app_build driver_build driver_stage
+.PHONY: all kernel run_usb run_ide clean image app_build driver_build driver_stage
 
 ARCH := x86_64
 CC   = x86_64-elf-gcc
@@ -20,15 +20,6 @@ USERLAND_DIR := Userland
 KERNEL_ELF        := $(BUILD_DIR)/Kernel/Kernel_Main.ELF
 BOOTX64_EFI       := $(BUILD_DIR)/Loader/BOOTX64.EFI
 USERLAND_INIT_ELF := $(BUILD_DIR)/Userland/Userland.ELF
-
-KERNEL_CFLAGS := \
-	-IKernel -IThirdParty -Ilibc/include \
-	-ffreestanding -fno-stack-protector -fPIE -fno-plt -fno-builtin -mcmodel=large \
-	-mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
-	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
-	-MMD -MP -DKERNEL
-
-KERNEL_LDFLAGS := -shared -Bsymbolic -nostdlib --build-id=none -e kernel_main -T Kernel/Kernel_Main.ld
 
 LOADER_CFLAGS := \
 	-I/usr/include/efi \
@@ -55,84 +46,10 @@ USERLAND_CXXFLAGS := \
 	-fno-exceptions -fno-rtti \
 	-Wall -Wextra -O3 -MMD -MP
 
-DRIVER_MAKEFILES := $(shell find Kernel/Drivers/DrvMain/Server -name Makefile -print 2>/dev/null | sort)
+DRIVER_MAKEFILES := $(shell find Kernel/Drivers/Server -name Makefile -print 2>/dev/null | sort)
 DRIVER_DIRS := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
 DRIVER_BUILD_ROOT := $(BUILD_DIR)/Modules
 DRIVER_STAGE_DIR := $(BUILD_DIR)/Kernel/Drivers
-
-KERNEL_C_SRCS := \
-	libc/src/assert.c \
-	libc/src/math.c \
-	libc/src/stdlib.c \
-	libc/src/string.c \
-	libc/src/stdio.c \
-	libc/src/errno.c \
-	Kernel/Kernel_Main.c \
-	Kernel/Timer/Timer.c \
-	Kernel/Boot/LoadBar.c \
-	Kernel/Platform/ACPI/ACPI.c \
-	Kernel/Platform/APIC/LAPIC.c \
-	Kernel/Platform/APIC/IOAPIC.c \
-	Kernel/Platform/Interrupts/Interrupts.c \
-	Kernel/Memory/Memory_Main.c \
-	Kernel/Memory/DMA_Memory.c \
-	Kernel/Paging/Paging_Main.c \
-	Kernel/SMP/SMP_Main.c \
-	Kernel/IDT/IDT_Main.c \
-	Kernel/IO/IO_Main.c \
-	Kernel/IO/Protocol/ATA/Protocol_ATA.c \
-	Kernel/IO/Protocol/USB_MassStorage/Protocol_USB_MassStorage.c \
-	Kernel/Drivers/DrvMain/Client/USB/USB_Client.c \
-	Kernel/Drivers/DrvMain/Client/FileSystem/FAT32/FAT32_Client.c \
-	Kernel/Drivers/DrvMain/Client/Display/Display_Main.c \
-	Kernel/Drivers/DrvMain/Client/NIC/NIC.c \
-	Kernel/Drivers/DrvMain/Client/PS2/PS2_Client.c \
-	Kernel/Drivers/DrvMain/Client/PCI/PCI_Client.c \
-	Kernel/Drivers/DrvMain/Server/Display/ImplusOS_Generic/ImplusOS_Generic.c \
-	Kernel/Drivers/DrvMain/Server/NIC/VirtIONet/VirtIONet.c \
-	Kernel/GDT/GDT_Main.c \
-	Kernel/ELF/ELF_Loader.c \
-	Kernel/Drivers/Module/DriverModule.c \
-	Kernel/Drivers/Module/DriverManager.c \
-	Kernel/Drivers/Module/DriverFrameworkAPI.c \
-	Kernel/Drivers/Module/DriverSelect.c \
-	Kernel/Ethernet/Ethernet.c \
-	Kernel/ARP/ARP.c \
-	Kernel/Network/IPv4.c \
-	Kernel/Network/Network_Main.c \
-	Kernel/Network/UDP/UDP.c \
-	Kernel/Network/TCP/TCP.c \
-	Kernel/Network/ICMP/ICMP.c \
-	Kernel/Network/DHCP/DHCP.c \
-	Kernel/VFS/VFS.c \
-	Kernel/ProcessManager/ProcessManager_Create.c \
-	Kernel/Syscall/Syscall_Init.c \
-	Kernel/Syscall/Syscall_File.c \
-	Kernel/Syscall/Syscall_Dispatch.c \
-	Kernel/IPC/IPC_Main.c \
-	Kernel/WindowManager/WindowManager_Kernel.c \
-	Kernel/Drivers/RTC/RTC.c \
-	Kernel/Debbuger/Serial/Serial.c \
-	Kernel/Debbuger/printf/printf.c \
-	Kernel/Debbuger/Panic/Panic.c \
-	Kernel/Syscall/Syscall_VM.c \
-	Kernel/Syscall/Syscall_Epoll.c \
-	Kernel/Syscall/Syscall_Futex.c \
-	Kernel/Syscall/Syscall_Clock.c \
-	Kernel/Drivers/DrvMain/Client/DRM/DRM_Client.c \
-	Kernel/Drivers/DrvMain/Client/Evdev/Evdev_Client.c \
-	Kernel/Drivers/DrvMain/Client/UnixSocket/UnixSocket.c \
-	Kernel/VMX/VMX_Main.c \
-	Kernel/VMX/VMX_EPT.c \
-	Kernel/Drivers/DrvMain/Client/KVM/KVM_Client.c \
-
-KERNEL_ASM_SRCS := \
-	Kernel/Paging/Paging.asm \
-	Kernel/GDT/GDT.asm \
-	Kernel/IDT/IDT.asm \
-	Kernel/Syscall/Syscall_Entry.asm \
-	Kernel/SMP/SMP_Trampoline.asm \
-	Kernel/VMX/VMX_Entry.asm
 
 USERLAND_C_SRCS := \
 	libc/src/assert.c \
@@ -171,19 +88,19 @@ USERLAND_APP_C_SRCS := \
 	Userland/API/XMLParser.c \
 	Userland/NetworkStack/DNS/DNS.c
 
-KERNEL_OBJS       := $(patsubst Kernel/%.c,$(BUILD_DIR)/Kernel/%.o,$(filter Kernel/%.c,$(KERNEL_C_SRCS))) \
-                     $(patsubst libc/%.c,$(BUILD_DIR)/Kernel/libc/%.o,$(filter libc/%.c,$(KERNEL_C_SRCS))) \
-                     $(KERNEL_ASM_SRCS:%.asm=$(BUILD_DIR)/%.o)
 USERLAND_INIT_OBJS := $(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_C_SRCS))) \
                       $(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_C_SRCS)))
 USERLAND_APP_OBJS  := $(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_APP_C_SRCS))) \
                       $(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_APP_C_SRCS)))
 
 all: $(BOOTX64_EFI) \
-     $(KERNEL_ELF) \
+     kernel \
      $(USERLAND_INIT_ELF) \
      driver_stage \
      app_build
+
+kernel:
+	@$(MAKE) -C Kernel ARCH=$(ARCH) BUILD_DIR=$(abspath $(BUILD_DIR))
 
 app_build: $(USERLAND_INIT_OBJS)
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_windowmanager
@@ -228,18 +145,6 @@ $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 		-O efi-app-x86_64 $@.so $@
 	rm -f $@.so
 
-$(BUILD_DIR)/Kernel/%.o: Kernel/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/Kernel/%.o: Kernel/%.asm
-	@mkdir -p $(dir $@)
-	$(NASM) -f elf64 $< -o $@
-
-$(KERNEL_ELF): $(KERNEL_OBJS)
-	mkdir -p $(dir $@)
-	$(LD) $(KERNEL_LDFLAGS) $^ -o $@
-
 $(BUILD_DIR)/Userland/%.o: Userland/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
@@ -247,10 +152,6 @@ $(BUILD_DIR)/Userland/%.o: Userland/%.c
 $(BUILD_DIR)/Userland/libc/%.o: libc/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/Kernel/libc/%.o: libc/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/Userland/%.o: Userland/%.cpp
 	@mkdir -p $(dir $@)
@@ -392,6 +293,5 @@ run_usb:
 clean:
 	@rm -rf $(BUILD_DIR) $(IMAGE_DIR)
 
--include $(KERNEL_OBJS:.o=.d)
 -include $(USERLAND_INIT_OBJS:.o=.d)
 -include $(USERLAND_APP_OBJS:.o=.d)

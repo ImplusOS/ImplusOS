@@ -1,5 +1,5 @@
 #include "LoadBar.h"
-#include "../Kernel_Main.h"
+#include "kernel/boot_info.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include "Drivers/Module/DriverManager.h"

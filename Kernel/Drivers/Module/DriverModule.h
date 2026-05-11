@@ -5,7 +5,7 @@
 
 #include "DriverBinary.h"
 #include "DriverManager.h"
-#include "../../Kernel_Main.h"
+#include "kernel/boot_info.h"
 
 void driver_module_manager_init(const BOOT_INFO *boot_info);
 const driver_binary_t *driver_module_manager_kernel_api(void);

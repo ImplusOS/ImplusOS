@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../Kernel_Main.h"
+#include "kernel/boot_info.h"
 
 void load_bar_init(BOOT_INFO* boot_info);
 

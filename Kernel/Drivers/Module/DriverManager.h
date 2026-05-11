@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 #include "DriverBinary.h"
-#include "Drivers/DrvMain/Client/FileSystem/FAT32/FAT32_Main.h"
-#include "Drivers/DrvMain/Client/PCI/PCI_Main.h"
+#include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
+#include "Drivers/Client/PCI/PCI_Main.h"
 
 typedef enum {
     DRIVER_MANAGER_KIND_UNKNOWN = 0,

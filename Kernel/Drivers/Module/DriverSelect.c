@@ -4,7 +4,6 @@
 #include "DriverSelect.h"
 #include "DriverBinary.h"
 #include "DriverManager.h"
-#include "Drivers/DrvMain/Server/Display/ImplusOS_Generic/ImplusOS_Generic.h"
 
 static driver_boot_framebuffer_t g_boot_framebuffer;
 
@@ -21,19 +20,6 @@ void driver_select_set_boot_framebuffer(const driver_boot_framebuffer_t *framebu
 
     g_boot_framebuffer = *framebuffer;
 }
-
-static const driver_display_t g_boot_fb_driver = {
-    .name            = "BootFramebuffer",
-    .probe           = fb_probe,
-    .init            = fb_init,
-    .is_ready        = fb_is_ready,
-    .width           = fb_width,
-    .height          = fb_height,
-    .draw_pixel      = fb_draw_pixel,
-    .fill_rect       = fb_fill_rect,
-    .present         = fb_present,
-    .set_framebuffer = generic_fb_set,
-};
 
 const driver_display_t *driver_select_pick_display_driver(void) {
     const driver_display_t *drv;
@@ -56,15 +42,6 @@ const driver_display_t *driver_select_pick_display_driver(void) {
             if (drv->init()) {
                 return drv;
             }
-        }
-    }
-    
-    if (g_boot_fb_driver.set_framebuffer) {
-        g_boot_fb_driver.set_framebuffer(&g_boot_framebuffer);
-    }
-    if (!g_boot_fb_driver.probe || g_boot_fb_driver.probe()) {
-        if (g_boot_fb_driver.init()) {
-            return &g_boot_fb_driver;
         }
     }
 

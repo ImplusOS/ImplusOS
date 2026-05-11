@@ -2,7 +2,7 @@
 #include <efilib.h>
 #include <stdint.h>
 #include "../libc/include/string.h"
-#include "../Kernel/Common/FAT32_BPB.h"
+#include "../Kernel/FileSystem/FAT32_BPB.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
@@ -55,6 +55,7 @@
 
 #define EI_NIDENT 16
 #define PT_LOAD   1
+#define ET_DYN    3
 
 #define MAX_LOADED_FILES     16
 #define LOADED_FILE_NAME_MAX 64
@@ -782,13 +783,31 @@ EFI_STATUS LoadKernelELF(
     }
 
     UINTN TotalPages = EFI_SIZE_TO_PAGES(MaxAddr - MinAddr);
-    EFI_PHYSICAL_ADDRESS KernelBaseAddr = 0;
-
+    UINT64 KernelSpan = (UINT64)TotalPages * EFI_PAGE_SIZE;
+    EFI_PHYSICAL_ADDRESS KernelBaseAddr = MinAddr;
     EFI_STATUS Status = uefi_call_wrapper(
         ST->BootServices->AllocatePages, 4,
-        AllocateAnyPages, EfiLoaderData, TotalPages, &KernelBaseAddr);
-    if (EFI_ERROR(Status)) {
-        Print(L"LoadKernelELF: AllocateAnyPages failed (Pages: %d, Status: %r)\n", TotalPages, Status);
+        AllocateAddress, EfiLoaderData, TotalPages, &KernelBaseAddr);
+
+    if (EFI_ERROR(Status) && Ehdr->e_type == ET_DYN) {
+        KernelBaseAddr = 0;
+        for (EFI_PHYSICAL_ADDRESS Candidate = 0x01000000ULL;
+             Candidate + KernelSpan <= 0x80000000ULL;
+             Candidate += 0x00200000ULL) {
+            EFI_PHYSICAL_ADDRESS Requested = Candidate;
+            Status = uefi_call_wrapper(
+                ST->BootServices->AllocatePages, 4,
+                AllocateAddress, EfiLoaderData, TotalPages, &Requested);
+            if (!EFI_ERROR(Status)) {
+                KernelBaseAddr = Requested;
+                break;
+            }
+        }
+    }
+
+    if (EFI_ERROR(Status) || KernelBaseAddr == 0) {
+        Print(L"LoadKernelELF: failed to allocate kernel image (Base: 0x%lx, Pages: %d, Status: %r)\n",
+              MinAddr, TotalPages, Status);
         return Status;
     }
 

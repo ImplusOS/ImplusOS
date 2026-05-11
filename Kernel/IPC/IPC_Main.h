@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../Common/Status.h"
+#include "kernel/status.h"
 
 #define IPC_MESSAGE_MAX_SIZE 256
 #define IPC_MAX_MESSAGES_PER_PROCESS 16

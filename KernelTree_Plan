@@ -1,0 +1,167 @@
+Kernel/
+├── arch/
+│   ├── x86_64/
+│   │   ├── boot/
+│   │   │   ├── GDT.asm
+│   │   │   ├── IDT.asm
+│   │   │   ├── Paging.asm
+│   │   │   ├── Syscall_Entry.asm
+│   │   │   └── VMX_Entry.asm
+│   │   │
+│   │   ├── cpu/
+│   │   │   ├── GDT_Main.c
+│   │   │   ├── IDT_Main.c
+│   │   │   ├── Interrupts.c
+│   │   │   └── SMP_Main.c
+│   │   │
+│   │   ├── vm/
+│   │   │   ├── VMX_Main.c
+│   │   │   ├── VMX_EPT.c
+│   │   │   └── scratch.asm
+│   │   │
+│   │   └── linker/
+│   │       └── Kernel_Main.ld
+│   │
+│   └── arm64/                ← 将来用（未実装）
+│       ├── boot/
+│       ├── cpu/
+│       ├── mm/
+│       └── linker/
+│
+├── core/
+│   ├── Kernel_Main.c
+│   ├── Kernel_Main.h
+│   ├── KernelConfig.h
+│   ├── ProcessManager/
+│   │   └── ProcessManager_Create.c
+│   │
+│   ├── Syscall/
+│   │   ├── Syscall_Dispatch.c
+│   │   ├── Syscall_Init.c
+│   │   ├── Syscall_Clock.c
+│   │   ├── Syscall_Epoll.c
+│   │   ├── Syscall_File.c
+│   │   ├── Syscall_Futex.c
+│   │   ├── Syscall_VM.c
+│   │   └── Syscall_Entry.asm
+│   │
+│   ├── Timer/
+│   │   └── Timer.c
+│   │
+│   └── Sync/
+│       └── Spinlock.h
+│
+├── mm/
+│   ├── Memory_Main.c
+│   ├── Memory_Main.h
+│   ├── DMA_Memory.c
+│   └── DMA_Memory.h
+│
+├── drivers/
+│   ├── DriverFramework/
+│   │   ├── DriverFrameworkAPI.c
+│   │   └── DriverFrameworkAPI.h
+│   │
+│   ├── DriverManager/
+│   │   ├── DriverManager.c
+│   │   ├── DriverManager.h
+│   │   ├── DriverModule.c
+│   │   ├── DriverModule.h
+│   │   ├── DriverSelect.c
+│   │   └── DriverSelect.h
+│   │
+│   ├── modules/
+│   │   ├── DriverBinary.h
+│   │   └── module.mk
+│   │
+│   ├── ps2/
+│   │   ├── PS2_Client.c
+│   │   └── PS2_Input.h
+│   │
+│   ├── usb/
+│   │   ├── USB_Main.c
+│   │   ├── USB_Main.h
+│   │   ├── EHCI/
+│   │   ├── UHCI/
+│   │   ├── OHCI/
+│   │   ├── XHCI/
+│   │   ├── HID/
+│   │   └── MassStorage/
+│   │
+│   ├── pci/
+│   │   ├── PCI_Client.c
+│   │   └── PCI_Main.h
+│   │
+│   ├── display/
+│   │   ├── Display_Main.c
+│   │   ├── Display_Main.h
+│   │   └── DRM/
+│   │
+│   ├── nic/
+│   │   ├── NIC.c
+│   │   └── NIC.h
+│   │
+│   └── rtc/
+│       ├── RTC.c
+│       └── RTC.h
+│
+├── platform/
+│   ├── acpi/
+│   │   ├── ACPI.c
+│   │   └── ACPI.h
+│   │
+│   ├── apic/
+│   │   ├── IOAPIC.c
+│   │   ├── LAPIC.c
+│   │   ├── IOAPIC.h
+│   │   └── LAPIC.h
+│   │
+│   ├── interrupts/
+│   │   ├── Interrupts.c
+│   │   └── Interrupts.h
+│   │
+│   └── io/
+│       ├── IO_Main.c
+│       └── IO_Main.h
+│
+├── net/
+│   ├── Ethernet.c
+│   ├── Ethernet.h
+│   ├── IPv4.c
+│   ├── IPv4.h
+│   ├── DHCP/
+│   ├── TCP/
+│   ├── UDP/
+│   ├── ICMP/
+│   └── Network_Main.c
+│
+├── fs/
+│   ├── VFS.c
+│   ├── VFS.h
+│   ├── FAT32/
+│   ├── exFAT/
+│   └── ELF/
+│
+├── ipc/
+│   ├── IPC_Main.c
+│   └── IPC_Main.h
+│
+├── debug/
+│   ├── Panic/
+│   │   ├── Panic.c
+│   │   └── Panic.h
+│   ├── Serial/
+│   │   ├── Serial.c
+│   │   └── Serial.h
+│   └── printf/
+│       ├── printf.c
+│       └── printf.h
+│
+├── boot/
+│   ├── LoadBar.c
+│   └── LoadBar.h
+│
+└── include/
+    ├── Common/
+    │   ├── Status.h
+    │   └── FAT32_BPB.h

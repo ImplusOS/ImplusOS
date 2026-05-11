@@ -1,12 +1,12 @@
 #include "DriverManager.h"
 
-#include "../../Kernel_Main.h"
+#include "kernel/boot_info.h"
 #include "DriverModule.h"
-#include "Drivers/DrvMain/Client/Display/Display_Main.h"
-#include "Drivers/DrvMain/Client/FileSystem/FAT32/FAT32_Main.h"
-#include "Drivers/DrvMain/Client/NIC/NIC.h"
-#include "Drivers/DrvMain/Client/PS2/PS2_Input.h"
-#include "Drivers/DrvMain/Client/USB/USB_Driver_API.h"
+#include "Drivers/Client/Display/Display_Main.h"
+#include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
+#include "Drivers/Client/NIC/NIC.h"
+#include "Drivers/Client/PS2/PS2_Input.h"
+#include "Drivers/Client/USB/USB_Driver_API.h"
 
 #include <stddef.h>
 #include <string.h>

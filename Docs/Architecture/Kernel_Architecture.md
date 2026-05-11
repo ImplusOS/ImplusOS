@@ -234,7 +234,7 @@ LDFLAGS: -shared -Bsymbolic -e driver_module_init -z max-page-size=4096
 
 ### 6.1 VFS Layer
 
-The VFS (`Kernel/VFS/`) provides a unified interface with mount-point prefix
+The VFS (`Kernel/Core/vfs/`) provides a unified interface with mount-point prefix
 matching. Currently the only backend is FAT32, mounted at `/`.
 
 Key operations:
@@ -417,7 +417,7 @@ Application (UDP send syscall)
    │Ethernet│  Kernel/Ethernet/Ethernet.c
    ├────────┤
    │VirtIO- │
-   │  Net   │  Kernel/Drivers/DrvMain/Server/NIC/VirtIONet/
+   │  Net   │  Kernel/Drivers/Server/NIC/VirtIONet/
    └────────┘
 ```
 
@@ -462,8 +462,8 @@ A full sequential-consistency barrier is available via `memory_barrier_full()`.
 
 ## 14. Debug & Diagnostic
 
-- **Serial**: COM1 output at 115200 baud (`Debbuger/Serial/`)
-- **printf**: Kernel-space printf implementation (`Debbuger/printf/`)
+- **Serial**: COM1 output at 115200 baud (`Debug/serial/`)
+- **printf**: Kernel-space printf implementation (`Debug/printf/`)
 - **Panic**: `panic(const char *msg)` — halts with message
 - **Load Bar**: Boot progress animation on framebuffer (`Boot/LoadBar`)
 - **Memory dump**: `memory_dump_virtual()` / `memory_dump_physical()`

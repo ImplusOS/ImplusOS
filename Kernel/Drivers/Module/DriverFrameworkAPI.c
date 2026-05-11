@@ -1,14 +1,14 @@
 #include "../../../Userland/DriverFramework/API/DriverFrameworkAPI.h"
 
-#include "../../Common/Status.h"
-#include "../../IO/IO_Main.h"
-#include "../../IPC/IPC_Main.h"
-#include "../../Memory/DMA_Memory.h"
-#include "../../Paging/Paging_Main.h"
-#include "../../ProcessManager/ProcessManager.h"
-#include "../../Sync/Spinlock.h"
-#include "../../Timer/Timer.h"
-#include "Drivers/DrvMain/Client/PCI/PCI_Main.h"
+#include "kernel/status.h"
+#include "Platform/io/IO_Main.h"
+#include "IPC/IPC_Main.h"
+#include "MemoryManagement/DMA_Memory.h"
+#include "mmu/Paging_Main.h"
+#include "Core/process/ProcessManager.h"
+#include "Core/sync/Spinlock.h"
+#include "Core/timer/Timer.h"
+#include "Drivers/Client/PCI/PCI_Main.h"
 
 #include <stdbool.h>
 #include <stddef.h>
