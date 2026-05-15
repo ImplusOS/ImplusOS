@@ -3,7 +3,7 @@ PROJECT_NUMBER         = "dev"
 OUTPUT_DIRECTORY       = Docs/Generated
 CREATE_SUBDIRS         = NO
 
-INPUT                  = README.md Docs/Architecture Kernel Userland BootLoader
+INPUT                  = README.md Docs/Architecture Kernel Userland BootLoader BootManager
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.c *.cpp *.asm *.md
 

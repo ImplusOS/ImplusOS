@@ -1,527 +1,403 @@
-# ImplusOS Kernel Architecture
+# Kernel Architecture — ImplusOS
 
 ## 1. Overview
 
-ImplusOS is a hobby operating system targeting the **x86-64** architecture.
-It boots via UEFI, initialises hardware through a monolithic-style kernel, and
-then transitions to a userland init process that spawns system services and user
-applications. The kernel is written entirely in C and x86-64 assembly (NASM).
+ImplusOS runs a **monolithic kernel** with loadable driver modules on x86-64 hardware.
+The kernel is a single ELF64 binary (`Kernel_Main.ELF`) that is loaded by the UEFI
+bootloader into physical memory and entered directly in Long Mode with paging already
+enabled by the UEFI firmware.
 
-Key design characteristics:
-
-| Property | Value |
-|---|---|
-| Architecture | x86-64 (Long Mode) |
-| Boot method | UEFI via `gnu-efi` |
-| Kernel model | Monolithic with loadable driver modules (ELF shared objects) |
-| Filesystem | FAT32 (read / write) |
-| Userland ABI | `syscall` / `sysret` (AMD64) |
-
----
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Userland (Ring 3)                       │
+│  Init (Userland.ELF) → WindowManager, Shell, Apps, ...         │
+├───────────────────────── SYSCALL/SYSRET ────────────────────────┤
+│                         Kernel (Ring 0)                        │
+│                                                                 │
+│  ┌───────────┐ ┌─────────┐ ┌─────┐ ┌───────┐ ┌──────────────┐ │
+│  │ Process   │ │  VFS /  │ │ IPC │ │ WM    │ │  Network     │ │
+│  │ Manager   │ │ FAT32   │ │     │ │Kernel │ │  Stack       │ │
+│  └───────────┘ └─────────┘ └─────┘ └───────┘ └──────────────┘ │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │              Driver Module Manager                          ││
+│  │  PCI │ FAT32 │ PS/2 │ USB │ VirtIO │ Display │ NIC         ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                 │
+│  ┌───────────┐ ┌─────────┐ ┌─────┐ ┌───────┐ ┌──────────────┐ │
+│  │ Memory /  │ │ GDT /   │ │ SMP │ │ ACPI  │ │ Timer /      │ │
+│  │ Paging    │ │ IDT     │ │     │ │ APIC  │ │ RTC          │ │
+│  └───────────┘ └─────────┘ └─────┘ └───────┘ └──────────────┘ │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                UEFI Bootloader (Loader.c)                      │
+│  GOP setup → BMP logo → ELF load → Driver preload             │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## 2. Boot Sequence
 
-```
-UEFI Firmware
-  │
-  ├─ EFI System Partition
-  │   └─ EFI/BOOT/BOOTX64.EFI   ← BootLoader/Loader.c
-  │
-  ▼
-BOOTX64.EFI (UEFI Application)
-  │  1. Initialise GOP (Graphics Output Protocol)
-  │  2. Display boot logo (BMP alpha-blend)
-  │  3. Detect boot drive type (IDE / USB) via EFI Device Path
-  │  4. Find partition start LBA (GPT / El Torito fallback)
-  │  5. Discover ACPI RSDP from EFI Configuration Tables
-  │  6. Load Kernel ELF from /Kernel/Kernel_Main.ELF
-  │  7. Parse ELF64, allocate pages at physical load addresses
-  │  8. Pre-load driver module ELFs into memory below 4 GiB
-  │  9. Exit Boot Services (get final memory map)
-  │  10. Jump to kernel_main(BOOT_INFO*)
-  │
-  ▼
-kernel_main() — Kernel/Kernel_Main.c
-  │  Phase 1: CPU Setup
-  │    ├─ CLI
-  │    ├─ Copy BOOT_INFO to static storage
-  │    ├─ Switch to kernel stack (_stack_top from linker script)
-  │    ├─ Init load bar animation
-  │    ├─ Serial port init (COM1, 115200 baud)
-  │    ├─ GDT init (6 segments + TSS)
-  │    ├─ IDT init (256 entries)
-  │    ├─ Physical memory manager init (EFI memory map → bitmap)
-  │    ├─ Paging init (4-level page tables, identity + higher-half)
-  │    └─ Heap allocator init (malloc / free)
-  │
-  │  Phase 2: Platform
-  │    ├─ SMP init
-  │    ├─ ACPI init (parse RSDP → RSDT/XSDT → MADT)
-  │    ├─ LAPIC / I/O APIC configuration from ACPI
-  │    ├─ Timer init (PIT → LAPIC timer)
-  │    └─ STI
-  │
-  │  Phase 3: Drivers & Subsystems
-  │    ├─ Driver module manager init (register pre-loaded ELFs)
-  │    ├─ Boot framebuffer handoff to display subsystem
-  │    ├─ Disk I/O init (ATA or USB Mass Storage)
-  │    ├─ FAT32 + VFS init
-  │    ├─ Display init (probe: VirtIO-GPU > Generic framebuffer)
-  │    ├─ Window Manager kernel-side init
-  │    ├─ PS/2 input init
-  │    ├─ USB driver client init
-  │    ├─ Network stack init (Ethernet → ARP → IPv4 → UDP)
-  │    ├─ Syscall init (MSR: STAR, LSTAR, SFMASK)
-  │    ├─ Process manager init
-  │    ├─ IPC init
-  │    └─ Syscall File init
-  │
-  │  Phase 4: Transition to Userland
-  │    ├─ Register boot process from /Userland/Userland.ELF
-  │    ├─ Switch CR3 to user page table
-  │    ├─ Set up iretq frame (user CS/DS/SS/RSP/RIP)
-  │    └─ iretq → Ring 3
+### 2.1 UEFI Bootloader (`BootLoader/Loader.c`)
+
+The bootloader is a UEFI application built with `gnu-efi`:
+
+1. **GOP Initialization** — Queries `EFI_GRAPHICS_OUTPUT_PROTOCOL`, selects native resolution
+2. **Boot Logo** — Loads `Resource/Images/BootLogo.bmp` from the ESP, renders on framebuffer
+3. **Font Loading** — Loads `Resource/Fonts/NotoSansJP-Regular.ttf` for boot-time text (stb_truetype)
+4. **SMBIOS Discovery** — Parses SMBIOS 2.x/3.x tables for CPU, manufacturer, product info
+5. **ACPI RSDP Discovery** — Locates ACPI RSDP v1/v2 from UEFI Configuration Table
+6. **Kernel Loading** — Loads `Kernel/Kernel_Main.ELF` from the boot filesystem
+   - Parses ELF64 headers, loads PT_LOAD segments
+   - Supports ET_DYN (PIE) with R_X86_64_RELATIVE relocations
+7. **Driver Preloading** — Loads all `*.ELF` files from `Kernel/Driver/` directory
+8. **Userland Preloading** — Loads `Userland/Userland.ELF` and application ELFs
+9. **Partition BPB Capture** — Reads FAT32 BPB from boot partition for filesystem init
+10. **Boot Services Exit** — Calls `ExitBootServices()`, transitions ownership to kernel
+11. **Kernel Entry** — Jumps to `kernel_main()` with `BOOT_INFO` structure
+
+### 2.2 Kernel Initialization (`Kernel/Core/kernel_main.c`)
+
+```c
+void kernel_main(BOOT_INFO *boot_info) {
+    // Phase 1: Core hardware
+    serial_init();            // COM1 serial output (115200 baud)
+    init_gdt();               // Global Descriptor Table (kernel/user code/data segments + TSS)
+    init_idt();               // Interrupt Descriptor Table (256 entries)
+
+    // Phase 2: Memory
+    init_physical_memory();   // Bitmap-based physical page allocator
+    init_paging();            // 4-level page tables (identity map kernel)
+    memory_init();            // Kernel heap (malloc/free/calloc/realloc)
+
+    // Phase 3: Platform
+    acpi_init();              // ACPI table parsing (MADT, etc.)
+    platform_interrupts_configure();  // IOAPIC + LAPIC setup
+    syscall_init();           // MSR setup for SYSCALL/SYSRET
+    smp_init();               // Multi-processor initialization
+    vmx_init();               // Intel VT-x (optional VMX support)
+    timer_init(60);           // LAPIC timer at 60 Hz
+
+    // Phase 4: Drivers & Subsystems
+    driver_module_manager_init();     // Load driver modules from BOOT_INFO
+    driver_module_init_all();         // Initialize all loaded drivers
+    disk_io_init();                   // Disk I/O backend selection
+    all_fs_initialize();              // FAT32 + VFS mount
+    driver_manager_display_init();    // Display driver selection
+    wm_kernel_init();                 // Window manager kernel side
+    process_manager_init();           // Process table initialization
+    ipc_init();                       // IPC message queues
+    syscall_file_init();              // File descriptor tables
+    network_stack_init();             // Network stack (Ethernet/ARP/IPv4/UDP/TCP)
+
+    // Phase 5: Enter userland
+    process_register_boot_process("/Userland/Userland.ELF");
+    ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
+}
 ```
 
----
+## 3. Memory Management
 
-## 3. Memory Layout
+### 3.1 Physical Memory Manager (PMM)
 
-### 3.1 Physical Memory
-
-| Region | Description |
-|---|---|
-| 0x00000000 – 0x000FFFFF | Low memory (reserved) |
-| 0x00100000 (`_kernel_start`) | Kernel .text start |
-| `_kernel_end` + 256 KiB stack | End of kernel BSS + 256 KiB kernel stack |
-| Free pages | Managed by bitmap-based PMM |
-| Below 4 GiB | Driver module ELF images (pre-loaded by bootloader) |
+- **Algorithm**: Bitmap-based page allocator
+- **Page size**: 4 KiB (4096 bytes)
+- **Initialization**: Parses UEFI memory map, marks available pages
+- **API**: `alloc_page()`, `free_page()`, `alloc_contiguous_pages()`, `free_contiguous_pages()`
+- **Statistics**: `get_free_memory()`, `get_used_memory()`, `get_total_memory_pages()`
 
 ### 3.2 Virtual Memory (4-Level Paging)
 
-```
-0x0000_0000_0000_0000 ┐
-            ...        │  Identity-mapped low memory (kernel use)
-0x0000_003F_FFFF_FFFF ┘
+- **Page table levels**: PML4 → PDPT → PD → PT
+- **Kernel mapping**: Identity-mapped (virtual == physical)
+- **User mapping**: Per-process CR3, separate address spaces
+- **Page flags**: PRESENT, RW, USER, PWT, PCD, PS (2MiB), NX (No-Execute), EXTERNAL
+- **API**: `paging_create_process_space()`, `paging_destroy_process_space()`, `paging_map_user_page()`, `paging_set_user_access()`, `paging_virt_to_phys()`
 
-0x0000_0040_0000_0000 ┐  USER_CODE_BASE
-            ...        │  User code (NX protected), heap, stack
-0x0000_0048_0000_0000 ┘  USER_STACK_TOP
+### 3.3 Kernel Heap
 
-Kernel higher-half region   (MMIO, device memory)
+- Standard allocator interface: `malloc()`, `free()`, `calloc()`, `realloc()`
+- Sensitive memory variants: `malloc_sensitive()`, `free_sensitive()` (zeroed on free)
+- DMA allocator: `dma_alloc()`, `dma_free()` (physically contiguous, low memory)
 
-### 3.3 Security Features (NX Bit)
+### 3.4 User-Space Memory Map
 
-ImplusOS utilizes the **No-Execute (NX)** bit in the 4-level page tables to prevent code execution from data-only memory regions (stack, heap, DMA buffers). The NX bit is globally enabled in `IA32_EFER` and enforced via `init_paging()`.
-```
+| Region | Start Address | End Address | Size |
+|---|---|---|---|
+| Code | `0x4000000000` | `0x4080000000` | 2 GiB |
+| Heap | `0x4100000000` | `0x47E0000000` | ~30 GiB |
+| Stack | `0x47E0000000` | `0x4800000000` | 32 MiB |
 
-### 3.3 User Process Address Space
+## 4. Process Management
 
-| Range | Use |
-|---|---|
-| `0x4000000000` – `0x4100000000` | Code segment (ELF load) |
-| `0x4100000000` – `0x47E0000000` | User heap (grows up via `user_alloc` / `mmap`) |
-| `0x47E0000000` – `0x4800000000` | User stack (32 MiB, grows down) |
+### 4.1 Process Model
 
-### 3.4 Kernel Heap
+- Each process has its own CR3 (address space)
+- Max processes: 128 (configurable, range 1–256)
+- Scheduling: Round-robin with timer-driven preemption (60 Hz tick)
+- Process creation: `process_create_user()`, `process_spawn_user_elf()`
+- Process states tracked via process table
 
-The kernel provides `malloc()`, `calloc()`, `realloc()`, `free()` backed by a
-page-based allocator. Sensitive allocations use `malloc_sensitive()` /
-`free_sensitive()` which zero memory on free.
+### 4.2 Capability System
 
-DMA memory is separately managed via `dma_alloc()` / `dma_free()`, returning
-physically-contiguous, identity-mapped buffers with physical addresses provided
-out-of-band.
+Every process has a bitmask of capabilities:
 
----
-
-## 4. CPU Management
-
-### 4.1 GDT
-
-Six segment descriptors plus one TSS entry:
-
-| Selector | Segment |
-|---|---|
-| `0x08` | Kernel Code (64-bit) |
-| `0x10` | Kernel Data |
-| `0x18` | User Compat Code (32-bit, unused) |
-| `0x20` | User Data |
-| `0x28` | User Code (64-bit) |
-| `0x30` | TSS |
-
-### 4.2 IDT
-
-256 entries. Exceptions 0–31 are set to dedicated handlers. IRQs are routed via
-I/O APIC (or PIC fallback). The syscall entry is handled through the `SYSCALL` /
-`SYSRET` mechanism (MSR-based), not an IDT gate.
-
-### 4.3 SMP
-
-- Up to `OS_CONFIG_SMP_MAX_CPUS` (default 4) cores
-- AP boot via trampoline page (`SMP_Trampoline.asm`)
-- TLB shootdown via IPI vector `0xFE`
-- Per-CPU PID tracking
-
----
-
-## 5. Driver Module System
-
-ImplusOS uses a **loadable driver module** architecture. Drivers are compiled as
-**position-independent ELF shared objects** (`ET_DYN`) and pre-loaded into
-memory by the UEFI bootloader before `ExitBootServices()`.
-
-### 5.1 Module Lifecycle
-
-```
-Bootloader                     Kernel
-    │                            │
-    ├── Load ELF files ──────────┤
-    │   from ESP:/Kernel/Driver/ │
-    │                            │
-    └── Store in BOOT_INFO ──────┤
-         .LoadedFiles[]          │
-                                 │
-         driver_module_manager_init()
-              │
-              ├── Copy each ELF blob into kernel heap
-              ├── Register by module ID
-              │
-              └── On demand: driver_module_manager_load()
-                      │
-                      ├── ELF relocations (R_X86_64_RELATIVE)
-                      ├── Call entry point: driver_module_init()
-                      └── Returns driver vtable pointer
-```
-
-### 5.2 Module IDs
-
-| ID | Name | Module |
+| Capability | Bit | Controls |
 |---|---|---|
-| 1 | `DRIVER_MODULE_ID_PCI` | PCI bus scanner |
-| 2 | `DRIVER_MODULE_ID_FAT32` | FAT32 filesystem |
-| 3 | `DRIVER_MODULE_ID_PS2` | PS/2 keyboard/mouse input |
-| 4 | `DRIVER_MODULE_ID_DISPLAY_VIRTIO` | VirtIO-GPU display |
-| 5 | `DRIVER_MODULE_ID_DISPLAY_IMPLUS_DISPLAY_GENERIC_DRIVER` | Generic framebuffer |
-| 6 | `DRIVER_MODULE_ID_USB` | USB host controller (OHCI/UHCI/EHCI/XHCI) |
+| `PROCESS_CAP_SERIAL` | 0 | Serial I/O syscalls |
+| `PROCESS_CAP_PROCESS` | 1 | Process creation/spawning |
+| `PROCESS_CAP_FILE` | 2 | File operations |
+| `PROCESS_CAP_MEMORY` | 3 | Memory allocation |
+| `PROCESS_CAP_INPUT` | 4 | Keyboard/mouse input |
+| `PROCESS_CAP_SIGNAL` | 5 | Signal handling |
+| `PROCESS_CAP_IPC` | 6 | Inter-process communication |
+| `PROCESS_CAP_NETWORK` | 7 | Network access |
 
-### 5.3 Kernel API Surface
+Default: All capabilities granted (`PROCESS_CAP_DEFAULT_MASK`).
 
-Each driver module receives a `driver_kernel_api_t` pointer from the kernel,
-providing access to:
+### 4.3 File Descriptors
 
-- **Timer**: `timer_msleep`, `timer_hz`, `timer_ticks`
-- **Memory**: `malloc`, `free`, `dma_alloc`, `dma_free`, `virt_to_phys`
-- **Memops**: `memset`, `memcpy`
-- **Port I/O**: `inb`, `outb`, `inl`, `outl`
-- **Disk**: `disk_read`, `disk_write`
-- **PCI**: `pci_read_config`, `pci_write_config`
-- **MMIO**: `map_mmio_virt`
-- **Debug**: `serial_write_char`, `serial_write_string`, `serial_write_uint32`
+- Per-process FD table (max 32 FDs by default, configurable)
+- Operations: open, read, write, close, seek, stat, pipe, dup/dup2
+- Directory handles: opendir/readdir/closedir (max 32 handles)
 
-### 5.4 Build Flags
+## 5. System Call Interface
 
-Driver modules are built with:
+### 5.1 ABI Convention
 
-```
-CFLAGS:  -fPIC -DIMPLUS_DRIVER_MODULE -DKERNEL
-LDFLAGS: -shared -Bsymbolic -e driver_module_init -z max-page-size=4096
-```
+- Instruction: AMD64 `SYSCALL` / `SYSRET`
+- Syscall number: `RAX`
+- Arguments: `RDI` (arg1), `RSI` (arg2), `RDX` (arg3), `R10` (arg4), `R8` (arg5)
+- Return value: `RAX`
+- Entry point: `Kernel/Arch/x86_64/cpu/Syscall_Entry.asm`
 
----
+### 5.2 Syscall Categories
 
-## 6. Filesystem & VFS
+| Range | Category | Examples |
+|---|---|---|
+| 1–5 | Serial I/O | putchar, puts, write_u64/u32/u16 |
+| 6–9 | Process | create, yield, exit, thread_create |
+| 23–42 | File I/O | open, read, write, close, seek, mkdir, opendir, readdir, unlink |
+| 43–55 | Memory & Graphics | mmap, malloc, free, memcpy, display draw/present |
+| 100–109 | Network (TCP/UDP) | connect, listen, accept, send, recv, close |
+| 110–122 | Process Ext. | waitpid, getppid, sleep, getcwd, proc info |
+| 130–138 | Socket API | socket, connect, bind, listen, accept, send, recv |
+| 140 | RTC | get_rtc_time |
+| 150–159 | Memory Ext. | mprotect, munmap, getuid/gid/tid |
+| 160–177 | Epoll/Clock/Linux | epoll, clock_gettime, readv, writev, ioctl, fcntl |
+| 180–193 | Futex/Clone/Signal | futex, clone, rt_sigaction, fork, execve |
+| 200–203 | DRM | open, ioctl, close, mmap |
+| 210–213 | Evdev | open, read, ioctl, close |
+| 220–229 | Unix Socket | socket, bind, listen, accept, connect, send, recv, close |
+| 240–243 | KVM | open, ioctl, close, mmap |
 
-### 6.1 VFS Layer
+### 5.3 Error Handling
 
-The VFS (`Kernel/Core/vfs/`) provides a unified interface with mount-point prefix
-matching. Currently the only backend is FAT32, mounted at `/`.
+All syscalls return `os_status_t` (int64_t):
+- `0` = success (or positive for data like PIDs, FDs, byte counts)
+- Negative = error (maps directly to errno via `os_status_to_errno()`)
 
-Key operations:
+## 6. Inter-Process Communication (IPC)
 
-| Function | Description |
-|---|---|
-| `vfs_find_file` | Lookup file by path |
-| `vfs_read_file` / `vfs_write_file` | Whole-file I/O |
-| `vfs_read_at` / `vfs_write_at` | Offset-based I/O |
-| `vfs_truncate` | Resize file |
-| `vfs_creat` / `vfs_mkdir` | Create files/directories |
-| `vfs_opendir` / `vfs_readdir` / `vfs_closedir` | Directory enumeration |
-| `vfs_unlink` | Delete file |
+### 6.1 Message Passing
 
-Case sensitivity is configurable via `vfs_set_case_sensitive()`.
+- Ring-buffer queue per process
+- Max message size: 256 bytes
+- Max messages per process queue: 16
+- Sender PID attached to each message automatically
 
-### 6.2 FAT32 Driver
-
-The FAT32 driver implements:
-
-- BPB parsing, FAT chain traversal, cluster caching
-- Long file name (LFN) entry support
-- Read/write at arbitrary offsets
-- Directory creation, file creation, deletion
-- Configurable case-sensitive/insensitive lookup
-
-### 6.3 Disk I/O
-
-The `IO/IO_Main` module provides a protocol-agnostic disk interface:
-
-| Protocol | Backend |
-|---|---|
-| `IO_PROTOCOL_TYPE_ATA` | ATA PIO (IDE) |
-| `IO_PROTOCOL_TYPE_USB_MASS_STORAGE` | USB Mass Storage via SCSI |
-
-The active protocol is selected automatically based on `BOOT_INFO.BootDriveType`.
-
----
-
-## 7. Process Manager
-
-- Maximum `OS_CONFIG_PROCESS_MAX_COUNT` processes (default 32, max 256)
-- Each process has its own CR3 (page table), user stack, heap, and capability mask
-- ELF loading for user processes via the VFS
-- Round-robin scheduling with timer-based preemption (`process_on_timer_tick`)
-- Cooperative yield via `SYSCALL_PROCESS_YIELD`
-
-### 7.1 Capabilities
+### 6.2 API
 
 ```c
-PROCESS_CAP_SERIAL   (1 << 0)  // Serial output
-PROCESS_CAP_PROCESS  (1 << 1)  // Process management
-PROCESS_CAP_FILE     (1 << 2)  // File I/O
-PROCESS_CAP_MEMORY   (1 << 3)  // Memory allocation
-PROCESS_CAP_INPUT    (1 << 4)  // Input devices
-PROCESS_CAP_SIGNAL   (1 << 5)  // Signal handling
-PROCESS_CAP_IPC      (1 << 6)  // Inter-process communication
-PROCESS_CAP_NETWORK  (1 << 7)  // Network access
+os_status_t ipc_send_message(int32_t target_pid, const void *message, uint32_t size);
+os_status_t ipc_receive_message(ipc_message_t *out_message);
 ```
 
-All capabilities are granted by default (`PROCESS_CAP_DEFAULT_MASK`).
+### 6.3 Window Manager Protocol
 
----
+The window manager uses IPC messages for all GUI operations:
+- Window creation/destruction (`WM_CREATE_WINDOW`, `WM_DESTROY_WINDOW`)
+- Drawing operations (`WM_DRAW_PIXEL`, `WM_DRAW_RECT`, `WM_BLIT_BUFFER`)
+- Input forwarding (`WM_KEYBOARD_EVENT`, `WM_MOUSE_EVENT`)
+- Window management (`WM_SET_WINDOW_RECT`, `WM_SHOW_WINDOW`, `WM_RAISE_WINDOW`)
 
-## 8. Syscall Interface
+## 7. Virtual File System (VFS)
 
-System calls use the AMD64 `SYSCALL` / `SYSRET` mechanism. The entry point is
-set via `MSR_LSTAR` to `syscall_entry` (assembly stub in `Syscall_Entry.asm`),
-which saves registers and calls `syscall_dispatch()`.
+### 7.1 Design
 
-### 8.1 Syscall Numbers
+- Prefix-based mount system (e.g., `/` maps to FAT32 driver)
+- `VFS_FILE` and `VFS_DIRENT` types alias FAT32 structures
+- Case-sensitivity configurable at runtime
 
-| Number | Name | Category |
-|---|---|---|
-| 1–5 | `SERIAL_PUTCHAR`, `PUTS`, `WRITE_U64/U32/U16` | Debug serial |
-| 6–9 | `PROCESS_CREATE`, `YIELD`, `EXIT`, `THREAD_CREATE` | Process |
-| 23–26, 34 | `FILE_OPEN`, `READ`, `WRITE`, `CLOSE`, `SEEK` | File I/O |
-| 37–42 | `MKDIR`, `OPENDIR`, `READDIR`, `CLOSEDIR`, `UNLINK`, `CREAT` | Directory ops |
-| 27–31 | `USER_MALLOC`, `FREE`, `MEMCPY`, `MEMCMP`, `MEMSET` | Memory |
-| 32–33 | `INPUT_READ_KEYBOARD`, `INPUT_READ_MOUSE` | Input |
-| 36 | `PROCESS_SPAWN_ELF` | Process (ELF loading) |
-| 43 | `USER_MMAP` | Memory mapping |
-| 44 | `PROCESS_SIGNAL` | Signals |
-| 45–46 | `IPC_SEND_MESSAGE`, `IPC_RECEIVE_MESSAGE` | IPC |
-| 47 | `PROCESS_GET_PID` | Process info |
-| 48–54 | Display & Window syscalls | Graphics |
-| 60 | `GET_FAT32_FILE_T` | Filesystem info |
-| 100–107 | `UDP_SEND`, `TCP_CONNECT`, `LISTEN`, `ACCEPT`, etc. | Network (UDP/TCP) |
-| 110–112 | `WAITPID`, `GETPPID`, `EXIT_STATUS` | Process Info |
-| 113–120 | `SLEEP`, `NANOSLEEP`, `GET_UPTIME_MS` | Time Utilities |
-| 114–118 | `STAT`, `PIPE`, `DUP`, `DUP2`, `GETCWD` | More File I/O |
-| 121–122 | `GET_PROC_COUNT`, `GET_PROC_INFO` | System Monitor |
-| 130–137 | `SOCKET_CREATE`, `BIND`, `RECV`, `SEND`, etc. | Berkeley Sockets |
+### 7.2 VFS Operations
 
----
-
-## 9. IPC (Inter-Process Communication)
-
-Message-passing IPC with per-process queues:
-
-- **Message size**: Up to `IPC_MESSAGE_MAX_SIZE` (256 bytes)
-- **Queue depth**: Up to `IPC_MAX_MESSAGES_PER_PROCESS` (16 messages)
-- **Ring buffer** implementation (head/tail/count)
-- Identified by sender PID
-
-Used extensively by the Window Manager for keyboard/mouse event delivery and
-window management commands.
-
----
-
-## 10. Window Manager
-
-The Window Manager has a **kernel-side dispatcher** (`WindowManager_Kernel`) and
-a **userland service process** (`com_ImplusOS_windowmanager`).
-
-### 10.1 Kernel Side
-
-- `wm_kernel_init()` — initialise kernel WM state
-- `wm_kernel_register_service(pid)` — register the WM service process
-- Routes input events and display commands between processes via IPC
-
-### 10.2 WM Commands
-
-| Command | ID | Description |
-|---|---|---|
-| `WM_CREATE_WINDOW` | 1 | Create a new window |
-| `WM_DESTROY_WINDOW` | 2 | Destroy a window |
-| `WM_SET_WINDOW_RECT` | 3 | Move/resize |
-| `WM_SHOW_WINDOW` / `WM_HIDE_WINDOW` | 4, 5 | Visibility |
-| `WM_RAISE_WINDOW` / `WM_LOWER_WINDOW` | 6, 7 | Z-ordering |
-| `WM_DRAW_PIXEL` / `WM_DRAW_RECT` | 10, 11 | Drawing primitives |
-| `WM_BLIT_BUFFER` | 14 | Buffer blit |
-| `WM_UPDATE_COMPLETE` | 13 | Present frame |
-| `WM_KEYBOARD_EVENT` / `WM_MOUSE_EVENT` | 20, 21 | Input events |
-
----
-
-## 11. Display Subsystem
-
-### 11.1 Driver Interface
-
-All display drivers implement the `display_driver_t` vtable:
-
-```c
-const char *name;
-bool (*probe)(void);          // Can this driver work?
-bool (*init)(void);           // Initialise hardware
-bool (*is_ready)(void);
-uint32_t (*width)(void);
-uint32_t (*height)(void);
-void (*draw_pixel)(x, y, color);
-void (*fill_rect)(x, y, w, h, color);
-void (*present)(void);        // Flip / flush
-bool (*set_framebuffer)(const display_boot_framebuffer_t *);
-```
-
-### 11.2 Available Drivers
-
-| Driver | Description |
+| Operation | Description |
 |---|---|
-| **VirtIO-GPU** | Paravirtualised GPU for QEMU/KVM |
-| **Generic Framebuffer** | Direct linear framebuffer with double-buffering |
+| `vfs_find_file()` | Locate file by path |
+| `vfs_read_file()` / `vfs_write_file()` | Full file read/write |
+| `vfs_read_at()` / `vfs_write_at()` | Positional read/write |
+| `vfs_truncate()` | Truncate file |
+| `vfs_creat()` | Create new file |
+| `vfs_mkdir()` | Create directory |
+| `vfs_unlink()` | Delete file |
+| `vfs_opendir()` / `vfs_readdir()` / `vfs_closedir()` | Directory listing |
 
-Driver selection uses probe-based priority via `driver_select_pick_display_driver()`.
+### 7.3 FAT32 Driver
 
----
+- Loadable driver module (`FAT32_Driver.ELF`)
+- Full read/write support
+- Directory operations (create, list, delete)
+- BPB parsed from boot partition at boot time
 
-## 12. Network Stack
+## 8. Network Stack
+
+### 8.1 Protocol Layers
 
 ```
-Application (UDP send syscall)
-       │
-   ┌───▼───┐
-   │  UDP   │  Kernel/Network/UDP/
-   ├────────┤
-   │  IPv4  │  Kernel/Network/IPv4.c
-   ├────────┤
-   │  ARP   │  Kernel/ARP/ARP.c
-   ├────────┤
-   │Ethernet│  Kernel/Ethernet/Ethernet.c
-   ├────────┤
-   │VirtIO- │
-   │  Net   │  Kernel/Drivers/Server/NIC/VirtIONet/
-   └────────┘
+┌────────────────────────────────────────┐
+│       UDP / TCP / ICMP / DHCP         │
+├────────────────────────────────────────┤
+│               IPv4                     │
+├────────────────────────────────────────┤
+│           ARP / Ethernet              │
+├────────────────────────────────────────┤
+│      NIC Driver (VirtIO-Net)          │
+└────────────────────────────────────────┘
 ```
 
-- **Ethernet**: Frame TX/RX, handler registration by EtherType
-- **ARP**: Address resolution with cache
-- **IPv4**: Packet send/receive, protocol handler registration
-- **UDP**: Datagram send/receive
-- **TCP**: Full state machine (SYN/ACK, retransmission, window scaling)
-- **ICMP**: Ping (Echo Request/Reply), TTL exceeded, Port unreachable
-- **DNS**: Name resolution support
-- **DHCP**: Automatic address assignment on link-up
-- **NIC**: VirtIO-Net paravirtualised driver
+### 8.2 Features
 
-Network configuration defaults (compile-time):
-- IP: `10.0.2.15` (`OS_CONFIG_NET_IPV4_ADDR`)
-- Mask: `255.255.255.0`
-- Gateway: `10.0.2.2`
+- **Ethernet**: Frame construction and parsing
+- **ARP**: Address resolution (request/reply, cache)
+- **IPv4**: Packet routing, fragmentation (basic)
+- **UDP**: Connectionless datagrams, port binding
+- **TCP**: Full connection lifecycle (connect, listen, accept, send, recv, close, state machine)
+- **ICMP**: Echo request/reply (ping)
+- **DHCP**: Client for dynamic IP configuration
+- **DNS**: Resolver (userland, `Userland/NetworkStack/DNS/`)
 
----
+### 8.3 Configuration
 
-## 13. Synchronisation
+Default static IP (from `config.h`):
+- Address: `10.0.2.15` (`OS_CONFIG_NET_IPV4_ADDR`)
+- Netmask: `255.255.255.0` (`OS_CONFIG_NET_IPV4_MASK`)
+- Gateway: `10.0.2.2` (`OS_CONFIG_NET_IPV4_GATEWAY`)
 
-The kernel uses **spinlocks** with IRQ save/restore:
+## 9. Driver Module System
 
-```c
-spinlock_t lock;
-spinlock_init(&lock);
+### 9.1 Architecture
 
-uint64_t flags = irq_save_disable();
-spinlock_lock(&lock);
-// critical section
-spinlock_unlock(&lock);
-irq_restore(flags);
+Drivers are **PIC (Position-Independent Code) ELF shared objects** loaded by the kernel at boot time.
+
+```
+┌──────────────────────────────────────────┐
+│              Kernel Core                  │
+│                                           │
+│  driver_module_manager_init()             │
+│     ↓                                     │
+│  Parse ELF, relocate, find entry symbol   │
+│     ↓                                     │
+│  Call driver_module_init(kernel_api)       │
+│     ↓                                     │
+│  Driver returns driver_module_descriptor_t │
+│     ↓                                     │
+│  driver_manager_attach(name, kind, api)   │
+└──────────────────────────────────────────┘
 ```
 
-Spinlocks use `__atomic_exchange_n` (acquire) and `__atomic_store_n` (release)
-with a TTAS (test-and-test-and-set) loop and `PAUSE` hint for efficiency.
+### 9.2 Kernel API (`driver_binary_t`)
 
-A full sequential-consistency barrier is available via `memory_barrier_full()`.
+The kernel provides drivers with a vtable of kernel services:
+- Timer: `timer_msleep()`, `timer_hz()`, `timer_ticks()`
+- Memory: `malloc()`, `free()`, `dma_alloc()`, `dma_free()`, `virt_to_phys()`
+- I/O Ports: `inb()`, `outb()`, `inl()`, `outl()`
+- Disk: `disk_read()`, `disk_write()`
+- PCI: `pci_read_config()`, `pci_write_config()`
+- MMIO: `map_mmio_virt()`
+- Debug: `serial_write_char()`, `serial_write_string()`, `serial_write_uint32()`
 
----
+### 9.3 Driver Types
 
-## 14. Debug & Diagnostic
-
-- **Serial**: COM1 output at 115200 baud (`Debug/serial/`)
-- **printf**: Kernel-space printf implementation (`Debug/printf/`)
-- **Panic**: `panic(const char *msg)` — halts with message
-- **Load Bar**: Boot progress animation on framebuffer (`Boot/LoadBar`)
-- **Memory dump**: `memory_dump_virtual()` / `memory_dump_physical()`
-
----
-
-## 15. Error Handling
-
-Kernel subsystems return `os_status_t` (signed 64-bit):
-
-| Status | Value | Description |
+| Type | Kind | Module Names |
 |---|---|---|
-| `OS_STATUS_OK` | 0 | Success |
-| `OS_STATUS_NOT_FOUND` | -2 | Resource not found |
-| `OS_STATUS_IO_ERROR` | -5 | I/O error |
-| `OS_STATUS_ACCESS_DENIED` | -13 | Permission denied |
-| `OS_STATUS_FAULT` | -14 | Memory fault |
-| `OS_STATUS_INVALID_ARG` | -22 | Invalid argument |
-| `OS_STATUS_LIMIT_REACHED` | -24 | Resource limit |
-| `OS_STATUS_NOT_SUPPORTED` | -95 | Not supported |
-| `OS_STATUS_INTERNAL` | -255 | Internal error |
+| PCI Bus | `DRIVER_MANAGER_KIND_PCI` | `PCI_Driver` |
+| Filesystem | `DRIVER_MANAGER_KIND_FAT32` | `FAT32_Driver` |
+| Display | `DRIVER_MANAGER_KIND_DISPLAY` | `ImplusOS_Generic_Display_Driver`, `VirtIO_Driver` |
+| Input | `DRIVER_MANAGER_KIND_INPUT` | `PS2_Driver` |
+| USB Host | `DRIVER_MANAGER_KIND_USB` | `USB_Driver` (OHCI, UHCI, EHCI, XHCI + HID + Mass Storage) |
+| NIC | `DRIVER_MANAGER_KIND_NIC` | `VirtIO_Driver` (VirtIO-Net) |
 
-Userland sees errno values via `os_status_to_errno()`.
+### 9.4 Hot Reload
 
----
+Drivers support runtime unload/reload:
+- `driver_module_manager_unload_by_name(name)`
+- `driver_module_manager_reload_by_name(name)`
 
-## 16. ELF Loader
+## 10. Platform Support
 
-Two loading modes:
+### 10.1 CPU (x86-64)
 
-1. **User process ELF** (`elf_loader_load_from_path`):
-   - Reads from VFS, loads `PT_LOAD` segments into user address space
-   - Validates against `elf_load_policy_t` (max file size, vaddr range)
+- **GDT**: Kernel code/data (Ring 0), User code/data (Ring 3), TSS
+- **IDT**: 256 interrupt vectors
+- **SMP**: Multi-processor startup via AP trampoline, per-CPU GDT/IDT/TSS
+- **VMX**: Intel VT-x support (EPT, VM entry/exit), KVM-style interface
 
-2. **Driver module ELF** (`elf_loader_load_module_from_memory`):
-   - Loads from in-memory buffer (pre-loaded by bootloader)
-   - Processes `R_X86_64_RELATIVE` relocations for position-independent code
-   - Validates against `elf_module_load_policy_t`
+### 10.2 Interrupts
 
----
+- **LAPIC**: Local APIC timer (preemption), IPI for TLB shootdown
+- **IOAPIC**: External interrupt routing (keyboard, disk, NIC)
+- **Interrupt flow**: Hardware → IOAPIC → LAPIC → IDT handler → kernel handler
 
-## 17. Kernel Configuration
+### 10.3 ACPI
 
-Compile-time configuration via `Kernel/KernelConfig.h`:
+- RSDP v1/v2 discovery
+- MADT parsing (LAPIC, IOAPIC enumeration)
+- Used for SMP initialization and interrupt routing
 
-| Macro | Default | Description |
+## 11. Debug Infrastructure
+
+### 11.1 Serial Output
+
+- COM1 port (`0x3F8`), 115200 baud
+- `serial_write_char()`, `serial_write_string()`
+- Primary debug output channel
+- Mapped to QEMU's `-serial stdio`
+
+### 11.2 Kernel Printf
+
+- Custom `printf()` implementation (no floating point)
+- Output routed to serial
+
+### 11.3 Panic Handler
+
+- `kernel_panic()` — Prints message to serial, halts all CPUs
+- Stack trace output (when available)
+
+## 12. Kernel Configuration
+
+All compile-time configuration in `Kernel/include/kernel/config.h`:
+
+| Macro | Default | Range | Description |
+|---|---|---|---|
+| `OS_CONFIG_PROCESS_MAX_COUNT` | 128 | 1–256 | Max concurrent processes |
+| `OS_CONFIG_FILE_MAX_FD` | 32 | 4–256 | Max file descriptors per process |
+| `OS_CONFIG_FILE_MAX_DIR_HANDLE` | 32 | 4–256 | Max directory handles per process |
+| `OS_CONFIG_SMP_MAX_CPUS` | 4 | — | Max CPU cores |
+| `OS_CONFIG_SMP_ENABLED` | 1 | — | Enable SMP |
+| `OS_CONFIG_LOG_FILE_MAX_BYTES` | 512K | — | Max kernel log size |
+| `OS_CONFIG_ALLOW_DISKLESS_BOOT` | 0 | — | Allow boot without filesystem |
+| `OS_CONFIG_SIGNAL_HANDLER_MAX_PER_PROCESS` | 32 | — | Max signal handlers |
+| `OS_CONFIG_PENDING_SIGNAL_MAX_PER_PROCESS` | 64 | — | Max pending signals |
+| `OS_CONFIG_NET_IPV4_ADDR` | 10.0.2.15 | — | Static IPv4 address |
+| `OS_CONFIG_NET_IPV4_MASK` | 255.255.255.0 | — | IPv4 netmask |
+| `OS_CONFIG_NET_IPV4_GATEWAY` | 10.0.2.2 | — | IPv4 gateway |
+
+## 13. GDT Segment Layout
+
+| Selector | Offset | Description |
 |---|---|---|
-| `OS_CONFIG_PROCESS_MAX_COUNT` | 128 | Max concurrent processes |
-| `OS_CONFIG_FILE_MAX_FD` | 32 | Max file descriptors |
-| `OS_CONFIG_FILE_MAX_DIR_HANDLE` | 32 | Max directory handles |
-| `OS_CONFIG_SMP_MAX_CPUS` | 4 | Max CPU cores |
-| `OS_CONFIG_SMP_ENABLED` | 1 | SMP support |
-| `OS_CONFIG_LOG_FILE_MAX_BYTES` | 512 KiB | Log file size limit |
-| `OS_CONFIG_ALLOW_DISKLESS_BOOT` | 0 | Boot without filesystem |
-| `OS_CONFIG_SIGNAL_HANDLER_MAX_PER_PROCESS` | 32 | Signal handlers/process |
-| `OS_CONFIG_PENDING_SIGNAL_MAX_PER_PROCESS` | 64 | Pending signals/process |
-| `OS_CONFIG_NET_IPV4_ADDR` | `10.0.2.15` | Network IP |
-| `OS_CONFIG_NET_IPV4_MASK` | `255.255.255.0` | Subnet mask |
-| `OS_CONFIG_NET_IPV4_GATEWAY` | `10.0.2.2` | Default gateway |
-
-All values include compile-time range validation.
+| `GDT_KERNEL_CODE` | `0x08` | Kernel code (Ring 0, 64-bit) |
+| `GDT_KERNEL_DATA` | `0x10` | Kernel data (Ring 0) |
+| `GDT_USER_COMPAT_CODE` | `0x18` | User 32-bit compat code (unused) |
+| `GDT_USER_DATA` | `0x20` | User data (Ring 3) |
+| `GDT_USER_CODE` | `0x28` | User code (Ring 3, 64-bit) |
+| `GDT_TSS` | `0x30` | Task State Segment |

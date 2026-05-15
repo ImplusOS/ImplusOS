@@ -1,4 +1,4 @@
-.PHONY: all kernel run_usb run_ide clean image app_build driver_build driver_stage
+.PHONY: all kernel run_usb run_ide run_bios clean image app_build driver_build driver_stage image_bios
 
 ARCH := x86_64
 CC   = x86_64-elf-gcc
@@ -9,6 +9,7 @@ NASM = nasm
 BUILD_DIR := Build
 IMAGE_DIR := Image
 IMAGE     := $(IMAGE_DIR)/ImplusOS.iso
+BIOS_IMAGE := $(IMAGE_DIR)/ImplusOS-bios.img
 
 OVMF_CODE := ./OVMF_CODE_4M.fd
 OVMF_VARS := ./OVMF_VARS_4M.fd
@@ -19,6 +20,9 @@ USERLAND_DIR := Userland
 
 KERNEL_ELF        := $(BUILD_DIR)/Kernel/Kernel_Main.ELF
 BOOTX64_EFI       := $(BUILD_DIR)/Loader/BOOTX64.EFI
+BOOTMANAGER_EFI   := $(BUILD_DIR)/BootManager/BOOTMANAGER.EFI
+BIOS_STAGE1_BIN   := $(BUILD_DIR)/Loader/BIOS/stage1.bin
+BIOS_STAGE2_BIN   := $(BUILD_DIR)/Loader/BIOS/stage2.bin
 USERLAND_INIT_ELF := $(BUILD_DIR)/Userland/Userland.ELF
 
 LOADER_CFLAGS := \
@@ -26,9 +30,20 @@ LOADER_CFLAGS := \
 	-I/usr/include/efi/x86_64 \
 	-I/usr/include/efi/protocol \
 	-I../libc/include \
+	-IBootManager/BootManager_libc/include \
 	-ffreestanding -fpic -fshort-wchar -fno-stack-protector \
 	-fno-builtin -mno-red-zone \
 	-Wall -Wextra -DEFI_FUNCTION_WRAPPER
+
+BIOS_STAGE2_SECTORS := 127
+BIOS_CFLAGS := \
+	-m32 -I. -IKernel -IKernel/include -IBootManager/BIOS \
+	-ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
+	-mno-red-zone -mno-sse -mno-sse2 -mno-mmx \
+	-nostdlib -nostartfiles -nodefaultlibs \
+	-Wall -Wextra -O2
+
+BIOS_LDFLAGS := -m elf_i386 -nostdlib --build-id=none -T BootManager/BIOS/linker.ld
 
 USERLAND_LDFLAGS     := -T Userland/Userland.ld -nostdlib --build-id=none
 USERLAND_APP_LDFLAGS := -nostdlib --build-id=none
@@ -94,6 +109,9 @@ USERLAND_APP_OBJS  := $(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter
                       $(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_APP_C_SRCS)))
 
 all: $(BOOTX64_EFI) \
+     $(BOOTMANAGER_EFI) \
+     $(BIOS_STAGE1_BIN) \
+     $(BIOS_STAGE2_BIN) \
      kernel \
      $(USERLAND_INIT_ELF) \
      driver_stage \
@@ -126,7 +144,7 @@ driver_stage: driver_build
 		find $(DRIVER_BUILD_ROOT) -type f -name '*.ELF' -exec cp {} $(DRIVER_STAGE_DIR)/ \; ; \
 	fi
 
-$(BUILD_DIR)/Loader/Loader.o: BootLoader/Loader.c
+$(BUILD_DIR)/Loader/Loader.o: BootLoader/x86_64/UEFI/Loader.c
 	mkdir -p $(dir $@)
 	$(CC) $(LOADER_CFLAGS) -c $< -o $@
 
@@ -137,6 +155,72 @@ $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 		-shared -Bsymbolic \
 		/usr/lib/crt0-efi-x86_64.o \
 		$< \
+		/usr/lib/libefi.a \
+		/usr/lib/libgnuefi.a \
+		-o $@.so
+	objcopy -j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
+		-O efi-app-x86_64 $@.so $@
+	rm -f $@.so
+
+$(BIOS_STAGE1_BIN): BootLoader/x86_64/BIOS/stage1.asm
+	mkdir -p $(dir $@)
+	$(NASM) -f bin -DSTAGE2_SECTORS=$(BIOS_STAGE2_SECTORS) $< -o $@
+
+BIOS_STAGE2_OBJS := \
+	$(BUILD_DIR)/Loader/BIOS/stage2_entry.o \
+	$(BUILD_DIR)/BootManager/BIOS/BootManager_BIOS.o \
+	$(BUILD_DIR)/BootManager/BIOS/string.o
+
+$(BUILD_DIR)/Loader/BIOS/stage2_entry.o: BootLoader/x86_64/BIOS/stage2_entry.asm BootManager/BIOS/stage2_constants.inc
+	mkdir -p $(dir $@)
+	$(NASM) -f elf32 -I. $< -o $@
+
+$(BUILD_DIR)/BootManager/BIOS/BootManager_BIOS.o: BootManager/BIOS/BootManager_BIOS.c BootManager/BIOS/BIOS_Handoff.h
+	mkdir -p $(dir $@)
+	$(CC) $(BIOS_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/BootManager/BIOS/string.o: BootManager/BootManager_libc/source/string.c
+	mkdir -p $(dir $@)
+	$(CC) $(BIOS_CFLAGS) -c $< -o $@
+
+$(BIOS_STAGE2_BIN): $(BIOS_STAGE2_OBJS) BootManager/BIOS/linker.ld
+	mkdir -p $(dir $@)
+	$(LD) $(BIOS_LDFLAGS) $(BIOS_STAGE2_OBJS) -o $@.elf
+	objcopy -O binary $@.elf $@
+	@size=$$(wc -c < $@); max=$$(( $(BIOS_STAGE2_SECTORS) * 512 )); \
+	if [ $$size -gt $$max ]; then \
+		echo "BIOS stage2 too large: $$size > $$max bytes"; \
+		exit 1; \
+	fi; \
+	truncate -s $$max $@
+	rm -f $@.elf
+
+BOOTMANAGER_OBJS := \
+	$(BUILD_DIR)/BootManager/BootManager.o \
+	$(BUILD_DIR)/BootManager/FAT32.o \
+	$(BUILD_DIR)/BootManager/BootManager_libc/string.o \
+	$(BUILD_DIR)/BootManager/BootManager_libc/stdlib.o
+
+$(BUILD_DIR)/BootManager/BootManager.o: BootManager/BootManager.c
+	mkdir -p $(dir $@)
+	$(CC) $(LOADER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/BootManager/FAT32.o: BootManager/FAT32.c
+	mkdir -p $(dir $@)
+	$(CC) $(LOADER_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/BootManager/BootManager_libc/%.o: BootManager/BootManager_libc/source/%.c
+	mkdir -p $(dir $@)
+	$(CC) $(LOADER_CFLAGS) -c $< -o $@
+
+$(BOOTMANAGER_EFI): $(BOOTMANAGER_OBJS)
+	mkdir -p $(dir $@)
+	ld -nostdlib -znocombreloc \
+		-T /usr/lib/elf_x86_64_efi.lds \
+		-shared -Bsymbolic \
+		/usr/lib/crt0-efi-x86_64.o \
+		$^ \
 		/usr/lib/libefi.a \
 		/usr/lib/libgnuefi.a \
 		-o $@.so
@@ -162,7 +246,7 @@ $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
 
 USERLAND_ELFS := $(shell find $(BUILD_DIR)/Userland -name '*.ELF' 2>/dev/null)
-BOOT_RESOURCE_DIR := BootLoader/Resource
+BOOT_RESOURCE_DIR := BootManager/Resource
 
 __mount_image:
 	@MOUNT_POINT=$$(mktemp -d); \
@@ -170,12 +254,16 @@ __mount_image:
 	trap "sudo losetup -d $$LOOP_DEVICE 2>/dev/null; rmdir $$MOUNT_POINT 2>/dev/null" EXIT; \
 	sudo mkfs.fat -F32 $${LOOP_DEVICE}p1 || exit 1; \
 	sudo mount $${LOOP_DEVICE}p1 $$MOUNT_POINT || exit 1; \
-	sudo mkdir -p $$MOUNT_POINT/EFI/BOOT $$MOUNT_POINT/Kernel/Driver $$MOUNT_POINT/Userland; \
+	sudo mkdir -p $$MOUNT_POINT/EFI/BOOT $$MOUNT_POINT/Kernel/Driver $$MOUNT_POINT/Userland $$MOUNT_POINT/BootManager; \
 	sudo cp $(BOOTX64_EFI) $$MOUNT_POINT/EFI/BOOT/BOOTX64.EFI; \
+	sudo cp $(BOOTMANAGER_EFI) $$MOUNT_POINT/EFI/BOOT/BOOTMANAGER.EFI; \
 	sudo cp $(KERNEL_ELF) $$MOUNT_POINT/Kernel/Kernel_Main.ELF; \
 	sudo cp $(USERLAND_INIT_ELF) $$MOUNT_POINT/Userland/Userland.ELF; \
 	if [ -d $(DRIVER_STAGE_DIR) ]; then \
 		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -exec sudo cp {} $$MOUNT_POINT/Kernel/Driver/ \; ; \
+	fi; \
+	if [ -d $(BOOT_RESOURCE_DIR) ]; then \
+		sudo cp -r $(BOOT_RESOURCE_DIR) $$MOUNT_POINT/BootManager/; \
 	fi; \
 	sync; \
 	sudo umount $$MOUNT_POINT || exit 1;
@@ -189,6 +277,7 @@ image_esp: all
 	@mkdir -p $(ISO_ROOT)/Userland/SystemApps
 	@mkdir -p $(ISO_ROOT)/Userland/UserApps
 	@cp $(BOOTX64_EFI) $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
+	@cp $(BOOTMANAGER_EFI) $(ISO_ROOT)/EFI/BOOT/BOOTMANAGER.EFI
 	@cp $(KERNEL_ELF) $(ISO_ROOT)/Kernel/Kernel_Main.ELF
 	@cp $(USERLAND_INIT_ELF) $(ISO_ROOT)/Userland/Userland.ELF
 	@find $(ISO_ROOT)/Kernel/Driver -maxdepth 1 -type f -name '*.ELF' -delete
@@ -199,13 +288,31 @@ image_esp: all
 	@cp $(ESP_IMG) $(ISO_ROOT)/esp.iso
 	@rsync -a $(BUILD_DIR)/Userland/SystemApps/ $(ISO_ROOT)/Userland/SystemApps/
 	@rsync -a $(BUILD_DIR)/Userland/UserApps/ $(ISO_ROOT)/Userland/UserApps/
-	@rsync -a $(BOOT_RESOURCE_DIR) $(ISO_ROOT)/EFI/BOOT/
+	@mkdir -p $(ISO_ROOT)/BootManager
+	@rsync -a $(BOOT_RESOURCE_DIR) $(ISO_ROOT)/BootManager/
 	@xorriso -as mkisofs -R -J -V "ImplusOS Clesk 0.2-beta" \
 		-o $(IMAGE) \
 		-eltorito-alt-boot -e esp.iso -no-emul-boot \
 		$(ISO_ROOT)
 
 	@cp $(IMAGE) Qemu/Test/Resource/ImplusOS.iso
+
+image_bios: all
+	@mkdir -p $(IMAGE_DIR)
+	@dd if=/dev/zero of=$(BIOS_IMAGE) bs=1M count=128 2>/dev/null
+	@printf 'label: dos\nunit: sectors\n\nstart=2048, type=c, bootable\n' | sfdisk $(BIOS_IMAGE) >/dev/null
+	@dd if=$(BIOS_STAGE1_BIN) of=$(BIOS_IMAGE) bs=446 count=1 conv=notrunc 2>/dev/null
+	@dd if=$(BIOS_STAGE2_BIN) of=$(BIOS_IMAGE) bs=512 seek=1 conv=notrunc 2>/dev/null
+	@mformat -i $(BIOS_IMAGE)@@1048576 -F ::
+	@mmd -i $(BIOS_IMAGE)@@1048576 ::/Kernel ::/Kernel/Driver ::/Userland ::/BootManager
+	@mcopy -i $(BIOS_IMAGE)@@1048576 $(KERNEL_ELF) ::/Kernel/Kernel_Main.ELF
+	@mcopy -i $(BIOS_IMAGE)@@1048576 $(USERLAND_INIT_ELF) ::/Userland/Userland.ELF
+	@if [ -d $(BOOT_RESOURCE_DIR) ]; then \
+		mcopy -i $(BIOS_IMAGE)@@1048576 -s $(BOOT_RESOURCE_DIR) ::/BootManager/; \
+	fi
+	if [ -d $(DRIVER_STAGE_DIR) ]; then \
+		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -exec mcopy -i $(BIOS_IMAGE)@@1048576 {} ::/Kernel/Driver/ \; ; \
+	fi
 
 __create_esp_iso:
 	@ESP_MOUNT=$$(mktemp -d); \
@@ -216,11 +323,13 @@ __create_esp_iso:
 	sudo mount -o loop $(ESP_IMG) $$ESP_MOUNT || exit 1; \
 	\
 	sudo mkdir -p $$ESP_MOUNT/EFI/BOOT; \
+	sudo mkdir -p $$ESP_MOUNT/BootManager; \
 	sudo mkdir -p $$ESP_MOUNT/Kernel/Driver; \
 	sudo mkdir -p $$ESP_MOUNT/Userland/SystemApps; \
 	sudo mkdir -p $$ESP_MOUNT/Userland/UserApps; \
 	\
 	sudo cp $(BOOTX64_EFI) $$ESP_MOUNT/EFI/BOOT/BOOTX64.EFI; \
+	sudo cp $(BOOTMANAGER_EFI) $$ESP_MOUNT/EFI/BOOT/BOOTMANAGER.EFI; \
 	sudo cp $(KERNEL_ELF) $$ESP_MOUNT/Kernel/Kernel_Main.ELF; \
 	sudo cp $(USERLAND_INIT_ELF) $$ESP_MOUNT/Userland/Userland.ELF; \
 	\
@@ -229,7 +338,7 @@ __create_esp_iso:
 	fi; \
 	\
 	if [ -d $(BOOT_RESOURCE_DIR) ]; then \
-		sudo cp -r $(BOOT_RESOURCE_DIR) $$ESP_MOUNT/EFI/BOOT/Resource/; \
+		sudo cp -r $(BOOT_RESOURCE_DIR) $$ESP_MOUNT/BootManager/; \
 	fi; \
 	\
 	if [ -d $(BUILD_DIR)/Userland/SystemApps ]; then \
@@ -289,6 +398,14 @@ run_ide:
 
 run_usb:
 	@qemu-system-x86_64 $(QEMU_COMMON) $(QEMU_USB)
+
+run_bios:
+	@qemu-system-x86_64 \
+		-machine q35 \
+		-smp 4,sockets=1,cores=4,threads=1 \
+		-m 4G \
+		-serial stdio \
+		-drive format=raw,file=$(BIOS_IMAGE)
 	  	
 clean:
 	@rm -rf $(BUILD_DIR) $(IMAGE_DIR)

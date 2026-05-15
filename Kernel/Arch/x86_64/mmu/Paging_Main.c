@@ -18,9 +18,9 @@
 #define GB (1024ULL * 1024ULL * 1024ULL)
 #define MB2 (2ULL * 1024ULL * 1024ULL)
 #define MAX_PDPT_ENTRIES 512
-#define MMIO_WINDOW_BASE 0x00000000F0000000ULL
+#define MMIO_WINDOW_BASE 0x0000001000000000ULL
 #define MMIO_WINDOW_SLOTS 512
-#define PAGING_BOOT_IDENTITY_GB 4ULL
+#define PAGING_BOOT_IDENTITY_GB 64ULL
 #define SWAP_TRACK_MAX 4096
 #define PAGE_SWAP (1ULL << 9)
 
@@ -528,7 +528,7 @@ void *map_mmio_virt(uint64_t phys_addr)
         return NULL;
     }
 
-    if (phys_addr < (4ULL * GB)) {
+    if (phys_addr < (PAGING_BOOT_IDENTITY_GB * GB)) {
         paging_identity_mark_2mb_uncached(phys_addr);
         return (void *)(uintptr_t)phys_addr;
     }

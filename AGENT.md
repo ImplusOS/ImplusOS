@@ -1,150 +1,184 @@
-# ImplusOS — Agent Instructions
+# AGENT.md — ImplusOS Project Guide for AI Coding Agents
 
-> This file provides instructions for AI coding agents working on ImplusOS.
-> For tool-specific files, see also: `CLAUDE.md`, `GEMINI.md`.
+> This file provides project context for AI coding assistants (OpenAI Codex, Copilot, Cursor, Windsurf, Devin, etc.).
 
-## Project Overview
+## What Is This Project?
 
-ImplusOS is a hobby operating system targeting **x86-64 (Long Mode)** with the following characteristics:
+**ImplusOS** is a hobby operating system written in C and x86-64 assembly.
 
-| Property | Value |
+- **Target**: x86-64 (Long Mode), UEFI boot
+- **Kernel**: Monolithic with loadable PIC ELF driver modules
+- **Userland**: Custom init process, apps communicate via `SYSCALL`/`SYSRET`
+- **POSIX**: Compatibility layer for porting C programs
+- **License**: MIT
+
+## Repository Map
+
+| Directory | Purpose |
 |---|---|
-| Architecture | x86-64 (Long Mode) |
-| Boot | UEFI via `gnu-efi` → ELF64 kernel |
-| Kernel model | Monolithic with loadable driver modules (PIC ELF shared objects) |
-| Languages | C (C11), NASM assembly (Intel syntax) |
-| Filesystem | FAT32 (read/write) via VFS layer |
-| Syscall ABI | AMD64 `SYSCALL` / `SYSRET` |
-| Build | GNU Make + `x86_64-elf-gcc` cross compiler |
-| Target | QEMU + OVMF |
+| `BootLoader/` | UEFI bootloader (`Loader.c`, gnu-efi based) |
+| `Kernel/` | All kernel subsystems |
+| `Kernel/Arch/x86_64/` | GDT, IDT, paging (4-level), SMP, VMX (Intel VT-x) |
+| `Kernel/Core/` | kernel_main, process manager, syscall dispatch, VFS, IPC, timer, window manager |
+| `Kernel/Debug/` | Serial (COM1), printf, panic handler |
+| `Kernel/Drivers/` | Driver framework: Module (loader), Client (kernel-side API), Server (driver implementations) |
+| `Kernel/MemoryManagement/` | Bitmap PMM, kernel heap (malloc/free), DMA allocator |
+| `Kernel/Network/` | Full network stack: Ethernet, ARP, IPv4, UDP, TCP, ICMP, DHCP |
+| `Kernel/Platform/` | ACPI, IOAPIC, LAPIC, I/O (ATA, USB Mass Storage protocols) |
+| `Kernel/include/` | Shared interfaces: `arch_ops.h`, `driver_api.h`, `status.h`, `config.h` |
+| `Userland/` | User-space code |
+| `Userland/API/` | Typed syscall wrapper headers |
+| `Userland/Application/` | Apps: WindowManager, Shell, Editor, FileManager, Clock, VM, NetworkTest |
+| `Userland/POSIX/` | POSIX compatibility (open/read/write/fork/socket/pthread/signal/time) |
+| `libc/` | Minimal freestanding C library |
+| `Thirdparty/` | stb_truetype.h, stb_image.h |
 
-## Repository Structure
+## Build Instructions
 
-```
-ImplusOS/
-├── BootLoader/        UEFI bootloader (Loader.c + boot logo resources)
-├── Kernel/            Kernel source tree
-│   ├── Kernel_Main.c  Entry point & boot sequence
-│   ├── KernelConfig.h Compile-time configuration
-│   ├── Common/        os_status_t error codes
-│   ├── Memory/        Bitmap PMM + kernel heap + DMA allocator
-│   ├── Paging/        4-level page tables (NX bit enabled)
-│   ├── GDT/           Global Descriptor Table + TSS
-│   ├── IDT/           Interrupt Descriptor Table
-│   ├── SMP/           Multi-core support
-│   ├── Syscall/       System call dispatch & handlers
-│   ├── ProcessManager/ Process lifecycle, scheduling, capabilities
-│   ├── Drivers/       Loadable driver modules (Client + Server)
-│   ├── VFS/           Virtual File System layer
-│   ├── IPC/           Inter-process message passing
-│   ├── WindowManager/ Window manager kernel-side
-│   ├── Network/       IPv4/UDP/TCP/ICMP/DHCP/DNS
-│   ├── Ethernet/      Ethernet frame TX/RX
-│   ├── ARP/           ARP resolution + cache
-│   ├── IO/            Port I/O + disk abstraction (ATA, USB Mass Storage)
-│   ├── ELF/           ELF loader (user process + driver modules)
-│   ├── VMX/           Intel VMX virtualization support
-│   ├── Sync/          Spinlock (TTAS with IRQ save/restore)
-│   ├── Timer/         PIT + LAPIC timer
-│   ├── Platform/      ACPI, LAPIC, IOAPIC, interrupt routing
-│   └── Debbuger/      Serial, printf, panic handler
-├── Userland/          User-space source tree
-│   ├── Userland.c     Init process (_start)
-│   ├── Syscalls.c/h   Raw syscall wrappers
-│   ├── API/           High-level userland API headers
-│   ├── Application/
-│   │   ├── SystemApps/  System services (WM, Shell, etc.)
-│   │   └── UserApps/    User applications
-│   ├── DriverFramework/  Userland driver framework API
-│   ├── NetworkStack/     Userland network utilities (DNS)
-│   └── POSIX/            POSIX compatibility layer
-├── libc/              Minimal C library (string, stdlib, stdio, math, errno)
-├── Thirdparty/        Third-party code (stb_image, stb_truetype)
-├── Docs/              Documentation
-│   └── Architecture/  Technical reference documents
-├── Makefile           Top-level build system
-└── Doxyfile           Doxygen configuration
-```
-
-## ⚠️ MANDATORY: Read Rules & Workflows
-
-Before making any changes, you **MUST** read the following files:
-
-### Rules (`.agent/rules/`)
-
-| File | Content |
-|---|---|
-| [coding-standards.md](.agent/rules/coding-standards.md) | Naming conventions, formatting, error handling, warnings |
-| [architecture-constraints.md](.agent/rules/architecture-constraints.md) | Freestanding env, cross compiler, memory model, address space |
-| [safety-critical.md](.agent/rules/safety-critical.md) | Interrupt safety, spinlocks, NX bit, syscall validation, SMP |
-
-### Workflows (`.agent/workflows/`)
-
-| File | Content |
-|---|---|
-| [build-and-test.md](.agent/workflows/build-and-test.md) | Build, QEMU run, debug, troubleshooting |
-| [adding-syscall.md](.agent/workflows/adding-syscall.md) | How to add a new system call |
-| [adding-driver-module.md](.agent/workflows/adding-driver-module.md) | How to add a loadable driver module |
-| [adding-userland-app.md](.agent/workflows/adding-userland-app.md) | How to add a userland application |
-
-## Architecture Documentation
-
-For deeper understanding, refer to `Docs/Architecture/`:
-
-| Document | Content |
-|---|---|
-| [Kernel_Architecture.md](Docs/Architecture/Kernel_Architecture.md) | Full kernel architecture overview |
-| [Boot_Sequence.md](Docs/Architecture/Boot_Sequence.md) | Detailed boot flow reference |
-| [Syscall_Reference.md](Docs/Architecture/Syscall_Reference.md) | System call numbers, arguments, return values |
-| [Driver_Module_Guide.md](Docs/Architecture/Driver_Module_Guide.md) | How to create driver modules |
-| [Kernel_Config_Guide.md](Docs/Architecture/Kernel_Config_Guide.md) | Compile-time configuration options |
-| [Status_Codes.md](Docs/Architecture/Status_Codes.md) | Error code reference and errno mapping |
-| [Repository_Structure.md](Docs/Architecture/Repository_Structure.md) | Detailed directory layout |
-
-## Build Quick Reference
+### Prerequisites (Ubuntu/Debian)
 
 ```bash
-# Full build
-make
-
-# Clean build
-make clean && make
-
-# Create ISO image
-make image_esp
-
-# Run in QEMU (USB boot)
-make run_usb
-
-# Run in QEMU (IDE boot)
-make run_ide
+sudo apt install -y build-essential nasm binutils gnu-efi \
+  gcc-x86-64-elf g++-x86-64-elf parted qemu-system-x86 \
+  dosfstools xorriso mtools util-linux gdb
 ```
 
-## Key Conventions Summary
+### Commands
 
-### Error Handling
+```bash
+make                # Build everything
+make image_esp      # Create bootable ISO
+make run_usb        # Run in QEMU (USB boot)
+make run_ide        # Run in QEMU (IDE boot)
+make clean          # Remove build artifacts
+```
 
-All kernel subsystems return `os_status_t` (`int64_t`). Negative values are errors.
+### Cross-Compiler
+
+All code is compiled with `x86_64-elf-gcc` (freestanding, no stdlib).
+
+## Architecture Quick Reference
+
+### Boot Sequence
+
+```
+UEFI → BOOTX64.EFI → Load kernel ELF + drivers → Exit Boot Services → kernel_main()
+↓
+serial → GDT → IDT → PMM → paging → heap → ACPI → interrupts → syscall →
+SMP → VMX → timer → drivers → FS → display → WM → processes → IPC → network →
+launch Userland.ELF (init)
+```
+
+### Syscall ABI
+
+- Instruction: AMD64 `SYSCALL`/`SYSRET`
+- Number in `RAX`, args in `RDI, RSI, RDX, R10, R8`
+- Return in `RAX`
+- All numbers: `Kernel/Core/syscall/Syscall_Main.h`
+- Dispatch: `Kernel/Core/syscall/Syscall_Dispatch.c`
+
+### Error Codes
 
 ```c
-os_status_t result = some_function();
-if (os_status_is_error(result)) {
-    return result;  // propagate error
-}
+typedef int64_t os_status_t;
+// OS_STATUS_OK            =   0
+// OS_STATUS_NOT_FOUND     =  -2
+// OS_STATUS_IO_ERROR      =  -5
+// OS_STATUS_ACCESS_DENIED = -13
+// OS_STATUS_FAULT         = -14
+// OS_STATUS_INVALID_ARG   = -22
+// OS_STATUS_LIMIT_REACHED = -24
+// OS_STATUS_NOT_SUPPORTED = -95
+// OS_STATUS_INTERNAL      = -255
 ```
 
-See `Kernel/Common/Status.h` for status codes.
+### Process Capabilities
 
-### Naming
+```c
+PROCESS_CAP_SERIAL   (1 << 0)   // Serial I/O
+PROCESS_CAP_PROCESS  (1 << 1)   // Create/spawn processes
+PROCESS_CAP_FILE     (1 << 2)   // File operations
+PROCESS_CAP_MEMORY   (1 << 3)   // Memory allocation
+PROCESS_CAP_INPUT    (1 << 4)   // Keyboard/mouse input
+PROCESS_CAP_SIGNAL   (1 << 5)   // Signal handling
+PROCESS_CAP_IPC      (1 << 6)   // IPC messaging
+PROCESS_CAP_NETWORK  (1 << 7)   // Network access
+```
 
-- Functions: `subsystem_action()` (e.g., `vfs_read_file()`, `process_create()`)
-- Types: `snake_case_t` (e.g., `os_status_t`)
-- Macros: `UPPER_SNAKE_CASE` with prefix (e.g., `OS_CONFIG_*`, `SYSCALL_*`)
-- Files: `PascalCase` (e.g., `Kernel_Main.c`, `Memory_Main.c`)
+### User-Space Memory Map
 
-### Safety
+| Region | Address Range |
+|---|---|
+| Code | `0x0000004000000000` – `0x0000004080000000` |
+| Heap | `0x0000004100000000` – `0x00000047E0000000` |
+| Stack | `0x00000047E0000000` – `0x0000004800000000` (32 MiB) |
 
-- Always validate pointers (NULL check) before use.
-- Protect shared data with `spinlock_lock()` / `spinlock_unlock()` + IRQ save/restore.
-- Never execute code from data pages (NX bit is enforced).
-- Validate all user-supplied syscall arguments — never trust userland input.
+### Driver Module Interface
+
+Drivers are PIC ELF shared objects. The kernel passes a `driver_binary_t` vtable:
+
+```c
+typedef struct {
+    void (*timer_msleep)(uint32_t ms);
+    void *(*malloc)(uint64_t size);
+    void (*free)(void *ptr);
+    void *(*dma_alloc)(size_t size, uint64_t *phys_out);
+    void (*dma_free)(void *ptr, size_t size);
+    uint8_t (*inb)(uint16_t port);
+    void (*outb)(uint16_t port, uint8_t value);
+    bool (*disk_read)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
+    bool (*disk_write)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
+    uint32_t (*pci_read_config)(...);
+    void *(*map_mmio_virt)(uint64_t phys_addr);
+    void (*serial_write_string)(const char *str);
+    // ... more
+} driver_binary_t;
+```
+
+Drivers export: `const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api);`
+
+### Kernel Configuration (Compile-Time)
+
+See `Kernel/include/kernel/config.h`:
+- `OS_CONFIG_PROCESS_MAX_COUNT` — Max processes (default: 128, range: 1–256)
+- `OS_CONFIG_FILE_MAX_FD` — Max file descriptors per process (default: 32, range: 4–256)
+- `OS_CONFIG_SMP_MAX_CPUS` — Max CPU cores (default: 4)
+- `OS_CONFIG_NET_IPV4_ADDR` — Static IPv4 address (default: 10.0.2.15)
+
+## Coding Conventions
+
+1. **Language**: C11 + NASM assembly (x86-64)
+2. **Naming**: `PascalCase` for types/structs, `snake_case` for functions, `UPPER_CASE` for macros
+3. **Headers**: Use `#pragma once`
+4. **No standard library**: Everything is freestanding. Use `libc/` for string/math/stdlib
+5. **Warnings**: `-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow`
+6. **Driver modules**: Must be position-independent (`-fPIC`)
+7. **Comments**: Preserve existing comments when modifying code
+
+## Testing
+
+- QEMU + OVMF firmware
+- Machine: q35, 4 CPUs (Skylake-Server+VMX), 4GB RAM
+- Devices: VirtIO-Net, XHCI USB (kbd+mouse), NVMe, HDA audio
+- Serial: COM1 via `-serial stdio` (115200 baud)
+- Boot: USB stick or IDE CD-ROM
+
+## Important Files for AI Agents
+
+When working on this codebase, these files are most frequently relevant:
+
+- `Kernel/Core/kernel_main.c` — Kernel entry and initialization
+- `Kernel/Core/syscall/Syscall_Main.h` — Syscall number definitions
+- `Kernel/Core/syscall/Syscall_Dispatch.c` — Syscall handler (~1300 lines)
+- `Kernel/include/kernel/config.h` — Compile-time configuration
+- `Kernel/include/kernel/status.h` — Error codes
+- `Kernel/Drivers/Module/DriverBinary.h` — Driver API vtable
+- `Kernel/Core/process/ProcessManager.h` — Process management API
+- `Kernel/Core/vfs/VFS.h` — Virtual filesystem API
+- `Kernel/IPC/IPC_Main.h` — IPC API
+- `Kernel/Network/network_main.h` — Network stack API
+- `Userland/Userland.c` — Init process
+- `Userland/Syscalls.h` — Userland syscall aggregate header
+- `Userland/POSIX/README_POSIX.md` — POSIX layer documentation
+- `Makefile` — Top-level build system
+- `Kernel/config/arch.mk` — Architecture-specific flags

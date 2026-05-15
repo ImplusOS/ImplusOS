@@ -1,197 +1,367 @@
-# Driver Module Development Guide
-
-This document describes how to create a new driver module for ImplusOS.
-
----
+# Driver Module Guide — ImplusOS
 
 ## 1. Overview
 
-ImplusOS drivers are built as **position-independent ELF shared objects**
-(`ET_DYN`) that are pre-loaded by the bootloader and lazily initialised by
-the kernel. Each driver module exports an initialisation function that receives
-a kernel API table and returns a vtable of driver operations.
+ImplusOS uses a **loadable driver module system**. Drivers are compiled as **PIC
+(Position-Independent Code) ELF shared objects** that the kernel loads at boot
+time. The kernel provides a vtable of kernel services (`driver_binary_t`), and
+drivers export an initialization function that returns a descriptor with the
+driver's API.
 
----
+## 2. Architecture
 
-## 2. Adding a New Driver Module
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        Kernel Core                           │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────────┐│
+│  │               Driver Module Manager                      ││
+│  │                                                          ││
+│  │  1. Load ELF from boot filesystem                        ││
+│  │  2. Parse ELF headers, apply relocations                 ││
+│  │  3. Find driver_module_init symbol                       ││
+│  │  4. Call driver_module_init(kernel_api)                   ││
+│  │  5. Receive driver_module_descriptor_t                    ││
+│  │  6. Attach driver to Driver Manager                      ││
+│  └──────────────────────────────────────────────────────────┘│
+│                                                              │
+│  ┌──────────────────────────────────────────────────────────┐│
+│  │               Driver Manager                             ││
+│  │                                                          ││
+│  │  Categorizes drivers by kind:                            ││
+│  │  - PCI, FAT32, Display, Input, USB, NIC                  ││
+│  │  Provides unified access: driver_manager_get_*()         ││
+│  └──────────────────────────────────────────────────────────┘│
+│                                                              │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
+│  │ Client APIs │ │ Server Impl │ │   Module Framework      ││
+│  │ (kernel-    │ │ (actual     │ │   (load/unload/         ││
+│  │  facing)    │ │  drivers)   │ │    init/reload)          ││
+│  └─────────────┘ └─────────────┘ └─────────────────────────┘│
+└──────────────────────────────────────────────────────────────┘
+```
 
-### Step 1: Assign a Module ID
+## 3. Driver Categories
 
-Edit `Kernel/Drivers/DriverModuleIds.h`:
+| Category | Kind Enum | Example Drivers | Key Interface |
+|---|---|---|---|
+| PCI Bus | `DRIVER_MANAGER_KIND_PCI` | `PCI_Driver.ELF` | `pci_driver_t` |
+| Filesystem | `DRIVER_MANAGER_KIND_FAT32` | `FAT32_Driver.ELF` | `fat32_driver_t` |
+| Display | `DRIVER_MANAGER_KIND_DISPLAY` | `ImplusOS_Generic_Display_Driver.ELF`, `VirtIO_Driver.ELF` | `driver_display_t` |
+| Input | `DRIVER_MANAGER_KIND_INPUT` | `PS2_Driver.ELF` | `driver_input_t` |
+| USB Host | `DRIVER_MANAGER_KIND_USB` | `USB_Driver.ELF` | `usb_master_vtable_t` |
+| NIC | `DRIVER_MANAGER_KIND_NIC` | `VirtIO_Driver.ELF` | `driver_nic_t` |
+
+## 4. Kernel API (`driver_binary_t`)
+
+The kernel passes this vtable to every driver during initialization:
 
 ```c
-enum {
-    DRIVER_MODULE_ID_INVALID = 0,
-    DRIVER_MODULE_ID_PCI = 1,
-    DRIVER_MODULE_ID_FAT32 = 2,
-    DRIVER_MODULE_ID_PS2 = 3,
-    DRIVER_MODULE_ID_DISPLAY_VIRTIO = 4,
-    DRIVER_MODULE_ID_DISPLAY_IMPLUS_DISPLAY_GENERIC_DRIVER = 5,
-    DRIVER_MODULE_ID_USB = 6,
-    DRIVER_MODULE_ID_MY_DRIVER = 7,      // ← Add your ID
-    DRIVER_MODULE_ID_MAX = 7             // ← Update MAX
+typedef struct {
+    // Timer
+    void (*timer_msleep)(uint32_t ms);
+    uint32_t (*timer_hz)(void);
+    uint64_t (*timer_ticks)(void);
+
+    // Memory allocation
+    void *(*malloc)(uint64_t size);
+    void (*free)(void *ptr);
+
+    // DMA (physically contiguous memory)
+    void *(*dma_alloc)(size_t size, uint64_t *phys_out);
+    void (*dma_free)(void *ptr, size_t size);
+    uint64_t (*virt_to_phys)(void *virt);
+
+    // Memory operations
+    void *(*memset)(void *s, int c, size_t n);
+    void *(*memcpy)(void *dst, const void *src, size_t n);
+
+    // I/O ports
+    uint8_t (*inb)(uint16_t port);
+    void (*outb)(uint16_t port, uint8_t value);
+    uint32_t (*inl)(uint16_t port);
+    void (*outl)(uint16_t port, uint32_t value);
+
+    // Block I/O
+    bool (*disk_read)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
+    bool (*disk_write)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
+
+    // PCI configuration space
+    uint32_t (*pci_read_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset);
+    void (*pci_write_config)(uint8_t bus, uint8_t device, uint8_t func,
+                              uint8_t offset, uint32_t value);
+
+    // MMIO mapping
+    void *(*map_mmio_virt)(uint64_t phys_addr);
+
+    // Debug output
+    void (*serial_write_char)(char c);
+    void (*serial_write_string)(const char *str);
+    void (*serial_write_uint32)(uint32_t val);
+} driver_binary_t;
+```
+
+## 5. Driver Descriptor
+
+Every driver module must export:
+
+```c
+typedef struct {
+    const void *driver_api;    // Pointer to the driver's API struct
+    void (*shutdown)(void);    // Called when driver is unloaded
+} driver_module_descriptor_t;
+
+typedef const driver_module_descriptor_t *(*driver_module_init_fn_t)(
+    const driver_binary_t *api
+);
+```
+
+The kernel looks for the symbol `driver_module_init` in the loaded ELF.
+
+## 6. Writing a New Driver
+
+### 6.1 Source Structure
+
+Create a directory under `Kernel/Drivers/Server/<Category>/<DriverName>/`:
+
+```
+Kernel/Drivers/Server/
+└── MyCategory/
+    └── MyDriver/
+        ├── Makefile
+        ├── MyDriver.c
+        └── MyDriver.h
+```
+
+### 6.2 Implementation Template
+
+```c
+// MyDriver.c
+#include "Drivers/Module/DriverBinary.h"
+
+static const driver_binary_t *g_api = NULL;
+
+// Your driver's API implementation
+static bool my_driver_init(void) {
+    g_api->serial_write_string("MyDriver: Initializing...\n");
+    // Initialize hardware, allocate resources
+    return true;
+}
+
+static void my_driver_shutdown(void) {
+    g_api->serial_write_string("MyDriver: Shutting down\n");
+    // Release resources
+}
+
+// Fill in your driver-specific vtable
+static const driver_display_t my_display_ops = {
+    .name       = "MyDriver",
+    .probe      = my_driver_probe,
+    .init       = my_driver_init,
+    .is_ready   = my_driver_is_ready,
+    .width      = my_driver_width,
+    .height     = my_driver_height,
+    .draw_pixel = my_driver_draw_pixel,
+    .fill_rect  = my_driver_fill_rect,
+    .present    = my_driver_present,
+    // ...
 };
-```
 
-### Step 2: Create the Driver Source
+static const driver_module_descriptor_t descriptor = {
+    .driver_api = &my_display_ops,
+    .shutdown   = my_driver_shutdown,
+};
 
-Create your source file, e.g., `Kernel/Drivers/MyDriver/MyDriver.c`:
-
-```c
-#include "../DriverBinary.h"
-
-static const driver_kernel_api_t *g_api;
-
-// Your driver's operation implementations
-static bool my_driver_probe(void) {
-    // Return true if hardware is present
-    return true;
-}
-
-static bool my_driver_init_hw(void) {
-    // Initialise hardware
-    g_api->serial_write_string("[MyDriver] Initialised\n");
-    return true;
-}
-
-// The vtable your driver exports — define per your driver type
-
-// Entry point — MUST be named driver_module_init
-const void *driver_module_init(const driver_kernel_api_t *api) {
+// Required export symbol
+const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api) {
     g_api = api;
-
-    if (!my_driver_probe()) {
-        return NULL;
-    }
-
-    my_driver_init_hw();
-
-    // Return your driver vtable (cast as appropriate)
-    return &my_driver_vtable;
+    return &descriptor;
 }
 ```
 
-### Step 3: Add Build Rules to Makefile
+### 6.3 Makefile Template
 
 ```makefile
-# Add object file
-$(BUILD_DIR)/Modules/MyDriver_Module.o: Kernel/Drivers/MyDriver/MyDriver.c
-	mkdir -p $(dir $@)
-	$(CC) $(DRIVER_MODULE_CFLAGS) -c $< -o $@
-
-# Add ELF target
-MY_DRIVER_ELF := $(BUILD_DIR)/Kernel/Drivers/MyDriver.ELF
-
-$(MY_DRIVER_ELF): $(BUILD_DIR)/Modules/MyDriver_Module.o
-	mkdir -p $(dir $@)
-	$(LD) $(DRIVER_MODULE_LDFLAGS) $^ -o $@
-
-# Add to 'all' target
-all: ... $(MY_DRIVER_ELF)
+include ../../../module.mk
 ```
 
-### Step 4: Register in Bootloader
+The `module.mk` file provides standard build rules for driver modules.
 
-Edit `BootLoader/Loader.c`, in `PreloadDriverModules()`:
+### 6.4 Client Interface
+
+If your driver needs a kernel-facing client API, add files under
+`Kernel/Drivers/Client/<Category>/`:
+
+```
+Kernel/Drivers/Client/
+└── MyCategory/
+    ├── MyDriver_Client.c
+    └── MyDriver_Main.h
+```
+
+### 6.5 Registration
+
+The driver is automatically discovered when placed in `Kernel/Driver/` on the
+boot filesystem. The `driver_module_manager_init()` function loads all ELFs
+from the boot info's loaded files, and `driver_module_init_all()` calls each
+driver's init function.
+
+## 7. Driver Interface Specifications
+
+### 7.1 Display Driver (`driver_display_t`)
 
 ```c
-static PRELOAD_FILE_SPEC Specs[] = {
-    // ... existing entries ...
-    { DRIVER_MODULE_ID_MY_DRIVER, L"Kernel\\Driver\\MyDriver.ELF", TRUE },
-};
+typedef struct {
+    const char *name;
+    bool (*probe)(void);                                    // Check if hardware is present
+    bool (*init)(void);                                     // Initialize the display
+    bool (*is_ready)(void);                                 // Is display ready for rendering?
+    uint32_t (*width)(void);                                // Display width in pixels
+    uint32_t (*height)(void);                               // Display height in pixels
+    void (*draw_pixel)(uint32_t x, uint32_t y, uint32_t color);
+    void (*fill_rect)(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
+    void (*present)(void);                                  // Swap/flush buffers
+    bool (*set_framebuffer)(const driver_boot_framebuffer_t *fb);
+    void *(*get_framebuffer)(void);                         // Direct framebuffer access
+} driver_display_t;
 ```
 
-### Step 5: Load from Kernel Side
-
-Create a client file (e.g., `Kernel/Drivers/MyDriver/MyDriver_Client.c`):
+### 7.2 Input Driver (`driver_input_t`)
 
 ```c
-#include "../DriverModule.h"
-
-static const my_driver_vtable_t *g_driver = NULL;
-
-void my_driver_client_init(void) {
-    uint64_t entry = 0;
-    if (!driver_module_manager_load(DRIVER_MODULE_ID_MY_DRIVER,
-                                     1024 * 1024, 4 * 1024 * 1024,
-                                     &entry)) {
-        return;
-    }
-
-    typedef const my_driver_vtable_t *(*init_fn)(const driver_kernel_api_t *);
-    init_fn fn = (init_fn)entry;
-    g_driver = fn(driver_module_manager_kernel_api());
-}
+typedef struct {
+    void (*init)(void);
+    void (*poll)(void);                                     // Poll for new events
+    int32_t (*read_keyboard)(driver_keyboard_event_t *out); // 0 = no event, 1 = event
+    int32_t (*read_mouse)(driver_mouse_event_t *out);       // 0 = no event, 1 = event
+    void (*drain_keyboard)(driver_keyboard_event_t *tmp,
+                           void (*forward)(driver_keyboard_event_t *));
+    void (*drain_mouse)(driver_mouse_event_t *tmp,
+                        void (*forward)(driver_mouse_event_t *));
+} driver_input_t;
 ```
 
----
+### 7.3 Keyboard Event
 
-## 3. Build Flags
+```c
+typedef struct __attribute__((packed)) {
+    uint16_t keycode;      // Scancode
+    uint8_t  pressed;      // 1 = press, 0 = release
+    uint8_t  ascii;        // ASCII character (0 if non-printable)
+    uint8_t  modifiers;    // SHIFT | CTRL | ALT | CAPS
+    uint8_t  reserved[3];
+} driver_keyboard_event_t;
+```
 
-Driver modules **must** be compiled with:
+Modifier flags:
+- `DRIVER_KBD_MOD_SHIFT` (bit 0)
+- `DRIVER_KBD_MOD_CTRL` (bit 1)
+- `DRIVER_KBD_MOD_ALT` (bit 2)
+- `DRIVER_KBD_MOD_CAPS` (bit 3)
 
-| Flag | Purpose |
-|---|---|
-| `-fPIC` | Position-independent code (mandatory for `ET_DYN`) |
-| `-DIMPLUS_DRIVER_MODULE` | Signals driver context |
-| `-DKERNEL` | Access kernel headers |
+### 7.4 Mouse Event
 
-And linked with:
+```c
+typedef struct __attribute__((packed)) {
+    uint16_t x;            // Absolute X position
+    uint16_t y;            // Absolute Y position
+    uint8_t  buttons;      // Button state bitmask
+    int8_t   wheel;        // Scroll wheel delta
+    uint8_t  reserved[2];
+} driver_mouse_event_t;
+```
 
-| Flag | Purpose |
-|---|---|
-| `-shared` | Produce `ET_DYN` ELF |
-| `-Bsymbolic` | Bind references to local definitions |
-| `-e driver_module_init` | Set entry point |
-| `-z max-page-size=4096` | 4 KiB page alignment |
+### 7.5 Storage Driver (`driver_storage_t`)
 
----
+```c
+typedef struct {
+    bool (*read_sectors)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
+    bool (*write_sectors)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
+} driver_storage_t;
+```
 
-## 4. Kernel API Available to Drivers
+### 7.6 NIC Driver (`driver_nic_t`)
 
-The `driver_kernel_api_t` provides:
+```c
+typedef struct {
+    bool (*init)(void);
+    bool (*is_ready)(void);
+    uint16_t (*mtu)(void);
+    void (*get_mac)(uint8_t mac_out[6]);
+    bool (*send_frame)(const uint8_t *frame, uint16_t frame_len);
+    void (*poll)(void);
+    void (*set_rx_callback)(driver_nic_rx_callback_t cb);
+} driver_nic_t;
+```
 
-### Timer
-- `timer_msleep(uint32_t ms)` — busy-wait sleep
-- `timer_hz()` — current timer frequency
-- `timer_ticks()` — current tick count
+### 7.7 USB Master (`usb_master_vtable_t`)
 
-### Memory
-- `malloc(uint64_t size)` / `free(void *ptr)` — heap allocation
-- `dma_alloc(size_t size, uint64_t *phys_out)` — DMA buffer (physical address returned)
-- `dma_free(void *ptr, size_t size)` — free DMA buffer
-- `virt_to_phys(void *virt)` — virtual → physical translation
+```c
+typedef struct {
+    driver_input_t   input;    // USB HID input
+    driver_storage_t storage;  // USB Mass Storage
+    driver_usb_t     usb;      // Low-level USB transfer API
+} usb_master_vtable_t;
+```
 
-### Memory Operations
-- `memset(void *s, int c, size_t n)`
-- `memcpy(void *dst, const void *src, size_t n)`
+## 8. Existing Driver Modules
 
-### Port I/O
-- `inb(uint16_t port)` / `outb(uint16_t port, uint8_t value)`
-- `inl(uint16_t port)` / `outl(uint16_t port, uint32_t value)`
+### PCI Driver (`PCI_Driver.ELF`)
 
-### Disk
-- `disk_read(uint32_t lba, uint8_t *buffer, uint32_t sector_count)`
-- `disk_write(uint32_t lba, const uint8_t *buffer, uint32_t sector_count)`
+- Source: `Kernel/Drivers/Server/PCI/PCI_Main.c`
+- Enumerates PCI bus devices
+- Provides config space read/write
 
-### PCI
-- `pci_read_config(bus, device, func, offset)`
-- `pci_write_config(bus, device, func, offset, value)`
+### FAT32 Driver (`FAT32_Driver.ELF`)
 
-### MMIO
-- `map_mmio_virt(uint64_t phys_addr)` — map physical MMIO to virtual
+- Source: `Kernel/Drivers/Server/FileSystem/FAT32/FAT32_Main.c`
+- Full FAT32 filesystem implementation
+- Read/write files, directories, create/delete
+- BPB parsing, cluster chain walking, FAT table management
 
-### Debug Output
-- `serial_write_char(char c)`
-- `serial_write_string(const char *str)`
-- `serial_write_uint32(uint32_t val)`
+### PS/2 Driver (`PS2_Driver.ELF`)
 
----
+- Source: `Kernel/Drivers/Server/PS2/PS2_Input.c`
+- PS/2 keyboard and mouse input
+- Scancode translation to ASCII
+- Mouse packet parsing
 
-## 5. Restrictions
+### USB Driver (`USB_Driver.ELF`)
 
-- No standard library (no `libc`, no `printf`)
-- No direct access to kernel globals — use the API table
-- No dynamic linking to other modules
-- Module code runs in kernel space (Ring 0) — bugs can crash the system
-- Maximum 4096 relocations per module
+- Source: `Kernel/Drivers/Server/USB/`
+- Host controller support: OHCI, UHCI, EHCI, XHCI
+- Device classes: HID (keyboard/mouse), Mass Storage
+- Hub enumeration and device setup
+
+### VirtIO Driver (`VirtIO_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/Display/VirtIO/` and `Kernel/Drivers/Server/NIC/VirtIONet/`
+- VirtIO-GPU display driver (double-buffered)
+- VirtIO-Net NIC driver (Ethernet frame send/receive)
+
+### Generic Display Driver (`ImplusOS_Generic_Display_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/Display/ImplusOS_Generic/ImplusOS_Generic.c`
+- Fallback framebuffer driver using the boot framebuffer from UEFI GOP
+- Double-buffered rendering
+
+## 9. Hot Reload
+
+Drivers can be unloaded and reloaded at runtime:
+
+```c
+// Unload a driver
+driver_module_manager_unload_by_name("MyDriver");
+
+// Reload a driver
+driver_module_manager_reload_by_name("MyDriver");
+```
+
+This calls the driver's `shutdown()` callback, unlinks from the Driver Manager,
+then re-loads and re-initializes the driver ELF.
+
+## 10. Driver Selection
+
+The `DriverSelect` module (`Kernel/Drivers/Module/DriverSelect.c`) handles:
+- Setting the boot framebuffer from UEFI GOP
+- Selecting the best available display driver (VirtIO-GPU preferred, fallback to generic)

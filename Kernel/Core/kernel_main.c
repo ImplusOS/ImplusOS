@@ -28,13 +28,14 @@
 #include "Debug/serial/Serial.h"
 #include <stdio.h>
 #include "virt/VMX.h"
+#include "interfaces/arch_ops.h"
 
 static BOOT_INFO g_boot_info_copy;
 
 __attribute__((aligned(16))) static uint8_t kernel_stack[0x40000];
 
 static uint64_t user_entry = 0;
-extern void syscall_enter_user_from_frame(uint64_t saved_rsp, uint64_t user_rsp);
+extern const arch_ops_t *arch_ops_get(void);
 
 bool all_fs_initialize(const BOOT_INFO *boot_info) {
     const FAT32_BPB *initial_bpb = NULL;
@@ -49,31 +50,6 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
         return false;
     }
     return true;
-}
-
-__attribute__((noreturn))
-void entry_user_mode() {
-    uint64_t user_rsp = process_get_current_user_rsp();
-    uint64_t saved_rsp = process_get_current_saved_rsp();
-    uint64_t user_cr3 = process_get_current_cr3();
-
-    if (user_rsp == 0 || saved_rsp == 0 || user_cr3 == 0) {
-        while (1) { __asm__ volatile("cli; hlt"); }
-    }
-
-    register uint64_t rdi __asm__("rdi") = saved_rsp;
-    register uint64_t rsi __asm__("rsi") = user_rsp;
-    register uint64_t rax __asm__("rax") = user_cr3;
-
-    __asm__ volatile(
-        "mov %%rax, %%cr3 \n\t"
-        "mov %%rdi, %%rsp \n\t"
-        "jmp syscall_enter_user_from_frame"
-        :: "r"(rdi), "r"(rsi), "r"(rax)
-        : "memory"
-    );
-
-    __builtin_unreachable();
 }
 
 static void fb_clear(BOOT_INFO* bi, uint32_t color) {
@@ -176,17 +152,29 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     load_bar_finish();
 
+    const arch_ops_t *ops = arch_ops_get();
+
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
             while (1) { __asm__("hlt"); }
         }
     }
 
+    uint64_t user_rsp = process_get_current_user_rsp();
+    uint64_t saved_rsp = process_get_current_saved_rsp();
+    uint64_t user_cr3 = process_get_current_cr3();
+
+    if (user_rsp == 0 || saved_rsp == 0 || user_cr3 == 0) {
+        while (1) { __asm__ volatile("cli; hlt"); }
+    }
+
+    if (ops) {
+        ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
+    }
+
     if (!fs_ready) {
         while (1) { __asm__("hlt"); }
     }
-    
-    entry_user_mode();
 
     __builtin_unreachable();
 }

@@ -1,150 +1,174 @@
-# ImplusOS — Gemini Instructions
+# GEMINI.md — ImplusOS Project Guide for Gemini CLI
 
-> This file is for Gemini (Google). The instructions below are identical to `AGENT.md`.
-> For Claude-specific file, see `CLAUDE.md`.
+## Project Summary
 
-## Project Overview
+ImplusOS is a hobby operating system for x86-64 with UEFI boot.
+Monolithic kernel + loadable driver modules. Custom libc.
+Runs on QEMU with OVMF firmware.
 
-ImplusOS is a hobby operating system targeting **x86-64 (Long Mode)** with the following characteristics:
+## Quick Reference
 
-| Property | Value |
+### Build & Run
+
+```bash
+# Prerequisites (Ubuntu/Debian)
+sudo apt install -y build-essential nasm binutils gnu-efi \
+  gcc-x86-64-elf g++-x86-64-elf parted qemu-system-x86 \
+  dosfstools xorriso mtools util-linux gdb
+
+# Full build
+make
+
+# Create bootable ISO
+make image_esp
+
+# Run in QEMU
+make run_usb   # USB XHCI boot
+make run_ide   # IDE boot
+
+# Clean
+make clean
+```
+
+### Toolchain
+
+| Tool | Binary |
 |---|---|
-| Architecture | x86-64 (Long Mode) |
-| Boot | UEFI via `gnu-efi` → ELF64 kernel |
-| Kernel model | Monolithic with loadable driver modules (PIC ELF shared objects) |
-| Languages | C (C11), NASM assembly (Intel syntax) |
-| Filesystem | FAT32 (read/write) via VFS layer |
-| Syscall ABI | AMD64 `SYSCALL` / `SYSRET` |
-| Build | GNU Make + `x86_64-elf-gcc` cross compiler |
-| Target | QEMU + OVMF |
+| C Compiler | `x86_64-elf-gcc` |
+| Linker | `x86_64-elf-ld` |
+| Assembler | `nasm` (x86_64 only) |
+
+### Key Compiler Flags
+
+- Kernel: `-ffreestanding -fno-pic -mcmodel=large -mno-red-zone -nostdlib -DKERNEL`
+- Userland: `-ffreestanding -fno-pic -mcmodel=large -mno-red-zone -nostdlib`
+- Drivers: `-fPIC -shared` (position-independent ELF shared objects)
 
 ## Repository Structure
 
 ```
 ImplusOS/
-├── BootLoader/        UEFI bootloader (Loader.c + boot logo resources)
-├── Kernel/            Kernel source tree
-│   ├── Kernel_Main.c  Entry point & boot sequence
-│   ├── KernelConfig.h Compile-time configuration
-│   ├── Common/        os_status_t error codes
-│   ├── Memory/        Bitmap PMM + kernel heap + DMA allocator
-│   ├── Paging/        4-level page tables (NX bit enabled)
-│   ├── GDT/           Global Descriptor Table + TSS
-│   ├── IDT/           Interrupt Descriptor Table
-│   ├── SMP/           Multi-core support
-│   ├── Syscall/       System call dispatch & handlers
-│   ├── ProcessManager/ Process lifecycle, scheduling, capabilities
-│   ├── Drivers/       Loadable driver modules (Client + Server)
-│   ├── VFS/           Virtual File System layer
-│   ├── IPC/           Inter-process message passing
-│   ├── WindowManager/ Window manager kernel-side
-│   ├── Network/       IPv4/UDP/TCP/ICMP/DHCP/DNS
-│   ├── Ethernet/      Ethernet frame TX/RX
-│   ├── ARP/           ARP resolution + cache
-│   ├── IO/            Port I/O + disk abstraction (ATA, USB Mass Storage)
-│   ├── ELF/           ELF loader (user process + driver modules)
-│   ├── VMX/           Intel VMX virtualization support
-│   ├── Sync/          Spinlock (TTAS with IRQ save/restore)
-│   ├── Timer/         PIT + LAPIC timer
-│   ├── Platform/      ACPI, LAPIC, IOAPIC, interrupt routing
-│   └── Debbuger/      Serial, printf, panic handler
-├── Userland/          User-space source tree
-│   ├── Userland.c     Init process (_start)
-│   ├── Syscalls.c/h   Raw syscall wrappers
-│   ├── API/           High-level userland API headers
-│   ├── Application/
-│   │   ├── SystemApps/  System services (WM, Shell, etc.)
-│   │   └── UserApps/    User applications
-│   ├── DriverFramework/  Userland driver framework API
-│   ├── NetworkStack/     Userland network utilities (DNS)
-│   └── POSIX/            POSIX compatibility layer
-├── libc/              Minimal C library (string, stdlib, stdio, math, errno)
-├── Thirdparty/        Third-party code (stb_image, stb_truetype)
-├── Docs/              Documentation
-│   └── Architecture/  Technical reference documents
-├── Makefile           Top-level build system
-└── Doxyfile           Doxygen configuration
+├── BootLoader/           # UEFI bootloader (gnu-efi)
+├── Kernel/               # Kernel source
+│   ├── Arch/x86_64/      # GDT, IDT, paging, SMP, VMX
+│   ├── Core/             # kernel_main, process, syscall, VFS, IPC, timer, WM
+│   ├── Debug/            # Serial, printf, panic
+│   ├── Drivers/          # Driver framework (Client/Server/Module)
+│   ├── IPC/              # Message-passing IPC
+│   ├── MemoryManagement/ # PMM (bitmap), heap, DMA
+│   ├── Network/          # IPv4/ARP/DHCP/UDP/TCP/ICMP/Ethernet
+│   ├── Platform/         # ACPI, APIC, I/O protocols
+│   ├── config/           # arch.mk
+│   └── include/          # Shared headers (status.h, config.h, interfaces/)
+├── Userland/             # User-space
+│   ├── API/              # Syscall wrapper headers
+│   ├── Application/      # System and user applications
+│   ├── POSIX/            # POSIX compatibility layer
+│   ├── Syscalls.c/h      # Unified syscall wrappers
+│   ├── Userland.c        # Init process
+│   └── Userland.ld       # Linker script
+├── libc/                 # Minimal C library
+├── Thirdparty/           # stb_truetype.h, stb_image.h
+├── Makefile              # Top-level build
+└── Doxyfile              # Doxygen config
 ```
 
-## ⚠️ MANDATORY: Read Rules & Workflows
+## Architecture Overview
 
-Before making any changes, you **MUST** read the following files:
+### Boot Flow
 
-### Rules (`.agent/rules/`)
+1. UEFI firmware loads `BOOTX64.EFI` (from `BootLoader/Loader.c`)
+2. Loader sets up GOP framebuffer, loads kernel ELF + driver ELFs + font data
+3. Discovers ACPI RSDP, partition BPB, boot drive type
+4. Exits UEFI Boot Services, jumps to `kernel_main()`
 
-| File | Content |
-|---|---|
-| [coding-standards.md](.agent/rules/coding-standards.md) | Naming conventions, formatting, error handling, warnings |
-| [architecture-constraints.md](.agent/rules/architecture-constraints.md) | Freestanding env, cross compiler, memory model, address space |
-| [safety-critical.md](.agent/rules/safety-critical.md) | Interrupt safety, spinlocks, NX bit, syscall validation, SMP |
+### Kernel Initialization (in order)
 
-### Workflows (`.agent/workflows/`)
-
-| File | Content |
-|---|---|
-| [build-and-test.md](.agent/workflows/build-and-test.md) | Build, QEMU run, debug, troubleshooting |
-| [adding-syscall.md](.agent/workflows/adding-syscall.md) | How to add a new system call |
-| [adding-driver-module.md](.agent/workflows/adding-driver-module.md) | How to add a loadable driver module |
-| [adding-userland-app.md](.agent/workflows/adding-userland-app.md) | How to add a userland application |
-
-## Architecture Documentation
-
-For deeper understanding, refer to `Docs/Architecture/`:
-
-| Document | Content |
-|---|---|
-| [Kernel_Architecture.md](Docs/Architecture/Kernel_Architecture.md) | Full kernel architecture overview |
-| [Boot_Sequence.md](Docs/Architecture/Boot_Sequence.md) | Detailed boot flow reference |
-| [Syscall_Reference.md](Docs/Architecture/Syscall_Reference.md) | System call numbers, arguments, return values |
-| [Driver_Module_Guide.md](Docs/Architecture/Driver_Module_Guide.md) | How to create driver modules |
-| [Kernel_Config_Guide.md](Docs/Architecture/Kernel_Config_Guide.md) | Compile-time configuration options |
-| [Status_Codes.md](Docs/Architecture/Status_Codes.md) | Error code reference and errno mapping |
-| [Repository_Structure.md](Docs/Architecture/Repository_Structure.md) | Detailed directory layout |
-
-## Build Quick Reference
-
-```bash
-# Full build
-make
-
-# Clean build
-make clean && make
-
-# Create ISO image
-make image_esp
-
-# Run in QEMU (USB boot)
-make run_usb
-
-# Run in QEMU (IDE boot)
-make run_ide
+```
+serial_init → GDT → IDT → PMM → paging → heap → ACPI → interrupts →
+syscall_init → SMP → VMX → timer → driver modules → filesystem → display →
+window manager → process manager → IPC → network → launch Userland.ELF
 ```
 
-## Key Conventions Summary
+### Syscall Convention
 
-### Error Handling
+- AMD64 `SYSCALL`/`SYSRET` instruction pair
+- Syscall number in `RAX`
+- Arguments: `RDI`, `RSI`, `RDX`, `R10`, `R8`
+- Return value in `RAX`
+- All syscall numbers defined in `Kernel/Core/syscall/Syscall_Main.h`
 
-All kernel subsystems return `os_status_t` (`int64_t`). Negative values are errors.
+### Error Model
 
-```c
-os_status_t result = some_function();
-if (os_status_is_error(result)) {
-    return result;  // propagate error
-}
-```
+- Kernel functions return `os_status_t` (int64_t)
+- `0` = success, negative = error
+- Status codes: `OS_STATUS_OK`, `OS_STATUS_INVALID_ARG` (-22), `OS_STATUS_NOT_FOUND` (-2), etc.
+- Defined in `Kernel/include/kernel/status.h`
 
-See `Kernel/Common/Status.h` for status codes.
+### Process Model
 
-### Naming
+- Max 128 processes (configurable via `OS_CONFIG_PROCESS_MAX_COUNT`)
+- Per-process CR3 (separate address spaces)
+- Capability-based security: SERIAL, PROCESS, FILE, MEMORY, INPUT, SIGNAL, IPC, NETWORK
+- Round-robin scheduling with timer-driven preemption
+- User-space memory layout: Code @ `0x4000000000`, Heap @ `0x4100000000`, Stack @ `0x4800000000` (32 MiB)
 
-- Functions: `subsystem_action()` (e.g., `vfs_read_file()`, `process_create()`)
-- Types: `snake_case_t` (e.g., `os_status_t`)
-- Macros: `UPPER_SNAKE_CASE` with prefix (e.g., `OS_CONFIG_*`, `SYSCALL_*`)
-- Files: `PascalCase` (e.g., `Kernel_Main.c`, `Memory_Main.c`)
+### Driver Module System
 
-### Safety
+- Drivers are PIC ELF shared objects loaded by the kernel at boot
+- Kernel provides `driver_binary_t` vtable (malloc, free, I/O ports, DMA, disk, PCI, serial)
+- Drivers export `driver_module_init(const driver_binary_t *api)` → returns `driver_module_descriptor_t*`
+- Driver types: PCI, FAT32, Display (VirtIO-GPU / Generic FB), PS2, USB (OHCI/UHCI/EHCI/XHCI), NIC (VirtIO-Net)
 
-- Always validate pointers (NULL check) before use.
-- Protect shared data with `spinlock_lock()` / `spinlock_unlock()` + IRQ save/restore.
-- Never execute code from data pages (NX bit is enforced).
-- Validate all user-supplied syscall arguments — never trust userland input.
+### IPC
+
+- Ring-buffer message queues per process
+- Max 256 bytes/message, 16 messages/queue
+- API: `ipc_send_message()`, `ipc_receive_message()`
+
+### Network Stack
+
+- Layers: Ethernet → ARP → IPv4 → UDP/TCP/ICMP
+- DHCP client, DNS resolver (userland)
+- Hardware: VirtIO-Net NIC driver
+- Userland: Berkeley socket API via POSIX layer
+
+### POSIX Compatibility
+
+Full POSIX layer in `Userland/POSIX/` providing:
+- File I/O: open, read, write, close, lseek, stat, pipe, dup/dup2, mkdir, unlink, opendir/readdir
+- Process: getpid, fork, exec, waitpid, kill, _exit
+- Signals: signal, sigaction, sigprocmask, raise
+- Threads: pthread_create/join/mutex/cond/key
+- Networking: socket, bind, connect, listen, accept, send, recv
+- Time: clock_gettime, nanosleep, gettimeofday, gmtime_r, mktime
+- Memory: mmap
+- I/O: select, poll, fcntl, ioctl
+
+## Coding Style
+
+- **Language**: C (C11) + NASM assembly
+- **Naming**: PascalCase types, snake_case functions, UPPER_CASE macros
+- **Headers**: `#pragma once`
+- **No stdlib**: Freestanding environment. Use bundled `libc/`.
+- **Warnings**: `-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow`
+
+## Key Files
+
+| File | Description |
+|---|---|
+| `Kernel/Core/kernel_main.c` | Kernel entry + init sequence |
+| `Kernel/Core/syscall/Syscall_Main.h` | Syscall number definitions |
+| `Kernel/Core/syscall/Syscall_Dispatch.c` | Syscall dispatch (main switch) |
+| `Kernel/include/kernel/config.h` | Compile-time kernel config |
+| `Kernel/include/kernel/status.h` | Error codes + errno mapping |
+| `Kernel/Drivers/Module/DriverBinary.h` | Driver API vtable |
+| `Kernel/Core/process/ProcessManager.h` | Process API + capabilities |
+| `Userland/Userland.c` | Init process |
+| `Userland/POSIX/README_POSIX.md` | POSIX layer docs |
+
+## Testing
+
+- QEMU + OVMF (q35, 4 CPUs, 4GB RAM, VirtIO-Net, XHCI)
+- Serial output on COM1 (115200 baud) via `-serial stdio`
+- No automated test suite — manual QEMU testing
