@@ -9,6 +9,7 @@
 #define BIOS_SECTOR_BUFFER_ADDRESS 0x00007c00u
 #define BIOS_KERNEL_ELF_BUFFER     0x00100000u
 
+#pragma pack(push, 1)
 typedef struct {
     uint32_t signature;
     uint32_t version;
@@ -30,5 +31,6 @@ typedef struct {
 
     uint64_t acpi_rsdp;
 } BIOS_BOOT_PARAMS;
+#pragma pack(pop)
 
 #endif

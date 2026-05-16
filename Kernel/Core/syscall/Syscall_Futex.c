@@ -62,7 +62,7 @@ int64_t syscall_futex_wait(uint64_t uaddr, int32_t expected,
         return -11;
     }
 
-    int32_t my_pid = current_pid_get();
+    int32_t pid = current_pid_get();
 
     uint64_t deadline = 0;
     if (timeout_ns > 0) {
@@ -83,7 +83,7 @@ int64_t syscall_futex_wait(uint64_t uaddr, int32_t expected,
         return -12;
     }
     g_futex_waiters[slot].used        = 1;
-    g_futex_waiters[slot].pid         = my_pid;
+    g_futex_waiters[slot].pid         = pid;
     g_futex_waiters[slot].uaddr       = uaddr;
     g_futex_waiters[slot].bitset      = bitset ? bitset : 0xFFFFFFFFu;
     g_futex_waiters[slot].deadline_ms = deadline;

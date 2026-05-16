@@ -32,39 +32,41 @@ typedef struct {
     uint64_t Size;
 } LOADED_FILE;
 
+#pragma pack(push, 1)
 typedef struct {
-    EFI_MEMORY_DESCRIPTOR *MemoryMap;
-    UINTN MemoryMapSize;
-    UINTN MemoryMapDescriptorSize;
-    UINT32 MemoryMapDescriptorVersion;
+    uint64_t               MemoryMap;
+    UINTN                  MemoryMapSize;
+    UINTN                  MemoryMapDescriptorSize;
+    UINT32                 MemoryMapDescriptorVersion;
 
     uint64_t FrameBufferBase;
     uint64_t FrameBufferSize;
-    UINT32 HorizontalResolution;
-    UINT32 VerticalResolution;
-    UINT32 PixelsPerScanLine;
+    UINT32   HorizontalResolution;
+    UINT32   VerticalResolution;
+    UINT32   PixelsPerScanLine;
 
-    uint64_t PartitionStartLBA;
+    uint64_t  PartitionStartLBA;
     FAT32_BPB BootPartitionBPB;
     UINT32    BootPartitionBPBValid;
 
     uint64_t AcpiRsdpAddress;
-    UINT32  AcpiRsdpSize;
-    UINT32  AcpiRsdpRevision;
+    UINT32   AcpiRsdpSize;
+    UINT32   AcpiRsdpRevision;
 
-    UINT32  BootDriveType;
+    UINT32   BootDriveType;
 
     uint64_t RamDiskBase;
     uint64_t RamDiskSize;
     UINT32   RamDiskSectorSize;
     UINT32   RamDiskReserved;
 
-    UINTN LoadedFileCount;
+    UINTN       LoadedFileCount;
     LOADED_FILE LoadedFiles[MAX_LOADED_FILES];
 
     uint64_t FontDataAddress;
     uint64_t FontDataSize;
 } BOOT_INFO;
+#pragma pack(pop)
 
 __attribute__((noreturn))
 void kernel_main(BOOT_INFO *boot_info);

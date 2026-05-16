@@ -26,10 +26,11 @@ BIOS_STAGE2_BIN   := $(BUILD_DIR)/Loader/BIOS/stage2.bin
 USERLAND_INIT_ELF := $(BUILD_DIR)/Userland/Userland.ELF
 
 LOADER_CFLAGS := \
+	-I. \
 	-I/usr/include/efi \
 	-I/usr/include/efi/x86_64 \
 	-I/usr/include/efi/protocol \
-	-I../libc/include \
+	-Ilibc/include \
 	-IBootManager/BootManager_libc/include \
 	-ffreestanding -fpic -fshort-wchar -fno-stack-protector \
 	-fno-builtin -mno-red-zone \
@@ -194,15 +195,15 @@ $(BIOS_STAGE2_BIN): $(BIOS_STAGE2_OBJS) BootManager/BIOS/linker.ld
 		exit 1; \
 	fi; \
 	truncate -s $$max $@
-	rm -f $@.elf
+	# rm -f $@.elf
 
 BOOTMANAGER_OBJS := \
-	$(BUILD_DIR)/BootManager/BootManager.o \
+	$(BUILD_DIR)/BootManager/UEFI/BootManager.o \
 	$(BUILD_DIR)/BootManager/FAT32.o \
 	$(BUILD_DIR)/BootManager/BootManager_libc/string.o \
 	$(BUILD_DIR)/BootManager/BootManager_libc/stdlib.o
 
-$(BUILD_DIR)/BootManager/BootManager.o: BootManager/BootManager.c
+$(BUILD_DIR)/BootManager/UEFI/BootManager.o: BootManager/UEFI/BootManager_UEFI.c
 	mkdir -p $(dir $@)
 	$(CC) $(LOADER_CFLAGS) -c $< -o $@
 

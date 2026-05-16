@@ -101,13 +101,13 @@ static uint32_t smp_detect_possible_cpus(void)
 
 void ap_entry_c(void)
 {
-    uint32_t my_lapic_id = read_lapic_id();
+    uint32_t lapic_id = read_lapic_id();
 
-    uint32_t my_cpu_idx = 0;
+    uint32_t cpu_idx = 0;
     bool found = false;
     for (uint32_t i = 0; i < g_cpu_apic_count; i++) {
-        if (g_cpu_apic_ids[i] == (uint8_t)my_lapic_id) {
-            my_cpu_idx = i;
+        if (g_cpu_apic_ids[i] == (uint8_t)lapic_id) {
+            cpu_idx = i;
             found = true;
             break;
         }
@@ -117,7 +117,7 @@ void ap_entry_c(void)
         while (1) { __asm__ volatile("hlt"); }
     }
 
-    g_current_pid_per_cpu[my_cpu_idx] = -1;
+    g_current_pid_per_cpu[cpu_idx] = -1;
 
     init_gdt();
     init_idt_per_cpu();

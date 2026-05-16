@@ -7,6 +7,8 @@ SECTIONS
 
     .text : {
         *(.text.stage2)
+        *(.data.stage2)
+        *(.bss.stage2)
         *(.text .text.*)
     }
 

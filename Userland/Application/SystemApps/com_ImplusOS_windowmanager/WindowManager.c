@@ -18,7 +18,7 @@
 #define STBTT_fmod(x,y)    fmod(x,y)
 #include "../../../../Thirdparty/stb_truetype.h"
 
-static void* my_realloc_sized(void* p, size_t oldsz, size_t newsz) {
+static void* realloc_sized(void* p, size_t oldsz, size_t newsz) {
     if (newsz == 0) { if (p) free(p); return NULL; }
     void* result = malloc(newsz);
     if (result && p) {
@@ -43,8 +43,8 @@ static void* my_realloc_sized(void* p, size_t oldsz, size_t newsz) {
 #define STBI_NO_THREAD_LOCALS
 #define STBI_ONLY_PNG
 #define STBI_MALLOC(sz)           malloc(sz)
-#define STBI_REALLOC(p,newsz) my_realloc_sized(p, 0, newsz)
-#define STBI_REALLOC_SIZED(p,oldsz,newsz) my_realloc_sized(p,oldsz,newsz)
+#define STBI_REALLOC(p,newsz) realloc_sized(p, 0, newsz)
+#define STBI_REALLOC_SIZED(p,oldsz,newsz) realloc_sized(p,oldsz,newsz)
 #define STBI_FREE(p)              free(p)
 #include "../../../../Thirdparty/stb_image.h"
 #pragma GCC diagnostic pop

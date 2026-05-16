@@ -82,13 +82,22 @@ static void load_spinner_timer(uint64_t tick) {
 
 __attribute__((noreturn))
 void kernel_main(BOOT_INFO *boot_info) {
+    __asm__ volatile ("outb %%al, %%dx" :: "a"('K'), "d"(0x3F8));
     __asm__ volatile ("cli");
     serial_init();
+    serial_write_string("[OS] Kernel entry point reached\n");
 
     if (boot_info != NULL) {
         memcpy(&g_boot_info_copy, boot_info, sizeof(BOOT_INFO));
         boot_info = &g_boot_info_copy;
     }
+    serial_write_string("[OS] Boot info copied\n");
+
+    serial_write_string("[OS] MemoryMap: ");
+    serial_write_uint64(boot_info->MemoryMap);
+    serial_write_string(" Size: ");
+    serial_write_uint32((uint32_t)boot_info->MemoryMapSize);
+    serial_write_string("\n");
 
     {
         uintptr_t sp = (uintptr_t)(kernel_stack + sizeof(kernel_stack));
@@ -104,22 +113,26 @@ void kernel_main(BOOT_INFO *boot_info) {
     init_idt();
 
     init_physical_memory(
-        boot_info->MemoryMap,
+        (void *)boot_info->MemoryMap,
         boot_info->MemoryMapSize,
         boot_info->MemoryMapDescriptorSize,
         0
     );
+
     init_paging();
     memory_init();
+
     acpi_init(boot_info);
     platform_interrupts_configure(acpi_get_info());
     syscall_init();
     smp_init();
+
     vmx_init();
     timer_init(60);
 
     __asm__ volatile ("sti");
     timer_switch_lapic();
+    
     driver_module_manager_init(boot_info);
     driver_module_init_all();
 
@@ -129,17 +142,20 @@ void kernel_main(BOOT_INFO *boot_info) {
         .width = boot_info->HorizontalResolution,
         .height = boot_info->VerticalResolution,
         .pixels_per_scan_line = boot_info->PixelsPerScanLine,
-        .bytes_per_pixel = 4,
+        .bytes_per_pixel = 4
     };
     driver_select_set_boot_framebuffer(&boot_fb);
+
     debugger_init(boot_info);
     disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType);
+
     bool fs_ready = false;
     if (all_fs_initialize(boot_info)) {
         fs_ready = true;
     }
     bool diskless_boot = (!fs_ready && OS_CONFIG_ALLOW_DISKLESS_BOOT);
     if (!fs_ready && !diskless_boot) {
+        serial_write_string("[OS] Filesystem not found\n");
         while (1) { __asm__("hlt"); }
     }
 
@@ -156,6 +172,7 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
+            serial_write_string("[OS] Failed to register Userland process\n");
             while (1) { __asm__("hlt"); }
         }
     }
@@ -165,16 +182,14 @@ void kernel_main(BOOT_INFO *boot_info) {
     uint64_t user_cr3 = process_get_current_cr3();
 
     if (user_rsp == 0 || saved_rsp == 0 || user_cr3 == 0) {
+        serial_write_string("[OS] Failed to get user process context\n");
         while (1) { __asm__ volatile("cli; hlt"); }
     }
 
+    serial_write_string("[OS] Entering user mode...\n");
     if (ops) {
         ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
     }
 
-    if (!fs_ready) {
-        while (1) { __asm__("hlt"); }
-    }
-
-    __builtin_unreachable();
+    for(;;) { __asm__("hlt"); }
 }

@@ -35,30 +35,90 @@ enable_a20:
     ret
 
 collect_e820:
-    push es
-    mov di, BIOS_MEMORY_MAP_ADDRESS
+    pushad
+    mov si, .msg_start
+    call print_string
     xor ebx, ebx
-    xor bp, bp
-    mov edx, 0x534D4150
+    xor bp, bp              ; bp will track offset in memory map
+    mov dword [e820_count], 0
 .next:
     mov eax, 0xE820
-    mov ecx, 24
-    mov edi, BIOS_MEMORY_MAP_ADDRESS
-    mov ax, di
-    add ax, bp
-    mov di, ax
-    xor ax, ax
-    mov es, ax
+    mov ecx, 24             ; Request 24 bytes
+    mov edx, 0x534D4150
+    mov di, BIOS_MEMORY_MAP_ADDRESS
+    add di, bp
     int 0x15
     jc .done
     cmp eax, 0x534D4150
     jne .done
+    test ecx, ecx           ; If size is 0, we're done
+    jz .done
+    
+    mov al, '.'
+    call print_char
+    
     add bp, 24
-    inc word [e820_count]
-    test ebx, ebx
+    inc dword [e820_count]
+    test ebx, ebx           ; If ebx is 0, we're done
     jnz .next
 .done:
-    pop es
+    mov si, .msg_done
+    call print_string
+    mov eax, [e820_count]
+    call print_hex
+    mov si, .msg_newline
+    call print_string
+    popad
+    ret
+
+.msg_start: db "[BIOS] Collecting E820", 0
+.msg_done: db " Done: ", 0
+.msg_newline: db 13, 10, 0
+
+print_hex:
+    pushad
+    mov edx, eax
+    mov ecx, 8
+.loop:
+    rol edx, 4
+    mov al, dl
+    and al, 0x0F
+    add al, '0'
+    cmp al, '9'
+    jbe .out
+    add al, 7
+.out:
+    call print_char
+    loop .loop
+    popad
+    ret
+
+print_char:
+    push dx
+    push ax
+    mov dx, 0x3F8 + 5
+.wait:
+    in al, dx
+    test al, 0x20
+    jz .wait
+    mov dx, 0x3F8
+    pop ax
+    out dx, al
+    pop dx
+    ret
+
+print_string:
+    push ax
+    push si
+.loop:
+    lodsb
+    test al, al
+    jz .done
+    call print_char
+    jmp .loop
+.done:
+    pop si
+    pop ax
     ret
 
 setup_vbe:
@@ -112,32 +172,53 @@ build_boot_params:
     mov dword [BIOS_BOOT_INFO_ADDRESS + 4], 1
     mov al, [boot_drive]
     mov [BIOS_BOOT_INFO_ADDRESS + 8], al
-    mov dword [BIOS_BOOT_INFO_ADDRESS + 24], 0
+
+    ; partition_start_lba
+    mov dword [BIOS_BOOT_INFO_ADDRESS + 16], 0
+    mov dword [BIOS_BOOT_INFO_ADDRESS + 20], 0
+
+    ; framebuffer_base
+    mov eax, [vbe_mode_info + 40]
+    mov [BIOS_BOOT_INFO_ADDRESS + 24], eax
     mov dword [BIOS_BOOT_INFO_ADDRESS + 28], 0
 
-    mov eax, [vbe_mode_info + 40]
-    mov [BIOS_BOOT_INFO_ADDRESS + 32], eax
-    mov dword [BIOS_BOOT_INFO_ADDRESS + 36], 0
+    ; horizontal_resolution
     movzx eax, word [vbe_mode_info + 18]
-    mov [BIOS_BOOT_INFO_ADDRESS + 44], eax
-    movzx eax, word [vbe_mode_info + 20]
-    mov [BIOS_BOOT_INFO_ADDRESS + 48], eax
-    movzx eax, word [vbe_mode_info + 16]
-    shr eax, 2
-    mov [BIOS_BOOT_INFO_ADDRESS + 52], eax
-    mov dword [BIOS_BOOT_INFO_ADDRESS + 56], 0x118
+    mov [BIOS_BOOT_INFO_ADDRESS + 36], eax
 
-    mov eax, [BIOS_BOOT_INFO_ADDRESS + 44]
-    mov ebx, [BIOS_BOOT_INFO_ADDRESS + 52]
-    mul ebx
-    shl eax, 2
+    ; vertical_resolution
+    movzx eax, word [vbe_mode_info + 20]
     mov [BIOS_BOOT_INFO_ADDRESS + 40], eax
 
-    mov dword [BIOS_BOOT_INFO_ADDRESS + 64], BIOS_MEMORY_MAP_ADDRESS
-    mov dword [BIOS_BOOT_INFO_ADDRESS + 68], 0
-    movzx eax, word [e820_count]
-    mov [BIOS_BOOT_INFO_ADDRESS + 72], eax
-    mov dword [BIOS_BOOT_INFO_ADDRESS + 76], 24
+    ; pixels_per_scan_line = pitch / 4
+    movzx eax, word [vbe_mode_info + 16]
+    shr eax, 2
+    mov [BIOS_BOOT_INFO_ADDRESS + 44], eax
+
+    ; vbe_mode
+    mov dword [BIOS_BOOT_INFO_ADDRESS + 48], 0x118
+
+    ; framebuffer_size = vertical_resolution * pitch
+    movzx eax, word [vbe_mode_info + 20]
+    movzx ebx, word [vbe_mode_info + 16]
+    mul ebx
+    mov [BIOS_BOOT_INFO_ADDRESS + 32], eax
+
+    ; e820_map
+    mov dword [BIOS_BOOT_INFO_ADDRESS + 52], BIOS_MEMORY_MAP_ADDRESS
+    mov dword [BIOS_BOOT_INFO_ADDRESS + 56], 0
+
+    ; e820_count
+    mov eax, [e820_count]
+    mov [BIOS_BOOT_INFO_ADDRESS + 60], eax
+
+    ; e820_desc_size
+    mov dword [BIOS_BOOT_INFO_ADDRESS + 64], 24
+
+    ; acpi_rsdp
+    mov eax, [acpi_rsdp_ptr]
+    mov [BIOS_BOOT_INFO_ADDRESS + 68], eax
+    mov dword [BIOS_BOOT_INFO_ADDRESS + 72], 0
     ret
 
 section .text
@@ -298,7 +379,7 @@ long_mode_start:
     jmp rax
 
 BITS 32
-section .data
+section .data.stage2
 align 8
 gdt_start:
     dq 0
@@ -313,7 +394,8 @@ gdt_descriptor:
     dd gdt_start
 
 boot_drive: db 0
-e820_count: dw 0
+e820_count: dd 0
+acpi_rsdp_ptr: dd 0
 kernel_entry32: dq 0
 kernel_boot_info32: dq 0
 pm_saved_esp: dd 0
@@ -332,9 +414,11 @@ rm_dap:
     dw 0
     dq 0
 
-section .bss
+section .bss.stage2
 alignb 16
 vbe_mode_info: resb 256
+
+section .bss
 
 alignb 4096
 pml4_table: resb 4096

@@ -1406,8 +1406,8 @@ int process_is_alive(int32_t pid)
 int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
 {
     (void)options;
-    int32_t my_pid = current_pid_get();
-    if (my_pid < 0) {
+    int32_t current_pid = current_pid_get();
+    if (current_pid < 0) {
         return -1;
     }
 
@@ -1415,7 +1415,7 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     spinlock_lock(&g_process_table_lock);
 
     if (pid > 0) {
-        if (!is_valid_pid(pid) || g_processes[pid].parent_pid != my_pid) {
+        if (!is_valid_pid(pid) || g_processes[pid].parent_pid != current_pid) {
             spinlock_unlock(&g_process_table_lock);
             irq_restore(irq_flags);
             return -1;
@@ -1438,7 +1438,7 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     
     for (int32_t i = 0; i < g_process_capacity; ++i) {
         if (g_processes[i].state == PROCESS_STATE_ZOMBIE &&
-            g_processes[i].parent_pid == my_pid) {
+            g_processes[i].parent_pid == current_pid) {
             int32_t exit_code = g_processes[i].exit_status;
             int32_t child_pid = i;
             release_process_resources(&g_processes[i]);
@@ -1454,8 +1454,8 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     
     int has_children = 0;
     for (int32_t i = 0; i < g_process_capacity; ++i) {
-        if (i != my_pid && g_processes[i].state != PROCESS_STATE_UNUSED &&
-            g_processes[i].parent_pid == my_pid) {
+        if (i != current_pid && g_processes[i].state != PROCESS_STATE_UNUSED &&
+            g_processes[i].parent_pid == current_pid) {
             has_children = 1;
             break;
         }

@@ -14,18 +14,24 @@ LD := aarch64-elf-ld
 DRIVER_ARCH_CFLAGS :=
 endif
 
-DRIVER_MODULE_CFLAGS ?= \
+# Base flags for all driver modules
+DRIVER_BASE_CFLAGS := \
 	-I$(ROOT_DIR)/Kernel \
 	-I$(ROOT_DIR)/Kernel/include \
 	-I$(ROOT_DIR)/Kernel/Arch/$(ARCH) \
 	-I$(ROOT_DIR)/Kernel/Core \
 	-I$(ROOT_DIR)/Kernel/Platform \
+	-I$(ROOT_DIR)/Kernel/Drivers \
 	-I$(ROOT_DIR)/Thirdparty -I$(ROOT_DIR)/ThirdParty -I$(ROOT_DIR)/libc/include \
 	-ffreestanding -fno-stack-protector -fPIC -fno-builtin \
 	$(DRIVER_ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
 	-MMD -MP \
 	-DIMPLUS_DRIVER_MODULE -DKERNEL
+
+# Drivers can add their own flags via DRIVER_MODULE_CFLAGS
+DRIVER_MODULE_CFLAGS += $(DRIVER_BASE_CFLAGS)
+
 DRIVER_MODULE_LDFLAGS ?= -nostdlib -shared --build-id=none -Bsymbolic -e driver_module_init -z max-page-size=4096
 
 DRIVER_SRCS ?= $(sort $(shell find . -type f -name '*.c' -print | sed 's|^\./||'))

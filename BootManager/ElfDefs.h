@@ -1,13 +1,6 @@
 #ifndef BOOTMANAGER_ELF_DEFS_H
 #define BOOTMANAGER_ELF_DEFS_H
 
-/*
- * Shared ELF type definitions for both UEFI and BIOS BootManagers.
- *
- * These are the minimal ELF64 structures needed to load the kernel.
- * Uses only stdint.h types for portability.
- */
-
 #include <stdint.h>
 
 #define EI_NIDENT 16
@@ -63,4 +56,4 @@ typedef struct {
     int64_t  r_addend;
 } Elf64_Rela;
 
-#endif /* BOOTMANAGER_ELF_DEFS_H */
+#endif

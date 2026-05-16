@@ -1,10 +1,10 @@
 #include <efi.h>
 #include <efilib.h>
 #include <stdint.h>
-#include "BootManager_libc/include/string.h"
-#include "BootManager_libc/include/stdlib.h"
-#include "Handoff.h"
-#include "../Kernel/FileSystem/FAT32_BPB.h"
+#include "../BootManager_libc/include/string.h"
+#include "../BootManager_libc/include/stdlib.h"
+#include "../Handoff.h"
+#include "../../Kernel/FileSystem/FAT32_BPB.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
@@ -33,7 +33,7 @@
 #define STBTT__NOTUSED(v) (void)sizeof(v)
 #define STB_TRUETYPE_NO_MATH
 
-#include "../Thirdparty/stb_truetype.h"
+#include "../../Thirdparty/stb_truetype.h"
 
 #ifndef ACPI_TABLE_GUID
 #define ACPI_TABLE_GUID \
@@ -55,8 +55,8 @@
     { 0xf2fd1544, 0x9794, 0x4a2c, {0x99, 0x2e, 0xe5, 0xbb, 0xcf, 0x20, 0xe3, 0x94} }
 #endif
 
-#include "BootInfo.h"
-#include "ElfDefs.h"
+#include "../BootInfo.h"
+#include "../ElfDefs.h"
 
 #define FAT32_BOOT_BLOCK_MAX 4096u
 

@@ -319,6 +319,109 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
     return true;
 }
 
+bool elf_loader_load_from_memory(uint64_t target_cr3,
+                                 const void *file_data,
+                                 uint64_t file_size,
+                                 const elf_load_policy_t *policy,
+                                 elf_loaded_image_info_t *image_out)
+{
+    if (target_cr3 == 0 || !file_data || !policy || !image_out) {
+        return false;
+    }
+
+    if (file_size == 0 || file_size > policy->max_file_size) {
+        return false;
+    }
+
+    if (file_size < sizeof(Elf64_Ehdr)) {
+        return false;
+    }
+
+    const uint8_t *file_bytes = (const uint8_t *)file_data;
+    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)file_bytes;
+
+    if (ehdr->e_ident[0] != ELF_MAGIC_0 ||
+        ehdr->e_ident[1] != ELF_MAGIC_1 ||
+        ehdr->e_ident[2] != ELF_MAGIC_2 ||
+        ehdr->e_ident[3] != ELF_MAGIC_3) {
+        return false;
+    }
+
+    if (ehdr->e_phentsize != sizeof(Elf64_Phdr) || ehdr->e_phnum == 0) {
+        return false;
+    }
+
+    uint64_t phdr_table_bytes = (uint64_t)ehdr->e_phnum * (uint64_t)ehdr->e_phentsize;
+    if (ehdr->e_phoff > file_size || phdr_table_bytes > (file_size - ehdr->e_phoff)) {
+        return false;
+    }
+
+    const Elf64_Phdr *phdrs = (const Elf64_Phdr *)(file_bytes + ehdr->e_phoff);
+    int load_segments = 0;
+    uint64_t phdr_vaddr = 0;
+    uint64_t old_cr3 = paging_get_active_cr3();
+    bool failed = false;
+
+    for (uint16_t i = 0; i < ehdr->e_phnum; ++i) {
+        const Elf64_Phdr *ph = &phdrs[i];
+        if (ph->p_type != PT_LOAD) {
+            continue;
+        }
+
+        if (ph->p_memsz < ph->p_filesz) {
+            failed = true; break;
+        }
+
+        if (!in_vaddr_range(ph->p_vaddr, ph->p_memsz, policy->min_vaddr, policy->max_vaddr)) {
+            failed = true; break;
+        }
+
+        if (!range_in_file(file_size, ph->p_offset, ph->p_filesz)) {
+            failed = true; break;
+        }
+
+        if (phdr_vaddr == 0 &&
+            ehdr->e_phoff >= ph->p_offset &&
+            ehdr->e_phoff < (ph->p_offset + ph->p_filesz)) {
+            phdr_vaddr = ph->p_vaddr + (ehdr->e_phoff - ph->p_offset);
+        }
+
+        uint64_t seg_flags = PAGE_RW | PAGE_USER;
+        if ((ph->p_flags & PF_X) == 0) {
+            seg_flags |= PAGE_NX;
+        }
+
+        if (paging_map_user_range_alloc(target_cr3, ph->p_vaddr, ph->p_memsz, seg_flags) < 0) {
+            failed = true; break;
+        }
+
+        paging_switch_cr3(target_cr3);
+        uint8_t *dst = (uint8_t *)(uintptr_t)ph->p_vaddr;
+        if (ph->p_filesz > 0) {
+            memcpy(dst, file_bytes + ph->p_offset, (size_t)ph->p_filesz);
+        }
+        if (ph->p_memsz > ph->p_filesz) {
+            memset(dst + ph->p_filesz, 0, (size_t)(ph->p_memsz - ph->p_filesz));
+        }
+        paging_switch_cr3(old_cr3);
+        ++load_segments;
+    }
+
+    if (failed || load_segments == 0) {
+        return false;
+    }
+
+    if (ehdr->e_entry < policy->min_vaddr || ehdr->e_entry >= policy->max_vaddr) {
+        return false;
+    }
+
+    image_out->entry = ehdr->e_entry;
+    image_out->phdr_vaddr = phdr_vaddr;
+    image_out->phent = ehdr->e_phentsize;
+    image_out->phnum = ehdr->e_phnum;
+    return true;
+}
+
 bool elf_loader_load_module_from_memory(const void *file_data,
                                         uint64_t file_size,
                                         const elf_module_load_policy_t *policy,

@@ -360,11 +360,16 @@ bool ata_init(uint64_t partition_lba) {
         
         g_disk_io_working = true;
 
-        uint8_t boot_buf[512] = {0};
+        uint8_t boot_buf[512] __attribute__((aligned(2))) = {0};
         if (ata_read(0, boot_buf, 1)) {
             if (boot_buf[510] == 0x55 && boot_buf[511] == 0xAA) {
+                serial_write_string("[OS] ATA Signature Match\n");
                 return true;
+            } else {
+                serial_write_string("[OS] ATA Signature Mismatch\n");
             }
+        } else {
+            serial_write_string("[OS] ATA Read Sector 0 Failed\n");
         }
         g_disk_io_working = false;
     }
@@ -379,12 +384,18 @@ bool ata_init(uint64_t partition_lba) {
         uint8_t boot_buf[512] = {0};
         if (ata_read(0, boot_buf, 1)) {
             if (boot_buf[510] == 0x55 && boot_buf[511] == 0xAA) {
+                serial_write_string("[OS] ATAPI Signature Match\n");
                 return true;
+            } else {
+                serial_write_string("[OS] ATAPI Signature Mismatch\n");
             }
+        } else {
+            serial_write_string("[OS] ATAPI Read Sector 0 Failed\n");
         }
         g_disk_io_working = false;
     }
     
+    serial_write_string("[OS] No bootable ATA/ATAPI drive found\n");
     return false;
 }
 
