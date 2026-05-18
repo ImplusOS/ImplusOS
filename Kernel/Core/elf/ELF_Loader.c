@@ -227,7 +227,9 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
 
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         Elf64_Phdr *ph = &phdrs[i];
-        if (ph->p_type != PT_LOAD) {
+        
+        /* 修正: p_memsz == 0 の空セグメントをスキップするように変更 */
+        if (ph->p_type != PT_LOAD || ph->p_memsz == 0) {
             continue;
         }
 
@@ -364,7 +366,7 @@ bool elf_loader_load_from_memory(uint64_t target_cr3,
 
     for (uint16_t i = 0; i < ehdr->e_phnum; ++i) {
         const Elf64_Phdr *ph = &phdrs[i];
-        if (ph->p_type != PT_LOAD) {
+        if (ph->p_type != PT_LOAD || ph->p_memsz == 0) {
             continue;
         }
 

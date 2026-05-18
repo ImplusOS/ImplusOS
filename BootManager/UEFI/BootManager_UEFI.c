@@ -4,6 +4,7 @@
 #include "../BootManager_libc/include/string.h"
 #include "../BootManager_libc/include/stdlib.h"
 #include "../Handoff.h"
+#include "../Math.h"
 #include "../../Kernel/FileSystem/FAT32_BPB.h"
 
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -16,18 +17,17 @@
 #define STBTT_memmove memmove
 #define STBTT_strlen  strlen
 
-#define STBTT_sqrt(x)   __builtin_sqrt(x)
-#define STBTT_pow(x,y)  __builtin_pow(x,y)
-#define STBTT_fmod(x,y) __builtin_fmod(x,y)
-#define STBTT_cos(x)    __builtin_cos(x)
-#define STBTT_acos(x)   __builtin_acos(x)
-#define STBTT_fabs(x)   __builtin_fabs(x)
+#define STBTT_sqrt(x)   stbtt_sqrt_impl(x)
+#define STBTT_pow(x,y)  stbtt_pow_impl(x,y)
+#define STBTT_fmod(x,y) stbtt_fmod_impl(x,y)
+#define STBTT_cos(x)    stbtt_cos_impl(x)
+#define STBTT_acos(x)   stbtt_acos_impl(x)
+#define STBTT_fabs(x)   stbtt_fabs_impl(x)
+#define STBTT_ifloor(x) stbtt_ifloor_impl(x)
+#define STBTT_iceil(x)  stbtt_iceil_impl(x)
 
 #define STBTT_malloc(x,u) malloc(x)
 #define STBTT_free(x,u)   free(x)
-
-#define STBTT_ifloor(x) ((int)__builtin_floor(x))
-#define STBTT_iceil(x)  ((int)__builtin_ceil(x))
 
 #define STBTT_STATIC
 #define STBTT__NOTUSED(v) (void)sizeof(v)

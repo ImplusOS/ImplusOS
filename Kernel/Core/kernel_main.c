@@ -85,19 +85,12 @@ void kernel_main(BOOT_INFO *boot_info) {
     __asm__ volatile ("outb %%al, %%dx" :: "a"('K'), "d"(0x3F8));
     __asm__ volatile ("cli");
     serial_init();
-    serial_write_string("[OS] Kernel entry point reached\n");
 
     if (boot_info != NULL) {
         memcpy(&g_boot_info_copy, boot_info, sizeof(BOOT_INFO));
         boot_info = &g_boot_info_copy;
+        serial_write_uint64(boot_info->PartitionStartLBA);
     }
-    serial_write_string("[OS] Boot info copied\n");
-
-    serial_write_string("[OS] MemoryMap: ");
-    serial_write_uint64(boot_info->MemoryMap);
-    serial_write_string(" Size: ");
-    serial_write_uint32((uint32_t)boot_info->MemoryMapSize);
-    serial_write_string("\n");
 
     {
         uintptr_t sp = (uintptr_t)(kernel_stack + sizeof(kernel_stack));
@@ -155,7 +148,6 @@ void kernel_main(BOOT_INFO *boot_info) {
     }
     bool diskless_boot = (!fs_ready && OS_CONFIG_ALLOW_DISKLESS_BOOT);
     if (!fs_ready && !diskless_boot) {
-        serial_write_string("[OS] Filesystem not found\n");
         while (1) { __asm__("hlt"); }
     }
 
@@ -172,21 +164,21 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
-            serial_write_string("[OS] Failed to register Userland process\n");
+            serial_write_string("aaa");
             while (1) { __asm__("hlt"); }
         }
     }
+
+    serial_write_string("Writed");
 
     uint64_t user_rsp = process_get_current_user_rsp();
     uint64_t saved_rsp = process_get_current_saved_rsp();
     uint64_t user_cr3 = process_get_current_cr3();
 
     if (user_rsp == 0 || saved_rsp == 0 || user_cr3 == 0) {
-        serial_write_string("[OS] Failed to get user process context\n");
         while (1) { __asm__ volatile("cli; hlt"); }
     }
 
-    serial_write_string("[OS] Entering user mode...\n");
     if (ops) {
         ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
     }
