@@ -610,9 +610,11 @@ void process_manager_init(void)
     
     g_processes[0].state = PROCESS_STATE_RUNNING;
     g_processes[0].parent_pid = -1;
+    g_processes[0].capability_mask = PROCESS_CAP_DEFAULT_MASK;
 
     initialize_fpu_state(g_processes[0].fpu_state);
     g_processes[0].fs_base = 0;
+    g_processes[0].cr3 = paging_get_kernel_cr3();
 
     current_pid_set(0);
     spinlock_init(&g_process_table_lock);
@@ -737,7 +739,14 @@ int32_t process_spawn_user_elf(const char *path)
     };
     elf_loaded_image_info_t image_info = {0};
 
+    serial_write_string("Loading ELF from path: ");
+    serial_write_string(path);
+    serial_write_string("\n");
+
     if (!elf_loader_load_from_path(proc->cr3, path, &policy, &image_info)) {
+        serial_write_string("Failed to load ELF from path: ");
+        serial_write_string(path);
+        serial_write_string("\n");
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
         spinlock_lock(&g_process_table_lock);
@@ -746,9 +755,12 @@ int32_t process_spawn_user_elf(const char *path)
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return -1;
+    } else {
+        serial_write_string("ELF loaded successfully\n");
     }
 
     if (initialize_elf_user_stack(proc, &image_info, path) < 0) {
+        serial_write_string("Failed to initialize ELF user stack\n");
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
         spinlock_lock(&g_process_table_lock);
@@ -757,6 +769,8 @@ int32_t process_spawn_user_elf(const char *path)
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return -1;
+    } else {
+        serial_write_string("ELF user stack initialized successfully\n");
     }
     
     uint64_t irq_flags = irq_save_disable();
@@ -1406,8 +1420,8 @@ int process_is_alive(int32_t pid)
 int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
 {
     (void)options;
-    int32_t current_pid = current_pid_get();
-    if (current_pid < 0) {
+    int32_t my_pid = current_pid_get();
+    if (my_pid < 0) {
         return -1;
     }
 
@@ -1415,7 +1429,7 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     spinlock_lock(&g_process_table_lock);
 
     if (pid > 0) {
-        if (!is_valid_pid(pid) || g_processes[pid].parent_pid != current_pid) {
+        if (!is_valid_pid(pid) || g_processes[pid].parent_pid != my_pid) {
             spinlock_unlock(&g_process_table_lock);
             irq_restore(irq_flags);
             return -1;
@@ -1438,7 +1452,7 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     
     for (int32_t i = 0; i < g_process_capacity; ++i) {
         if (g_processes[i].state == PROCESS_STATE_ZOMBIE &&
-            g_processes[i].parent_pid == current_pid) {
+            g_processes[i].parent_pid == my_pid) {
             int32_t exit_code = g_processes[i].exit_status;
             int32_t child_pid = i;
             release_process_resources(&g_processes[i]);
@@ -1454,8 +1468,8 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     
     int has_children = 0;
     for (int32_t i = 0; i < g_process_capacity; ++i) {
-        if (i != current_pid && g_processes[i].state != PROCESS_STATE_UNUSED &&
-            g_processes[i].parent_pid == current_pid) {
+        if (i != my_pid && g_processes[i].state != PROCESS_STATE_UNUSED &&
+            g_processes[i].parent_pid == my_pid) {
             has_children = 1;
             break;
         }

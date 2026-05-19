@@ -43,7 +43,7 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
         initial_bpb = &boot_info->BootPartitionBPB;
     }
 
-    if (!driver_manager_fs_init(initial_bpb)) {
+    if (!fat32_init(initial_bpb)) {
         return false;
     }
     if (!vfs_init()) {
@@ -82,7 +82,6 @@ static void load_spinner_timer(uint64_t tick) {
 
 __attribute__((noreturn))
 void kernel_main(BOOT_INFO *boot_info) {
-    __asm__ volatile ("outb %%al, %%dx" :: "a"('K'), "d"(0x3F8));
     __asm__ volatile ("cli");
     serial_init();
 
@@ -119,9 +118,9 @@ void kernel_main(BOOT_INFO *boot_info) {
     platform_interrupts_configure(acpi_get_info());
     syscall_init();
     smp_init();
+    timer_init(60);
 
     vmx_init();
-    timer_init(60);
 
     __asm__ volatile ("sti");
     timer_switch_lapic();
@@ -138,13 +137,14 @@ void kernel_main(BOOT_INFO *boot_info) {
         .bytes_per_pixel = 4
     };
     driver_select_set_boot_framebuffer(&boot_fb);
-
     debugger_init(boot_info);
     disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType);
 
     bool fs_ready = false;
     if (all_fs_initialize(boot_info)) {
         fs_ready = true;
+    } else {
+        serial_write_string("File system initialization failed\n");
     }
     bool diskless_boot = (!fs_ready && OS_CONFIG_ALLOW_DISKLESS_BOOT);
     if (!fs_ready && !diskless_boot) {
@@ -157,7 +157,6 @@ void kernel_main(BOOT_INFO *boot_info) {
     ipc_init();
     syscall_file_init();
     network_stack_init();
-
     load_bar_finish();
 
     const arch_ops_t *ops = arch_ops_get();

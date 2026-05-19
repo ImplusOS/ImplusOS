@@ -2,6 +2,7 @@
 
 #include "kernel/boot_info.h"
 #include "DriverModule.h"
+#include "Debug/serial/Serial.h"
 #include "Drivers/Client/Display/Display_Main.h"
 #include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
 #include "Drivers/Client/NIC/NIC.h"
@@ -198,12 +199,22 @@ bool driver_manager_fs_init(const FAT32_BPB *initial_bpb)
 
 bool driver_manager_fs_find_file(const char *path, FAT32_FILE *file)
 {
-    return fat32_find_file(path, file);
+    serial_write_string("[DriverManager] fs_find_file: ");
+    serial_write_string(path ? path : "(null)");
+    serial_write_string("\n");
+    bool result = fat32_find_file(path, file);
+    serial_write_string(result ? "[DriverManager] fs_find_file: ok\n"
+                               : "[DriverManager] fs_find_file: failed\n");
+    return result;
 }
 
 bool driver_manager_fs_read_file(FAT32_FILE *file, uint8_t *buffer)
 {
-    return fat32_read_file(file, buffer);
+    serial_write_string("[DriverManager] fs_read_file\n");
+    bool result = fat32_read_file(file, buffer);
+    serial_write_string(result ? "[DriverManager] fs_read_file: ok\n"
+                               : "[DriverManager] fs_read_file: failed\n");
+    return result;
 }
 
 bool driver_manager_fs_write_file(FAT32_FILE *file, const uint8_t *buffer)
@@ -213,7 +224,11 @@ bool driver_manager_fs_write_file(FAT32_FILE *file, const uint8_t *buffer)
 
 bool driver_manager_fs_read_at(FAT32_FILE *file, uint32_t offset, uint8_t *buffer, uint32_t size)
 {
-    return fat32_read_at(file, offset, buffer, size);
+    serial_write_string("[DriverManager] fs_read_at\n");
+    bool result = fat32_read_at(file, offset, buffer, size);
+    serial_write_string(result ? "[DriverManager] fs_read_at: ok\n"
+                               : "[DriverManager] fs_read_at: failed\n");
+    return result;
 }
 
 bool driver_manager_fs_write_at(FAT32_FILE *file, uint32_t offset, const uint8_t *buffer, uint32_t size)
