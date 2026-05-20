@@ -217,12 +217,6 @@ void driver_module_manager_init(const BOOT_INFO *boot_info)
             continue;
         }
 
-        serial_write_string("[OS] Found module: ");
-        serial_write_string(file->Name);
-        serial_write_string(" at ");
-        serial_write_uint32((uint32_t)file->PhysAddr);
-        serial_write_string("\n");
-
         const void *src_ptr = (const void *)(uintptr_t)file->PhysAddr;
         if (file->PhysAddr >= (1ULL << 32)) {
             src_ptr = map_mmio_virt(file->PhysAddr);
@@ -346,10 +340,6 @@ static bool driver_module_activate(module_state_t *state)
     if (state == NULL || state->present == 0u) {
         return false;
     }
-
-    serial_write_string("[OS] Activating module: ");
-    serial_write_string(state->name);
-    serial_write_string("\n");
 
     for (uint32_t i = 0; i < driver_module_dependency_count(state->name); ++i) {
         const char *dependency = driver_module_dependency_name(state->name, i);

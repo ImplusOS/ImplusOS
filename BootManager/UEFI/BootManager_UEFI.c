@@ -365,7 +365,7 @@ static UINT64 ParseElToritoCatalog(EFI_BLOCK_IO_PROTOCOL *Bio, EFI_SYSTEM_TABLE 
         for (int p = 0; p < 4; p++) {
             uint8_t  type = pt[p * 16 + 4];
             uint32_t lba  = *(uint32_t *)(pt + p * 16 + 8);
-            if (type != 0 && lba != 0) {
+            if ((type == 0xEF || type == 0x0C || type == 0x0B) && lba != 0) {
                 uefi_call_wrapper(ST->BootServices->FreePool, 1, Buf);
                 return lba;
             }

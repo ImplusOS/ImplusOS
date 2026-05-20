@@ -739,14 +739,7 @@ int32_t process_spawn_user_elf(const char *path)
     };
     elf_loaded_image_info_t image_info = {0};
 
-    serial_write_string("Loading ELF from path: ");
-    serial_write_string(path);
-    serial_write_string("\n");
-
     if (!elf_loader_load_from_path(proc->cr3, path, &policy, &image_info)) {
-        serial_write_string("Failed to load ELF from path: ");
-        serial_write_string(path);
-        serial_write_string("\n");
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
         spinlock_lock(&g_process_table_lock);
@@ -755,12 +748,9 @@ int32_t process_spawn_user_elf(const char *path)
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return -1;
-    } else {
-        serial_write_string("ELF loaded successfully\n");
     }
 
     if (initialize_elf_user_stack(proc, &image_info, path) < 0) {
-        serial_write_string("Failed to initialize ELF user stack\n");
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
         spinlock_lock(&g_process_table_lock);
@@ -769,8 +759,6 @@ int32_t process_spawn_user_elf(const char *path)
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return -1;
-    } else {
-        serial_write_string("ELF user stack initialized successfully\n");
     }
     
     uint64_t irq_flags = irq_save_disable();

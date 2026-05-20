@@ -8,7 +8,6 @@
 #include "../BootInfo.h"
 #include "../ElfDefs.h"
 
-// Math functions for stb_truetype
 static double sqrt(double x) {
     if (x <= 0) return 0;
     double r = x;
@@ -148,26 +147,6 @@ static inline uint8_t inb(uint16_t port) {
     return value;
 }
 
-static void bios_serial_init(void) {
-    outb(0x3F8 + 1, 0x00);
-    outb(0x3F8 + 3, 0x80);
-    outb(0x3F8 + 0, 0x03);
-    outb(0x3F8 + 1, 0x00);
-    outb(0x3F8 + 3, 0x03);
-    outb(0x3F8 + 2, 0xC7);
-    outb(0x3F8 + 4, 0x0B);
-}
-
-static void bios_putc(char c) {
-    if (c == '\n') bios_putc('\r');
-    while ((inb(0x3F8 + 5) & 0x20) == 0) {}
-    outb(0x3F8, (uint8_t)c);
-}
-
-static void bios_puts(const char *s) {
-    while (*s) bios_putc(*s++);
-}
-
 static int read_sector(BIOS_FAT32 *fs, uint64_t sector, void *buffer) {
     uint64_t lba = fs->partition_lba + sector;
     return bios_read_sector32(fs->boot_drive, (uint32_t)lba, (uint32_t)(lba >> 32), buffer);
@@ -189,7 +168,7 @@ static void bpb_from_sector(const FAT32_BOOT_SECTOR *bs, FAT32_BPB *bpb) {
 }
 
 static int is_fat32_partition(uint8_t type) {
-    return type == 0x0B || type == 0x0C || type == 0x1B || type == 0x1C;
+    return type == 0x0B || type == 0x0C || type == 0x1B || type == 0x1C || type == 0xEF;
 }
 
 static int fat32_init(BIOS_FAT32 *fs, const BIOS_BOOT_PARAMS *params) {
@@ -208,7 +187,7 @@ static int fat32_init(BIOS_FAT32 *fs, const BIOS_BOOT_PARAMS *params) {
     }
 
     if (partition_lba == 0) {
-        partition_lba = 2048; // Fallback for ImplusOS BIOS image layout
+        partition_lba = 2048;
     }
 
     fs->partition_lba = partition_lba;
@@ -375,10 +354,6 @@ static int fat32_iterate_directory(BIOS_FAT32 *fs, uint32_t dir_cluster, fat32_d
 
                 char short_name[16];
                 short_name_to_string(entry, short_name);
-                
-                bios_puts("  Entry: "); bios_puts(short_name); 
-                if (lfn[0]) { bios_puts(" (LFN: "); bios_puts(lfn); bios_puts(")"); }
-                bios_puts("\n");
 
                 cb(fs, lfn[0] ? lfn : short_name, entry);
                 memset(lfn, 0, sizeof(lfn));
@@ -487,17 +462,14 @@ static void build_memory_map(const BIOS_BOOT_PARAMS *params, BOOT_INFO *bi) {
 }
 
 static void on_driver_found(BIOS_FAT32 *fs, const char *name, FAT32_DIR_ENTRY *entry) {
-    if (entry->Attr & 0x10u) return; // directory
+    if (entry->Attr & 0x10u) return;
     int len = 0; while (name[len]) len++;
     if (len < 4) return;
     if (!(name[len-4] == '.' && (name[len-3] == 'E' || name[len-3] == 'e') &&
           (name[len-2] == 'L' || name[len-2] == 'l') && (name[len-1] == 'F' || name[len-1] == 'f'))) {
         return;
     }
-    
-    bios_puts("[BIOS BootManager] Found driver: ");
-    bios_puts(name);
-    bios_puts("\n");
+
     if (g_boot_info.LoadedFileCount >= MAX_LOADED_FILES) return;
     
     uint32_t size = entry->FileSize;
@@ -687,44 +659,28 @@ static void bios_put_hex(uint32_t v) {
 }
 
 void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
-    bios_serial_init();
-    bios_puts("[BIOS BootManager] start\n");
-
     if (!params || params->signature != BIOS_BOOT_PARAMS_SIGNATURE) {
-        bios_puts("[BIOS BootManager] invalid handoff\n");
         for (;;) __asm__ volatile("hlt");
     }
 
     BIOS_FAT32 fs;
     if (fat32_init(&fs, params) != 0) {
-        bios_puts("[BIOS BootManager] FAT32 init failed\n");
         for (;;) __asm__ volatile("hlt");
     }
 
     uint32_t kernel_size = 0;
     if (fat32_read_file_to(&fs, "/Kernel/Kernel_Main.ELF",
             (void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, &kernel_size) != 0) {
-        bios_puts("[BIOS BootManager] long filename kernel lookup failed, trying 8.3 alias\n");
         if (fat32_read_file_to(&fs, "/Kernel/KERNEL~1.ELF",
                 (void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, &kernel_size) != 0) {
-            bios_puts("[BIOS BootManager] Kernel read failed\n");
             for (;;) __asm__ volatile("hlt");
         }
     }
 
     uint32_t entry = 0;
     if (load_kernel_elf((void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, kernel_size, &entry) != 0) {
-        bios_puts("[BIOS BootManager] Kernel ELF failed\n");
         for (;;) __asm__ volatile("hlt");
     }
-
-    bios_puts("[BIOS] params ptr: ");
-    bios_put_hex((uint32_t)params);
-    bios_puts(" sig: ");
-    bios_put_hex(params->signature);
-    bios_puts(" e820: ");
-    bios_put_hex(params->e820_count);
-    bios_puts("\n");
 
     memset(&g_boot_info, 0, sizeof(g_boot_info));
     build_memory_map(params, &g_boot_info);
@@ -764,16 +720,10 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
 
     FAT32_DIR_ENTRY dir_entry;
     if (fat32_find_path(&fs, "/Kernel/Driver", &dir_entry) == 0) {
-        bios_puts("[BIOS BootManager] Found /Kernel/Driver\n");
         if (dir_entry.Attr & 0x10u) {
             fat32_iterate_directory(&fs, entry_cluster(&dir_entry), on_driver_found);
-        } else {
-            bios_puts("[BIOS BootManager] /Kernel/Driver is NOT a directory\n");
         }
-    } else {
-        bios_puts("[BIOS BootManager] /Kernel/Driver NOT found\n");
     }
 
-    bios_puts("[BIOS BootManager] enter kernel\n");
     bios_enter_kernel64(entry, (uint32_t)(uintptr_t)&g_boot_info);
 }

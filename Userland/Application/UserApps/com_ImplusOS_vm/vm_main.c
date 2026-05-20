@@ -12,15 +12,6 @@
 #include "../../../API/Serial.h"
 #include "vm_devices.h"
 
-static void vm_log(const char *fmt, ...) {
-    char buf[512];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    serial_write_string(buf);
-}
-
 #define KVM_CREATE_VM               1
 #define KVM_CREATE_VCPU             2
 #define KVM_SET_USER_MEMORY_REGION  3
@@ -38,7 +29,6 @@ static void vm_log(const char *fmt, ...) {
 #define KVM_EXIT_SHUTDOWN           8
 #define KVM_EXIT_INTERNAL_ERROR     17
 
-/* ── Register structures (must match kernel VMX.h) ─────────────── */
 typedef struct {
     uint64_t rax, rbx, rcx, rdx;
     uint64_t rsi, rdi, rbp, rsp;
@@ -197,7 +187,6 @@ static int64_t load_file(const char *path, uint8_t *buf, uint64_t max_size)
 {
     int32_t fd = file_open(path, 0);
     if (fd < 0) {
-        vm_log("[VM] Failed to open %s (err=%d)\n", path, fd);
         return -1;
     }
 
@@ -218,11 +207,8 @@ int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
-    vm_log("[VM] ImplusOS VM — OVMF Boot\n");
-
     window_id_t win = window_create(WIN_WIDTH, WIN_HEIGHT, "ImplusOS VM");
     if (win == 0) {
-        vm_log("[VM] Failed to create window\n");
         process_exit(1);
     }
     window_show(win);
@@ -240,58 +226,42 @@ int main(int argc, char **argv)
 
     int32_t kvm_fd = kvm_open();
     if (kvm_fd < 0) {
-        vm_log("[VM] Failed to open KVM (err=%d)\n", kvm_fd);
         process_exit(1);
     }
 
     if (kvm_ioctl(kvm_fd, KVM_CREATE_VM, 0) < 0) {
-        vm_log("[VM] Failed to create VM\n");
         process_exit(1);
     }
 
-    vm_log("[VM] Allocating %llu MB guest RAM...\n",
-           (unsigned long long)(GUEST_RAM_SIZE / (1024 * 1024)));
     void *guest_ram = os_mmap(GUEST_RAM_SIZE, 0);
     if (!guest_ram) {
-        vm_log("[VM] Failed to allocate guest RAM\n");
         process_exit(1);
     }
     memset(guest_ram, 0, GUEST_RAM_SIZE);
 
     void *fw_mem = os_mmap(OVMF_FW_TOTAL, 0);
     if (!fw_mem) {
-        vm_log("[VM] Failed to allocate firmware memory\n");
         process_exit(1);
     }
     memset(fw_mem, 0xFF, OVMF_FW_TOTAL);
-
-    vm_log("[VM] Loading OVMF_VARS_4M.fd...\n");
     int64_t vars_loaded = load_file(OVMF_VARS_PATH,
                                      (uint8_t *)fw_mem,
                                      OVMF_VARS_FW_SIZE);
     if (vars_loaded > 0) {
-        vm_log("[VM] OVMF_VARS loaded: %lld bytes\n", (long long)vars_loaded);
     } else {
-        vm_log("[VM] OVMF_VARS not found, using 0xFF NV store\n");
         memset(fw_mem, 0xFF, OVMF_VARS_FW_SIZE);
     }
 
-    vm_log("[VM] Loading OVMF_CODE_4M.fd...\n");
     int64_t code_loaded = load_file(OVMF_CODE_PATH,
                                      (uint8_t *)fw_mem + OVMF_VARS_FW_SIZE,
                                      OVMF_CODE_FW_SIZE);
     if (code_loaded <= 0) {
-        vm_log("[VM] ERROR: Failed to load OVMF_CODE_4M.fd!\n");
         process_exit(1);
     }
-    vm_log("[VM] OVMF_CODE loaded: %lld bytes\n", (long long)code_loaded);
 
     uint8_t *reset_vec = (uint8_t *)fw_mem + OVMF_FW_TOTAL - 0x10;
-    vm_log("[VM] Reset vector: %02x %02x %02x %02x\n",
-           reset_vec[0], reset_vec[1], reset_vec[2], reset_vec[3]);
 
     if (kvm_ioctl(kvm_fd, KVM_CREATE_VCPU, 0) < 0) {
-        vm_log("[VM] Failed to create vCPU\n");
         process_exit(1);
     }
 
@@ -303,7 +273,6 @@ int main(int argc, char **argv)
     };
     if (kvm_ioctl(kvm_fd, KVM_SET_USER_MEMORY_REGION,
                   (uint64_t)(uintptr_t)&ram_region) < 0) {
-        vm_log("[VM] Failed to set RAM region\n");
         process_exit(1);
     }
 
@@ -315,13 +284,11 @@ int main(int argc, char **argv)
     };
     if (kvm_ioctl(kvm_fd, KVM_SET_USER_MEMORY_REGION,
                   (uint64_t)(uintptr_t)&fw_region) < 0) {
-        vm_log("[VM] Failed to set firmware region\n");
         process_exit(1);
     }
 
     kvm_run_t *run = (kvm_run_t *)kvm_mmap(kvm_fd, 0, 4096);
     if (!run) {
-        vm_log("[VM] Failed to mmap kvm_run\n");
         process_exit(1);
     }
 
@@ -349,7 +316,6 @@ int main(int argc, char **argv)
 
     if (kvm_ioctl(kvm_fd, KVM_SET_SREGS,
                   (uint64_t)(uintptr_t)&sregs_cmd) < 0) {
-        vm_log("[VM] Failed to set sregs\n");
         process_exit(1);
     }
 
@@ -362,11 +328,8 @@ int main(int argc, char **argv)
 
     if (kvm_ioctl(kvm_fd, KVM_SET_REGS,
                   (uint64_t)(uintptr_t)&regs_cmd) < 0) {
-        vm_log("[VM] Failed to set regs\n");
         process_exit(1);
     }
-
-    vm_log("[VM] Starting OVMF at CS:IP = F000:FFF0\n");
 
     uint64_t exit_count = 0;
     uint64_t io_count   = 0;
@@ -384,11 +347,6 @@ int main(int argc, char **argv)
         exit_count++;
 
         if (ret < 0) {
-            vm_log("[VM] KVM_RUN failed (ret=%d)\n", ret);
-            if (run->exit_reason == KVM_EXIT_INTERNAL_ERROR) {
-                vm_log("[VM] Internal error: suberror=%u\n",
-                       run->internal.suberror);
-            }
             break;
         }
 
@@ -397,13 +355,6 @@ int main(int argc, char **argv)
             io_count++;
             regs_cmd.vcpu = 0;
             kvm_ioctl(kvm_fd, KVM_GET_REGS, (uint64_t)(uintptr_t)&regs_cmd);
-            if (io_count <= 1000) {
-                vm_log("[VM] IO #%llu: port=0x%03X size=%u dir=%s RIP=0x%llX\n",
-                       (unsigned long long)io_count,
-                       run->io.port, run->io.size,
-                       run->io.direction ? "IN" : "OUT",
-                       (unsigned long long)regs_cmd.regs.rip);
-            }
             vm_handle_io(run);
             break;
 
@@ -411,14 +362,6 @@ int main(int argc, char **argv)
             mmio_count++;
             regs_cmd.vcpu = 0;
             kvm_ioctl(kvm_fd, KVM_GET_REGS, (uint64_t)(uintptr_t)&regs_cmd);
-            if (mmio_count <= 1000) {
-                vm_log("[VM] MMIO #%llu: addr=0x%llX len=%u %s RIP=0x%llX\n",
-                       (unsigned long long)mmio_count,
-                       (unsigned long long)run->mmio.phys_addr,
-                       run->mmio.len,
-                       run->mmio.is_write ? "WRITE" : "READ",
-                       (unsigned long long)regs_cmd.regs.rip);
-            }
             vm_handle_mmio(run);
             break;
 
@@ -427,19 +370,13 @@ int main(int argc, char **argv)
             break;
 
         case KVM_EXIT_SHUTDOWN:
-            vm_log("[VM] Guest shutdown (triple fault)\n");
             regs_cmd.vcpu = 0;
             kvm_ioctl(kvm_fd, KVM_GET_REGS,
                       (uint64_t)(uintptr_t)&regs_cmd);
-            vm_log("[VM]   RIP=0x%llx RSP=0x%llx\n",
-                   (unsigned long long)regs_cmd.regs.rip,
-                   (unsigned long long)regs_cmd.regs.rsp);
             running = 0;
             break;
 
         case KVM_EXIT_INTERNAL_ERROR:
-            vm_log("[VM] Internal error: suberror=%u\n",
-                   run->internal.suberror);
             running = 0;
             break;
 
@@ -447,7 +384,6 @@ int main(int argc, char **argv)
             break;
 
         default:
-            vm_log("[VM] Unknown exit reason: %u\n", run->exit_reason);
             running = 0;
             break;
         }
@@ -457,22 +393,9 @@ int main(int argc, char **argv)
             redraw_counter = 0;
             vm_devices_redraw(exit_count);
         }
-
-        if (exit_count % 100000 == 0) {
-            vm_log("[VM] Status: exits=%llu io=%llu mmio=%llu post=0x%02X\n",
-                   (unsigned long long)exit_count,
-                   (unsigned long long)io_count,
-                   (unsigned long long)mmio_count,
-                   vm_devices_get_post_code());
-        }
     }
 
     vm_devices_redraw(exit_count);
-
-    vm_log("[VM] Stopped after %llu exits (io=%llu mmio=%llu)\n",
-           (unsigned long long)exit_count,
-           (unsigned long long)io_count,
-           (unsigned long long)mmio_count);
 
     kvm_close(kvm_fd);
 

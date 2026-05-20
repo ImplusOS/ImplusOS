@@ -1,6 +1,8 @@
 #include "Panic.h"
+#include "Debug/serial/Serial.h"
 #include "Debug/printf/printf.h"
 #include "kernel/boot_info.h"
+#include "Boot/LoadBar.h"
 #include "Platform/io/IO_Main.h"
 #include <stdint.h>
 #include <stddef.h>
@@ -33,8 +35,6 @@ static BOOT_INFO* bi = NULL;
 
 #include "../../../Thirdparty/stb_truetype.h"
 
-extern const uint8_t g_panic_font8x8[128][8];
-
 #define PANIC_BG_COLOR 0x000000AA
 #define PANIC_FG_COLOR 0x00FFFFFF
 
@@ -48,7 +48,7 @@ static inline uint32_t alpha_blend(uint32_t dst, uint8_t r, uint8_t g, uint8_t b
     return (0xFF << 24) | ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | nb;
 }
 
-static void panic_init(BOOT_INFO* boot_info) {
+void kernel_panic_init(BOOT_INFO* boot_info) {
     if (boot_info != NULL) {
         memcpy(&g_boot_info, boot_info, sizeof(BOOT_INFO));
         bi = &g_boot_info;
@@ -56,16 +56,13 @@ static void panic_init(BOOT_INFO* boot_info) {
 }
 
 static void draw_text_ttf(int x, int y, const char* text, float size, uint32_t color) {
-    if (!bi->FontDataAddress || bi->FontDataSize == 0) {
-        return;
+    if (bi->FontDataAddress != 0) {
+        serial_write_string("Panic Font Address: ");
+        serial_write_uint64(bi->FontDataAddress);
+        serial_write_string("\n");
     }
 
     stbtt_fontinfo font;
-    if (!stbtt_InitFont(&font, (unsigned char*)bi->FontDataAddress, 
-            stbtt_GetFontOffsetForIndex((unsigned char*)bi->FontDataAddress, 0))) {
-        return;
-    }
-
     float scale = stbtt_ScaleForPixelHeight(&font, size);
     int ascent, descent, lineGap;
     stbtt_GetFontVMetrics(&font, &ascent, &descent, &lineGap);
@@ -114,6 +111,7 @@ static void draw_text_ttf(int x, int y, const char* text, float size, uint32_t c
 
 void kernel_panic(const char* module_name, const char* message) {
     __asm__ volatile ("cli");
+    load_bar_finish();
 
     if (bi != NULL && bi->FrameBufferBase != 0) {
         uint32_t* fb = (uint32_t*)(uintptr_t)bi->FrameBufferBase;
@@ -128,29 +126,27 @@ void kernel_panic(const char* module_name, const char* message) {
             }
         }
 
-        if (bi->FontDataAddress && bi->FontDataSize > 0) {
-            int center_x = (int)width / 2;
-            
-            draw_text_ttf(center_x - 40, 100, ":(", 80.0f, 0xFFFFFF);
-            
-            draw_text_ttf(center_x - 300, 200, "Your PC ran into a problem", 48.0f, 0xFFFFFF);
-            draw_text_ttf(center_x - 300, 260, "ImplusOS has encountered a critical error.", 24.0f, 0xFFFFFF);
-            
-            char buf[512];
-            if (module_name) {
-                strcpy(buf, "Module: ");
-                strcat(buf, module_name);
-                draw_text_ttf(center_x - 300, 320, buf, 20.0f, 0xCCCCCC);
-            }
-            
-            if (message) {
-                strcpy(buf, "Error: ");
-                strcat(buf, message);
-                draw_text_ttf(center_x - 300, 350, buf, 20.0f, 0xFFFFFF);
-            }
-
-            draw_text_ttf(center_x - 300, 450, "Please reboot your computer manually.", 18.0f, 0xAAAAAA);
+        int center_x = (int)width / 2;
+        
+        draw_text_ttf(center_x - 40, 100, ":(", 80.0f, 0xFFFFFF);
+        
+        draw_text_ttf(center_x - 300, 200, "Your PC ran into a problem", 48.0f, 0xFFFFFF);
+        draw_text_ttf(center_x - 300, 260, "ImplusOS has encountered a critical error.", 24.0f, 0xFFFFFF);
+        
+        char buf[512];
+        if (module_name) {
+            strcpy(buf, "Module: ");
+            strcat(buf, module_name);
+            draw_text_ttf(center_x - 300, 320, buf, 20.0f, 0xCCCCCC);
         }
+        
+        if (message) {
+            strcpy(buf, "Error: ");
+            strcat(buf, message);
+            draw_text_ttf(center_x - 300, 350, buf, 20.0f, 0xFFFFFF);
+        }
+
+        draw_text_ttf(center_x - 300, 450, "Please reboot your computer manually.", 18.0f, 0xAAAAAA);
     }
 
     while (1) {

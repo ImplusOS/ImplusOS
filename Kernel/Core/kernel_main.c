@@ -88,7 +88,6 @@ void kernel_main(BOOT_INFO *boot_info) {
     if (boot_info != NULL) {
         memcpy(&g_boot_info_copy, boot_info, sizeof(BOOT_INFO));
         boot_info = &g_boot_info_copy;
-        serial_write_uint64(boot_info->PartitionStartLBA);
     }
 
     {
@@ -114,6 +113,8 @@ void kernel_main(BOOT_INFO *boot_info) {
     init_paging();
     memory_init();
 
+    kernel_panic_init(boot_info);
+
     acpi_init(boot_info);
     platform_interrupts_configure(acpi_get_info());
     syscall_init();
@@ -138,17 +139,22 @@ void kernel_main(BOOT_INFO *boot_info) {
     };
     driver_select_set_boot_framebuffer(&boot_fb);
     debugger_init(boot_info);
+    
     disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType);
 
     bool fs_ready = false;
     if (all_fs_initialize(boot_info)) {
         fs_ready = true;
     } else {
-        serial_write_string("File system initialization failed\n");
+        debug_printf("Filesystem initialization failed\n");
+        kernel_panic("Filesystem initialization failed", "kernel_main");
     }
+    
     bool diskless_boot = (!fs_ready && OS_CONFIG_ALLOW_DISKLESS_BOOT);
+
     if (!fs_ready && !diskless_boot) {
-        while (1) { __asm__("hlt"); }
+        debug_printf("Filesystem initialization failed and diskless boot not enabled\n");
+        kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");
     }
 
     driver_manager_display_init();
@@ -163,12 +169,9 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
-            serial_write_string("aaa");
             while (1) { __asm__("hlt"); }
         }
     }
-
-    serial_write_string("Writed");
 
     uint64_t user_rsp = process_get_current_user_rsp();
     uint64_t saved_rsp = process_get_current_saved_rsp();

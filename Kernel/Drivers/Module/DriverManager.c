@@ -199,21 +199,13 @@ bool driver_manager_fs_init(const FAT32_BPB *initial_bpb)
 
 bool driver_manager_fs_find_file(const char *path, FAT32_FILE *file)
 {
-    serial_write_string("[DriverManager] fs_find_file: ");
-    serial_write_string(path ? path : "(null)");
-    serial_write_string("\n");
     bool result = fat32_find_file(path, file);
-    serial_write_string(result ? "[DriverManager] fs_find_file: ok\n"
-                               : "[DriverManager] fs_find_file: failed\n");
     return result;
 }
 
 bool driver_manager_fs_read_file(FAT32_FILE *file, uint8_t *buffer)
 {
-    serial_write_string("[DriverManager] fs_read_file\n");
     bool result = fat32_read_file(file, buffer);
-    serial_write_string(result ? "[DriverManager] fs_read_file: ok\n"
-                               : "[DriverManager] fs_read_file: failed\n");
     return result;
 }
 
@@ -224,10 +216,7 @@ bool driver_manager_fs_write_file(FAT32_FILE *file, const uint8_t *buffer)
 
 bool driver_manager_fs_read_at(FAT32_FILE *file, uint32_t offset, uint8_t *buffer, uint32_t size)
 {
-    serial_write_string("[DriverManager] fs_read_at\n");
     bool result = fat32_read_at(file, offset, buffer, size);
-    serial_write_string(result ? "[DriverManager] fs_read_at: ok\n"
-                               : "[DriverManager] fs_read_at: failed\n");
     return result;
 }
 

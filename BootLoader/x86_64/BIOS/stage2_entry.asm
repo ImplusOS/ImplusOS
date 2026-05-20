@@ -17,7 +17,6 @@ bios_stage2_start:
 
     mov [boot_drive], dl
     call enable_a20
-    call collect_e820
     call setup_vbe
     call find_acpi_rsdp
 
@@ -34,16 +33,9 @@ enable_a20:
     out 0x92, al
     ret
 
-collect_e820:
-    pushad
-    mov si, .msg_start
-    call print_string
-    xor ebx, ebx
-    xor bp, bp              ; bp will track offset in memory map
-    mov dword [e820_count], 0
 .next:
     mov eax, 0xE820
-    mov ecx, 24             ; Request 24 bytes
+    mov ecx, 24
     mov edx, 0x534D4150
     mov di, BIOS_MEMORY_MAP_ADDRESS
     add di, bp
@@ -51,7 +43,7 @@ collect_e820:
     jc .done
     cmp eax, 0x534D4150
     jne .done
-    test ecx, ecx           ; If size is 0, we're done
+    test ecx, ecx
     jz .done
     
     mov al, '.'
@@ -59,21 +51,11 @@ collect_e820:
     
     add bp, 24
     inc dword [e820_count]
-    test ebx, ebx           ; If ebx is 0, we're done
+    test ebx, ebx
     jnz .next
 .done:
-    mov si, .msg_done
-    call print_string
-    mov eax, [e820_count]
-    call print_hex
-    mov si, .msg_newline
-    call print_string
     popad
     ret
-
-.msg_start: db "[BIOS] Collecting E820", 0
-.msg_done: db " Done: ", 0
-.msg_newline: db 13, 10, 0
 
 print_hex:
     pushad
@@ -107,24 +89,28 @@ print_char:
     pop dx
     ret
 
-print_string:
-    push ax
-    push si
-.loop:
-    lodsb
-    test al, al
-    jz .done
-    call print_char
-    jmp .loop
-.done:
-    pop si
-    pop ax
-    ret
-
 setup_vbe:
     push es
     xor ax, ax
     mov es, ax
+
+    mov di, vbe_mode_info
+    mov ax, 0x4F01
+    mov cx, 0x143
+    int 0x10
+    cmp ax, 0x004F
+    jne .try_24bpp
+    cmp byte [vbe_mode_info + 25], 32
+    jne .try_24bpp
+    mov ax, 0x4F02
+    mov bx, 0x4143
+    int 0x10
+    cmp ax, 0x004F
+    jne .try_24bpp
+    mov word [vbe_selected_mode], 0x143
+    jmp .done
+
+.try_24bpp:
     mov di, vbe_mode_info
     mov ax, 0x4F01
     mov cx, 0x118
@@ -136,12 +122,13 @@ setup_vbe:
     int 0x10
     cmp ax, 0x004F
     jne .done
+    mov word [vbe_selected_mode], 0x118
+
 .done:
     pop es
     ret
 
 find_acpi_rsdp:
-    ; Minimal first milestone: leave ACPI empty. The kernel already tolerates no RSDP.
     ret
 
 BITS 32
@@ -173,49 +160,45 @@ build_boot_params:
     mov al, [boot_drive]
     mov [BIOS_BOOT_INFO_ADDRESS + 8], al
 
-    ; partition_start_lba
     mov dword [BIOS_BOOT_INFO_ADDRESS + 16], 0
     mov dword [BIOS_BOOT_INFO_ADDRESS + 20], 0
 
-    ; framebuffer_base
     mov eax, [vbe_mode_info + 40]
     mov [BIOS_BOOT_INFO_ADDRESS + 24], eax
     mov dword [BIOS_BOOT_INFO_ADDRESS + 28], 0
 
-    ; horizontal_resolution
     movzx eax, word [vbe_mode_info + 18]
     mov [BIOS_BOOT_INFO_ADDRESS + 36], eax
 
-    ; vertical_resolution
     movzx eax, word [vbe_mode_info + 20]
     mov [BIOS_BOOT_INFO_ADDRESS + 40], eax
 
-    ; pixels_per_scan_line = pitch / 4
     movzx eax, word [vbe_mode_info + 16]
-    shr eax, 2
+    movzx ecx, byte [vbe_mode_info + 25]
+    shr ecx, 3
+    test ecx, ecx
+    jz .ppl_skip
+    xor edx, edx
+    div ecx
+.ppl_skip:
     mov [BIOS_BOOT_INFO_ADDRESS + 44], eax
 
-    ; vbe_mode
-    mov dword [BIOS_BOOT_INFO_ADDRESS + 48], 0x118
+    movzx eax, word [vbe_selected_mode]
+    mov [BIOS_BOOT_INFO_ADDRESS + 48], eax
 
-    ; framebuffer_size = vertical_resolution * pitch
     movzx eax, word [vbe_mode_info + 20]
     movzx ebx, word [vbe_mode_info + 16]
     mul ebx
     mov [BIOS_BOOT_INFO_ADDRESS + 32], eax
 
-    ; e820_map
     mov dword [BIOS_BOOT_INFO_ADDRESS + 52], BIOS_MEMORY_MAP_ADDRESS
     mov dword [BIOS_BOOT_INFO_ADDRESS + 56], 0
 
-    ; e820_count
     mov eax, [e820_count]
     mov [BIOS_BOOT_INFO_ADDRESS + 60], eax
 
-    ; e820_desc_size
     mov dword [BIOS_BOOT_INFO_ADDRESS + 64], 24
 
-    ; acpi_rsdp
     mov eax, [acpi_rsdp_ptr]
     mov [BIOS_BOOT_INFO_ADDRESS + 68], eax
     mov dword [BIOS_BOOT_INFO_ADDRESS + 72], 0
@@ -303,9 +286,9 @@ protected_read_return:
     ret
 
 bios_enter_kernel64:
-    mov eax, [esp + 4]      ; entry low
+    mov eax, [esp + 4]
     mov [kernel_entry32], eax
-    mov eax, [esp + 8]      ; boot info low
+    mov eax, [esp + 8]
     mov [kernel_boot_info32], eax
 
     call setup_long_mode_tables
@@ -416,7 +399,8 @@ rm_dap:
 
 section .bss.stage2
 alignb 16
-vbe_mode_info: resb 256
+vbe_mode_info:      resb 256
+vbe_selected_mode:  resw 1
 
 section .bss
 

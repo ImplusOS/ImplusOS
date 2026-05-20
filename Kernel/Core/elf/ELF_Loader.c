@@ -168,60 +168,38 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
                                const elf_load_policy_t *policy,
                                elf_loaded_image_info_t *image_out)
 {
-    debug_printf("Loading ELF from path: ");
-    debug_printf("%s", path);
-    debug_printf("\n");
     if (target_cr3 == 0 || !path || !policy || !image_out) {
         return false;
     }
 
-    debug_printf("[ELF Loader] Target CR3: 0x%llx\n", target_cr3);
-    
     FAT32_FILE file;
     if (!driver_manager_fs_find_file(path, &file)) {
-        debug_printf("[ELF Loader] File not found: %s\n", path);
         return false;
     }
-
-    debug_printf("[ELF Loader] File found: %s\n", path);
 
     if (file.size == 0 || (uint64_t)file.size > policy->max_file_size) {
-        debug_printf("[ELF Loader] Invalid file size: %u\n", file.size);
         return false;
     }
-
-    debug_printf("[ELF Loader] File size: %u\n", file.size);
 
     if ((uint64_t)file.size < sizeof(Elf64_Ehdr)) {
         return false;
     }
-
-    debug_printf("[ELF Loader] File size: %u\n", file.size);
-
+    
     Elf64_Ehdr ehdr;
-    debug_printf("[ELF Loader] reading ELF header from disk\n");
     if (!driver_manager_fs_read_at(&file, 0u, (uint8_t *)&ehdr, sizeof(ehdr))) {
-        debug_printf("[ELF Loader] failed to read ELF header\n");
         return false;
     }
-
-    debug_printf("[ELF Loader] ELF header read successfully\n");
 
     if (ehdr.e_ident[0] != ELF_MAGIC_0 ||
         ehdr.e_ident[1] != ELF_MAGIC_1 ||
         ehdr.e_ident[2] != ELF_MAGIC_2 ||
         ehdr.e_ident[3] != ELF_MAGIC_3) {
-        debug_printf("[ELF Loader] Invalid ELF magic\n");
         return false;
     }
-
-    debug_printf("[ELF Loader] ELF header read successfully\n");
 
     if (ehdr.e_phentsize != sizeof(Elf64_Phdr) || ehdr.e_phnum == 0) {
         return false;
     }
-
-    debug_printf("[ELF Loader] ELF header read successfully\n");
 
     uint64_t phdr_table_bytes =
         (uint64_t)ehdr.e_phnum * (uint64_t)ehdr.e_phentsize;
@@ -230,22 +208,15 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
         return false;
     }
 
-    debug_printf("[ELF Loader] ELF header read successfully");
-
     Elf64_Phdr *phdrs = (Elf64_Phdr *)malloc((size_t)phdr_table_bytes);
     if (!phdrs) {
         return false;
     }
 
-    debug_printf("[ELF Loader] ELF header read successfully");
-    debug_printf("[ELF Loader] reading program header table\n");
     if (!driver_manager_fs_read_at(&file, (uint32_t)ehdr.e_phoff, (uint8_t *)phdrs, (uint32_t)phdr_table_bytes)) {
-        debug_printf("[ELF Loader] failed to read program header table\n");
         free(phdrs);
         return false;
     }
-
-    debug_printf("[ELF Loader] program header table read successfully\n");
 
     int load_segments = 0;
     uint64_t phdr_vaddr = 0;
@@ -265,8 +236,6 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
         }
 
         if (!in_vaddr_range(ph->p_vaddr, ph->p_memsz, policy->min_vaddr, policy->max_vaddr)) {
-            debug_printf("[ELF Loader] Segment out of range: vaddr=0x%lx, size=0x%lx, min=0x%lx, max=0x%lx\n",
-                         ph->p_vaddr, ph->p_memsz, policy->min_vaddr, policy->max_vaddr);
             failed = true; break;
         }
 
@@ -335,7 +304,6 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
     }
 
     if (ehdr.e_entry < policy->min_vaddr || ehdr.e_entry >= policy->max_vaddr) {
-        debug_printf("[ELF Loader] Entry point out of range: 0x%lx\n", ehdr.e_entry);
         free(phdrs);
         return false;
     }

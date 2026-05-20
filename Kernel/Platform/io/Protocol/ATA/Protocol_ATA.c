@@ -3,6 +3,7 @@
 #include <string.h>
 #include "Drivers/Module/DriverManager.h"
 #include "Debug/serial/Serial.h"
+#include "Debug/printf/printf.h"
 
 #define ATA_PRI_DATA     0x1F0u
 #define ATA_PRI_SECCOUNT 0x1F2u
@@ -341,7 +342,7 @@ bool ata_init(uint64_t partition_lba) {
         ata_soft_reset(slots[i].ch->ctrl_io);
         ata_set_channel(slots[i].ch);
 
-        if (!ata_probe_device(slots[i].devsel)) {
+        if (!ata_probe_device(slots[i].devsel)) {\
             continue;
         }
 

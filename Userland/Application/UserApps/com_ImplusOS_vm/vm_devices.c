@@ -36,7 +36,6 @@ static void host_serial_putchar(char c)
     if (c == '\n' || host_line_pos >= HOST_LINE_SIZE - 1) {
         host_line[host_line_pos] = '\n';
         host_line[host_line_pos+1] = '\0';
-        serial_write_string("[OVMF] ");
         serial_write_string(host_line);
         host_line_pos = 0;
     } else if (c >= ' ' || c == '\t') {

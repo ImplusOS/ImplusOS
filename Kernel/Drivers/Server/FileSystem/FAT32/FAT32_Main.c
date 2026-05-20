@@ -22,10 +22,28 @@ static const driver_binary_t *g_driver_api = NULL;
 
 #define disk_read           g_driver_api->disk_read
 #define disk_write          g_driver_api->disk_write
-#define memset              g_driver_api->memset
-#define memcpy              g_driver_api->memcpy
 #define serial_write_string g_driver_api->serial_write_string
 #define serial_write_uint32 g_driver_api->serial_write_uint32
+
+void *memcpy(void *dest, const void *src, size_t n) {
+    if (!g_driver_api || !g_driver_api->memcpy) {
+        char *d = dest;
+        const char *s = src;
+        for (size_t i = 0; i < n; i++) d[i] = s[i];
+        return dest;
+    }
+    return g_driver_api->memcpy(dest, src, n);
+}
+
+void *memset(void *s, int c, size_t n) {
+    if (!g_driver_api || !g_driver_api->memset) {
+        char *p = s;
+        for (size_t i = 0; i < n; i++) p[i] = (char)c;
+        return s;
+    }
+    return g_driver_api->memset(s, c, n);
+}
+
 
 #else
 #include "Core/sync/Spinlock.h"
@@ -1011,12 +1029,6 @@ static bool fat32_lookup_entry_in_directory(uint32_t    dir_cluster,
     if (dir_cluster < 2u || !target_name || !out_file || target_name[0] == '\0')
         return false;
 
-    serial_write_string("[FAT32] lookup_entry_in_directory: dir_cluster=");
-    serial_write_uint32(dir_cluster);
-    serial_write_string(" target=");
-    serial_write_string(target_name);
-    serial_write_string("\n");
-
     char    lfn_name[FAT32_MAX_NAME_LEN];
     int     lfn_valid       = 0;
     uint8_t lfn_entry_count = 0u;
@@ -1026,26 +1038,15 @@ static bool fat32_lookup_entry_in_directory(uint32_t    dir_cluster,
 
     uint32_t cluster      = dir_cluster;
     uint32_t total        = fat32_total_clusters();
-    uint32_t max_clusters = (total > 65536u) ? 65536u : total; // Limit directory size traversal
+    uint32_t max_clusters = (total > 65536u) ? 65536u : total;
 
     for (uint32_t c = 0u; c < max_clusters; ++c) {
         uint32_t lba = cluster_to_lba(cluster);
         if (!lba) {
-            serial_write_string("[FAT32] lookup_entry_in_directory: invalid lba\n");
             return false;
         }
-        serial_write_string("[FAT32] directory cluster=");
-        serial_write_uint32(cluster);
-        serial_write_string(" lba=");
-        serial_write_uint32(lba);
-        serial_write_string("\n");
-
         for (uint8_t sec = 0u; sec < bpb.sectors_per_cluster; ++sec) {
-            serial_write_string("[FAT32] reading dir sector=");
-            serial_write_uint32(lba + sec);
-            serial_write_string("\n");
             if (!disk_read(lba + sec, g_sector_buffer, 1)) {
-                serial_write_string("[FAT32] disk_read failed in lookup_entry_in_directory\n");
                 return false;
             }
 
@@ -1140,18 +1141,11 @@ static bool fat32_lookup_entry_in_directory(uint32_t    dir_cluster,
                 lfn_expected_order = 0u;
                 lfn_expected_checksum = 0u;
                 memset(lfn_name, 0, sizeof(lfn_name));
-
-                serial_write_string("[FAT32] entry candidate: '");
-                serial_write_string(candidate);
-                serial_write_string("'\n");
             }
         }
         uint32_t next = fat_get_next_cluster(cluster);
         if (next < 2u || next >= 0x0FFFFFF8u) break;
         cluster = next;
-        serial_write_string("[FAT32] traversing cluster: ");
-        serial_write_uint32(cluster);
-        serial_write_string("\n");
     }
     return false;
 }
@@ -1195,9 +1189,6 @@ static bool fat32_validate_bpb(void) {
 
 static bool fat32_lookup_path(const char *path, FAT32_FILE *out_entry) {
     if (!path || !out_entry) return false;
-    serial_write_string("[FAT32] lookup_path: ");
-    serial_write_string(path);
-    serial_write_string("\n");
     const char *cursor = skip_path_separators(path);
     if (!cursor || *cursor == '\0') return false;
 
@@ -1210,20 +1201,10 @@ static bool fat32_lookup_path(const char *path, FAT32_FILE *out_entry) {
         const char *next = extract_path_component(cursor, component,
                                                    sizeof(component), &has_more);
         if (!next || component[0] == '\0') return false;
-        serial_write_string("[FAT32] lookup component: ");
-        serial_write_string(component);
-        serial_write_string("\n");
         if (!fat32_lookup_entry_in_directory(current_dir_cluster, component,
                                               &current_entry)) return false;
-        serial_write_string("[FAT32] found entry: '");
-        serial_write_string(current_entry.name);
-        serial_write_string("'\n");
         if (!has_more) { *out_entry = current_entry; return true; }
-        serial_write_string("[FAT32] descending into directory: '");
-        serial_write_string(current_entry.name);
-        serial_write_string("'\n");
         if ((current_entry.attributes & FAT32_ATTR_DIRECTORY) == 0) return false;
-        serial_write_string("[FAT32] entry is a directory\n");
         if (current_entry.first_cluster < 2u) return false;
         current_dir_cluster = current_entry.first_cluster;
         cursor = next;
@@ -1388,11 +1369,9 @@ static bool _fat32_read_at(FAT32_FILE *file, uint32_t offset, uint8_t *buffer, u
 }
 
 bool fat32_read_at(FAT32_FILE *file, uint32_t offset, uint8_t *buffer, uint32_t size) {
-    serial_write_string("[FAT32] read_at\n");
     spinlock_lock(&g_fat32_lock);
     bool ret = _fat32_read_at(file, offset, buffer, size);
     spinlock_unlock(&g_fat32_lock);
-    serial_write_string(ret ? "[FAT32] read_at: ok\n" : "[FAT32] read_at: failed\n");
     return ret;
 }
 
@@ -1511,22 +1490,14 @@ bool fat32_init(const FAT32_BPB *initial_bpb) {
 static bool _fat32_find_file(const char *filename, FAT32_FILE *file) {
     if (!filename || !file) return false;
     if (!fat32_lookup_path(filename, file)) return false;
-    serial_write_string("[FAT32] found file: '");
-    serial_write_string(file->name);
-    serial_write_string("'\n");
     if (file->attributes & FAT32_ATTR_DIRECTORY) return false;
-    serial_write_string("[FAT32] entry is a file\n");
     return true;
 }
 
 bool fat32_find_file(const char *filename, FAT32_FILE *file) {
-    serial_write_string("[FAT32] find_file: ");
-    serial_write_string(filename ? filename : "(null)");
-    serial_write_string("\n");
     spinlock_lock(&g_fat32_lock);
     bool ret = _fat32_find_file(filename, file);
     spinlock_unlock(&g_fat32_lock);
-    serial_write_string(ret ? "[FAT32] find_file: ok\n" : "[FAT32] find_file: failed\n");
     return ret;
 }
 

@@ -1,4 +1,4 @@
-.PHONY: all kernel run_usb run_ide run_bios clean image app_build driver_build driver_stage image_bios
+.PHONY: all kernel run_usb run_ide run_bios clean image app_build driver_build driver_stage
 
 ARCH := x86_64
 CC   = x86_64-elf-gcc
@@ -9,7 +9,6 @@ NASM = nasm
 BUILD_DIR := Build
 IMAGE_DIR := Image
 IMAGE     := $(IMAGE_DIR)/ImplusOS.iso
-BIOS_IMAGE := $(IMAGE_DIR)/ImplusOS-bios.img
 
 OVMF_CODE := ./OVMF_CODE_4M.fd
 OVMF_VARS := ./OVMF_VARS_4M.fd
@@ -286,34 +285,19 @@ image_esp: all
 		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -exec cp {} $(ISO_ROOT)/Kernel/Driver/ \; ; \
 	fi
 	@$(MAKE) __create_esp_iso
-	@cp $(ESP_IMG) $(ISO_ROOT)/esp.iso
 	@rsync -a $(BUILD_DIR)/Userland/SystemApps/ $(ISO_ROOT)/Userland/SystemApps/
 	@rsync -a $(BUILD_DIR)/Userland/UserApps/ $(ISO_ROOT)/Userland/UserApps/
 	@mkdir -p $(ISO_ROOT)/BootManager
 	@rsync -a $(BOOT_RESOURCE_DIR) $(ISO_ROOT)/BootManager/
 	@xorriso -as mkisofs -R -J -V "ImplusOS Clesk 0.2-beta" \
 		-o $(IMAGE) \
-		-eltorito-alt-boot -e esp.iso -no-emul-boot \
+		-partition_offset 64 \
+		-append_partition 2 0xef $(ESP_IMG) \
+		-eltorito-alt-boot -e '--interval:appended_partition_2:all::' -no-emul-boot \
 		$(ISO_ROOT)
-
+	@dd if=$(BIOS_STAGE1_BIN) of=$(IMAGE) bs=446 count=1 conv=notrunc 2>/dev/null
+	@dd if=$(BIOS_STAGE2_BIN) of=$(IMAGE) bs=512 seek=1 conv=notrunc 2>/dev/null
 	@cp $(IMAGE) Qemu/Test/Resource/ImplusOS.iso
-
-image_bios: all
-	@mkdir -p $(IMAGE_DIR)
-	@dd if=/dev/zero of=$(BIOS_IMAGE) bs=1M count=128 2>/dev/null
-	@printf 'label: dos\nunit: sectors\n\nstart=2048, type=c, bootable\n' | sfdisk $(BIOS_IMAGE) >/dev/null
-	@dd if=$(BIOS_STAGE1_BIN) of=$(BIOS_IMAGE) bs=446 count=1 conv=notrunc 2>/dev/null
-	@dd if=$(BIOS_STAGE2_BIN) of=$(BIOS_IMAGE) bs=512 seek=1 conv=notrunc 2>/dev/null
-	@mformat -i $(BIOS_IMAGE)@@1048576 -F ::
-	@mmd -i $(BIOS_IMAGE)@@1048576 ::/Kernel ::/Kernel/Driver ::/Userland ::/BootManager
-	@mcopy -i $(BIOS_IMAGE)@@1048576 $(KERNEL_ELF) ::/Kernel/Kernel_Main.ELF
-	@mcopy -i $(BIOS_IMAGE)@@1048576 $(USERLAND_INIT_ELF) ::/Userland/Userland.ELF
-	@if [ -d $(BOOT_RESOURCE_DIR) ]; then \
-		mcopy -i $(BIOS_IMAGE)@@1048576 -s $(BOOT_RESOURCE_DIR) ::/BootManager/; \
-	fi
-	if [ -d $(DRIVER_STAGE_DIR) ]; then \
-		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -exec mcopy -i $(BIOS_IMAGE)@@1048576 {} ::/Kernel/Driver/ \; ; \
-	fi
 
 __create_esp_iso:
 	@ESP_MOUNT=$$(mktemp -d); \
@@ -394,20 +378,30 @@ QEMU_USB = \
 	-drive if=none,id=usbstick,format=raw,file=${IMAGE} \
 	-device usb-storage,drive=usbstick
 
-run_ide:
+run_uefi_ide:
 	@qemu-system-x86_64 $(QEMU_COMMON) $(QEMU_IDE)
 
-run_usb:
+run_uefi_usb:
 	@qemu-system-x86_64 $(QEMU_COMMON) $(QEMU_USB)
 
-run_bios:
+run_bios_ide:
 	@qemu-system-x86_64 \
 		-machine q35 \
 		-smp 4,sockets=1,cores=4,threads=1 \
 		-m 4G \
 		-serial stdio \
-		-drive format=raw,file=$(BIOS_IMAGE)
-	  	
+		-drive format=raw,file=$(IMAGE)
+
+run_bios_usb:
+	@qemu-system-x86_64 \
+		-machine q35 \
+		-smp 4,sockets=1,cores=4,threads=1 \
+		-m 4G \
+		-serial stdio \
+		-device qemu-xhci,id=xhci \
+		-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
+		-device usb-storage,drive=usbstick
+
 clean:
 	@rm -rf $(BUILD_DIR) $(IMAGE_DIR)
 

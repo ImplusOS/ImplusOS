@@ -764,9 +764,6 @@ int vmx_vcpu_add_mem_slot(vmx_vcpu_t *vcpu, const kvm_userspace_memory_region_t 
         uint64_t uva = region->userspace_addr + offset;
         uint64_t hpa = paging_virt_to_phys(cr3, uva);
         if (hpa == 0) {
-            serial_write_string("[VMX] EPT: VA->PA failed for 0x");
-            serial_write_uint64(uva);
-            serial_write_string("\n");
             return -1;
         }
         int rc = ept_map_page(vcpu,
@@ -828,10 +825,7 @@ int vmx_vcpu_run(vmx_vcpu_t *vcpu)
         g_vmx_current_guest_regs = NULL;
 
         if (rc != 0) {
-             
             uint64_t vm_err = vmx_vmread(0x4400);
-
-            debug_printf("[VMX] VM-instruction failed: rc=%d, error=%u\n", rc, (uint32_t)vm_err);
 
             vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
             vcpu->run->internal.suberror = (uint32_t)vm_err;
@@ -946,47 +940,10 @@ static int vmx_handle_exit(vmx_vcpu_t *vcpu)
         return 0;
 
     case EXIT_REASON_INVALID_GUEST_STATE:
-        debug_printf("[VMX] Invalid Guest State!\n");
-        debug_printf("G_CR0: %016llx\n", vmx_vmread(VMCS_GUEST_CR0));
-        debug_printf("G_CR3: %016llx\n", vmx_vmread(VMCS_GUEST_CR3));
-        debug_printf("G_CR4: %016llx\n", vmx_vmread(VMCS_GUEST_CR4));
-        debug_printf("G_EFER:%016llx\n", vmx_vmread(VMCS_GUEST_IA32_EFER));
-        debug_printf("MISC:  %016llx\n", vmx_rdmsr(IA32_VMX_MISC));
-        
         uint64_t hcr0, hcr3, hcr4;
         __asm__ volatile("mov %%cr0, %0" : "=r"(hcr0));
         __asm__ volatile("mov %%cr3, %0" : "=r"(hcr3));
         __asm__ volatile("mov %%cr4, %0" : "=r"(hcr4));
-        debug_printf("H_CR0: %016llx\n", hcr0);
-        debug_printf("H_CR3: %016llx\n", hcr3);
-        debug_printf("H_CR4: %016llx\n", hcr4);
-
-        debug_printf("CS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_CS_SEL), vmx_vmread(VMCS_GUEST_CS_BASE));
-        debug_printf("CS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_CS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_CS_ACCESS));
-        debug_printf("SS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_SS_SEL), vmx_vmread(VMCS_GUEST_SS_BASE));
-        debug_printf("SS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_SS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_SS_ACCESS));
-        debug_printf("DS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_DS_SEL), vmx_vmread(VMCS_GUEST_DS_BASE));
-        debug_printf("DS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_DS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_DS_ACCESS));
-        debug_printf("ES: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_ES_SEL), vmx_vmread(VMCS_GUEST_ES_BASE));
-        debug_printf("ES: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_ES_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_ES_ACCESS));
-        debug_printf("FS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_FS_SEL), vmx_vmread(VMCS_GUEST_FS_BASE));
-        debug_printf("FS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_FS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_FS_ACCESS));
-        debug_printf("GS: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_GS_SEL), vmx_vmread(VMCS_GUEST_GS_BASE));
-        debug_printf("GS: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_GS_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_GS_ACCESS));
-        debug_printf("TR: SEL=%04x BASE=%016llx\n", (uint16_t)vmx_vmread(VMCS_GUEST_TR_SEL), vmx_vmread(VMCS_GUEST_TR_BASE));
-        debug_printf("TR: LIM=%08x AR=%08x\n", (uint32_t)vmx_vmread(VMCS_GUEST_TR_LIMIT), (uint32_t)vmx_vmread(VMCS_GUEST_TR_ACCESS));
-        debug_printf("LDTR: SEL=%04x AR=%08x\n", (uint16_t)vmx_vmread(VMCS_GUEST_LDTR_SEL), (uint32_t)vmx_vmread(VMCS_GUEST_LDTR_ACCESS));
-        debug_printf("GDTR: BASE=%016llx LIM=%04x\n", vmx_vmread(VMCS_GUEST_GDTR_BASE), (uint16_t)vmx_vmread(VMCS_GUEST_GDTR_LIMIT));
-        debug_printf("IDTR: BASE=%016llx LIM=%04x\n", vmx_vmread(VMCS_GUEST_IDTR_BASE), (uint16_t)vmx_vmread(VMCS_GUEST_IDTR_LIMIT));
-        debug_printf("EPTP: %016llx\n", vmx_vmread(VMCS_EPTP));
-        debug_printf("RIP:  %016llx\n", vmx_vmread(VMCS_GUEST_RIP));
-        debug_printf("RSP:  %016llx\n", vmx_vmread(VMCS_GUEST_RSP));
-        debug_printf("RFL:  %016llx\n", vmx_vmread(VMCS_GUEST_RFLAGS));
-        debug_printf("SEC:  %08x\n", (uint32_t)vmx_vmread(VMCS_SECONDARY_CPU_CONTROLS));
-        debug_printf("ENT:  %08x\n", (uint32_t)vmx_vmread(VMCS_ENTRY_CONTROLS));
-        debug_printf("EXT:  %08x\n", (uint32_t)vmx_vmread(VMCS_EXIT_CONTROLS));
-        debug_printf("PIN:  %08x\n", (uint32_t)vmx_vmread(VMCS_PIN_BASED_CONTROLS));
-        debug_printf("PRM:  %08x\n", (uint32_t)vmx_vmread(VMCS_CPU_BASED_CONTROLS));
         
         vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
         vcpu->run->internal.suberror = exit_reason;

@@ -13,7 +13,8 @@ enum {
     OS_STATUS_IO_ERROR      = -5,
     OS_STATUS_FAULT         = -14,
     OS_STATUS_NOT_SUPPORTED = -95,
-    OS_STATUS_INTERNAL      = -255
+    OS_STATUS_INTERNAL      = -255,
+    OS_STATUS_INIT_FAILED   = -256
 };
 
 static inline int os_status_is_error(os_status_t status)
@@ -60,6 +61,8 @@ static inline const char *os_status_to_string(os_status_t status)
             return "OS_STATUS_NOT_SUPPORTED";
         case OS_STATUS_INTERNAL:
             return "OS_STATUS_INTERNAL";
+        case OS_STATUS_INIT_FAILED:
+            return "OS_STATUS_INIT_FAILED";
         default:
             return "OS_STATUS_UNKNOWN";
     }
@@ -88,6 +91,8 @@ static inline int32_t os_status_to_errno(os_status_t status)
             return 95;
         case OS_STATUS_INTERNAL:
             return 255;
+        case OS_STATUS_INIT_FAILED:
+            return 256;
         default: {
             uint64_t magnitude = os_status_abs_u64(status);
             if (magnitude > (uint64_t)INT32_MAX) {

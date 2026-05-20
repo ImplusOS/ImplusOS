@@ -2,6 +2,7 @@
 #include "Protocol/ATA/Protocol_ATA.h"
 #include "Protocol/USB_MassStorage/Protocol_USB_MassStorage.h"
 #include "Debug/serial/Serial.h"
+#include "Debug/printf/printf.h"
  
 static io_protocol_type_t g_current_protocol = IO_PROTOCOL_TYPE_NONE;
  
@@ -21,16 +22,13 @@ void disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type) {
     }
  
     if (g_current_protocol == IO_PROTOCOL_TYPE_NONE) {
-        if (boot_drive_type == 0) {
-            if (ata_init(partition_lba)) {
-                g_current_protocol = IO_PROTOCOL_TYPE_ATA;
-                return;
-            }
-            
-            if (usb_ms_init(partition_lba)) {
-                g_current_protocol = IO_PROTOCOL_TYPE_USB_MASS_STORAGE;
-                return;
-            }
+        if (ata_init(partition_lba)) {
+            g_current_protocol = IO_PROTOCOL_TYPE_ATA;
+            return;
+        }
+        if (usb_ms_init(partition_lba)) {
+            g_current_protocol = IO_PROTOCOL_TYPE_USB_MASS_STORAGE;
+            return;
         }
     }
 }

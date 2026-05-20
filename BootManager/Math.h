@@ -43,8 +43,7 @@ static stbtt_float stbtt_cos_impl(stbtt_float x)
 {
     const stbtt_float PI  = 3.14159265358979323846;
     const stbtt_float TAU = 6.28318530717958647692;
-
-    /* range reduction */
+    
     while (x >  PI) x -= TAU;
     while (x < -PI) x += TAU;
 
