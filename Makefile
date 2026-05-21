@@ -288,13 +288,16 @@ image_esp: all
 	@rsync -a $(BUILD_DIR)/Userland/UserApps/ $(ISO_ROOT)/Userland/UserApps/
 	@mkdir -p $(ISO_ROOT)/BootManager
 	@rsync -a $(BOOT_RESOURCE_DIR) $(ISO_ROOT)/BootManager/
-	@xorriso -as mkisofs -R -J -V "ImplusOS Clesk 0.2-beta" \
+	@xorriso -as mkisofs \
+		-R -J \
+		-V "ImplusOS Clesk 0.2-beta" \
 		-o $(IMAGE) \
-		-partition_offset 64 \
+		-isohybrid-mbr $(BIOS_STAGE1_BIN) \
 		-append_partition 2 0xef $(ESP_IMG) \
-		-eltorito-alt-boot -e '--interval:appended_partition_2:all::' -no-emul-boot \
+		-e '--interval:appended_partition_2_start_64s_to_end_disk:all::' \
+		-no-emul-boot \
+		-isohybrid-gpt-basdat \
 		$(ISO_ROOT)
-	@dd if=$(BIOS_STAGE1_BIN) of=$(IMAGE) bs=446 count=1 conv=notrunc 2>/dev/null
 	@dd if=$(BIOS_STAGE2_BIN) of=$(IMAGE) bs=512 seek=1 conv=notrunc 2>/dev/null
 	@cp $(IMAGE) Qemu/Test/Resource/ImplusOS.iso
 
