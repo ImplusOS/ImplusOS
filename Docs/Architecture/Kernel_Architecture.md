@@ -384,7 +384,6 @@ All compile-time configuration in `Kernel/include/kernel/config.h`:
 | `OS_CONFIG_SMP_MAX_CPUS` | 4 | — | Max CPU cores |
 | `OS_CONFIG_SMP_ENABLED` | 1 | — | Enable SMP |
 | `OS_CONFIG_LOG_FILE_MAX_BYTES` | 512K | — | Max kernel log size |
-| `OS_CONFIG_ALLOW_DISKLESS_BOOT` | 0 | — | Allow boot without filesystem |
 | `OS_CONFIG_SIGNAL_HANDLER_MAX_PER_PROCESS` | 32 | — | Max signal handlers |
 | `OS_CONFIG_PENDING_SIGNAL_MAX_PER_PROCESS` | 64 | — | Max pending signals |
 | `OS_CONFIG_NET_IPV4_ADDR` | 10.0.2.15 | — | Static IPv4 address |

@@ -60,11 +60,6 @@ void kernel_panic_init(BOOT_INFO* boot_info) {
             const unsigned char* data = (const unsigned char*)(uintptr_t)bi->FontDataAddress;
             int offset = stbtt_GetFontOffsetForIndex(data, 0);
             g_font_valid = stbtt_InitFont(&g_font, data, offset);
-            if (g_font_valid) {
-                serial_write_string("Panic font loaded successfully\n");
-            } else {
-                serial_write_string("Panic font initialization failed\n");
-            }
         }
     }
 }

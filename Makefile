@@ -1,9 +1,9 @@
 .PHONY: all kernel run_usb run_ide run_bios clean image app_build driver_build driver_stage
 
 ARCH := x86_64
-CC   = x86_64-elf-gcc
-CXX  = x86_64-elf-g++
-LD   = x86_64-elf-ld
+CC   = $(ARCH)-elf-gcc
+CXX  = $(ARCH)-elf-g++
+LD   = $(ARCH)-elf-ld
 NASM = nasm
 
 BUILD_DIR := Build
@@ -26,7 +26,7 @@ USERLAND_INIT_ELF := $(BUILD_DIR)/Userland/Userland.ELF
 LOADER_CFLAGS := \
 	-I. \
 	-I/usr/include/efi \
-	-I/usr/include/efi/x86_64 \
+	-I/usr/include/efi/$(ARCH) \
 	-I/usr/include/efi/protocol \
 	-Ilibc/include \
 	-IBootManager/BootManager_libc/include \
@@ -149,17 +149,17 @@ $(BUILD_DIR)/Loader/Loader.o: BootLoader/x86_64/UEFI/Loader.c
 
 $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 	mkdir -p $(dir $@)
-	x86_64-linux-gnu-ld -nostdlib -znocombreloc \
-		-T /usr/lib/elf_x86_64_efi.lds \
+	$(ARCH)-linux-gnu-ld -nostdlib -znocombreloc \
+		-T /usr/lib/elf_$(ARCH)_efi.lds \
 		-shared -Bsymbolic \
-		/usr/lib/crt0-efi-x86_64.o \
+		/usr/lib/crt0-efi-$(ARCH).o \
 		$< \
 		/usr/lib/libefi.a \
 		/usr/lib/libgnuefi.a \
 		-o $@.so
-	x86_64-linux-gnu-objcopy -j .text -j .sdata -j .data -j .dynamic \
+	$(ARCH)-linux-gnu-objcopy -j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
-		-O efi-app-x86_64 $@.so $@
+		-O efi-app-$(ARCH) $@.so $@
 	rm -f $@.so
 
 $(BIOS_STAGE1_BIN): BootLoader/x86_64/BIOS/stage1.asm
@@ -186,7 +186,7 @@ $(BUILD_DIR)/BootManager/BIOS/string.o: BootManager/BootManager_libc/source/stri
 $(BIOS_STAGE2_BIN): $(BIOS_STAGE2_OBJS) BootManager/BIOS/linker.ld
 	mkdir -p $(dir $@)
 	$(LD) $(BIOS_LDFLAGS) $(BIOS_STAGE2_OBJS) -o $@.elf
-	x86_64-linux-gnu-objcopy -O binary $@.elf $@
+	$(ARCH)-linux-gnu-objcopy -O binary $@.elf $@
 	@size=$$(wc -c < $@); max=$$(( $(BIOS_STAGE2_SECTORS) * 512 )); \
 	if [ $$size -gt $$max ]; then \
 		echo "BIOS stage2 too large: $$size > $$max bytes"; \
@@ -215,17 +215,17 @@ $(BUILD_DIR)/BootManager/BootManager_libc/%.o: BootManager/BootManager_libc/sour
 
 $(BOOTMANAGER_EFI): $(BOOTMANAGER_OBJS)
 	mkdir -p $(dir $@)
-	x86_64-linux-gnu-ld -nostdlib -znocombreloc \
-		-T /usr/lib/elf_x86_64_efi.lds \
+	$(ARCH)-linux-gnu-ld -nostdlib -znocombreloc \
+		-T /usr/lib/elf_$(ARCH)_efi.lds \
 		-shared -Bsymbolic \
-		/usr/lib/crt0-efi-x86_64.o \
+		/usr/lib/crt0-efi-$(ARCH).o \
 		$^ \
 		/usr/lib/libefi.a \
 		/usr/lib/libgnuefi.a \
 		-o $@.so
-	x86_64-linux-gnu-objcopy -j .text -j .sdata -j .data -j .dynamic \
+	$(ARCH)-linux-gnu-objcopy -j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
-		-O efi-app-x86_64 $@.so $@
+		-O efi-app-$(ARCH) $@.so $@
 	rm -f $@.so
 
 $(BUILD_DIR)/Userland/%.o: Userland/%.c
@@ -377,13 +377,13 @@ QEMU_USB = \
 	-device usb-storage,drive=usbstick
 
 run_uefi_ide:
-	@qemu-system-x86_64 $(QEMU_COMMON) $(QEMU_IDE)
+	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_IDE)
 
 run_uefi_usb:
-	@qemu-system-x86_64 $(QEMU_COMMON) $(QEMU_USB)
+	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_USB)
 
 run_bios_ide:
-	@qemu-system-x86_64 \
+	@qemu-system-$(ARCH) \
 		-machine q35 \
 		-smp 4,sockets=1,cores=4,threads=1 \
 		-m 4G \
@@ -391,7 +391,7 @@ run_bios_ide:
 		-drive format=raw,file=$(IMAGE)
 
 run_bios_usb:
-	@qemu-system-x86_64 \
+	@qemu-system-$(ARCH) \
 		-machine q35 \
 		-smp 4,sockets=1,cores=4,threads=1 \
 		-m 4G \

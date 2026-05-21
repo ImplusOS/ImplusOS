@@ -145,12 +145,9 @@ void kernel_main(BOOT_INFO *boot_info) {
     bool fs_ready = false;
     if (all_fs_initialize(boot_info)) {
         fs_ready = true;
-        kernel_panic("Filesystem initialization failed", "kernel_main");
     }
-    
-    bool diskless_boot = (!fs_ready && OS_CONFIG_ALLOW_DISKLESS_BOOT);
 
-    if (!fs_ready && !diskless_boot) {
+    if (!fs_ready) {
         kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");
     }
 
