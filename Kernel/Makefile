@@ -32,6 +32,12 @@ LIBC_SRCS := \
 
 OBJS += $(patsubst $(ROOT_DIR)/libc/%.c,$(KERNEL_BUILD)/libc/%.o,$(LIBC_SRCS))
 
+# ShareLib — shared kernel/userland libraries
+SHARELIB_SRCS := \
+	$(ROOT_DIR)/ShareLib/Unicode/UTF8/UTF8.c
+
+OBJS += $(patsubst $(ROOT_DIR)/ShareLib/%.c,$(KERNEL_BUILD)/ShareLib/%.o,$(SHARELIB_SRCS))
+
 all: $(KERNEL_ELF)
 
 $(KERNEL_ELF): $(OBJS)
@@ -47,6 +53,10 @@ $(KERNEL_BUILD)/%.o: %.asm
 	$(NASM) -f $(ARCH_ASM_FORMAT) $< -o $@
 
 $(KERNEL_BUILD)/libc/%.o: $(ROOT_DIR)/libc/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(KERNEL_BUILD)/ShareLib/%.o: $(ROOT_DIR)/ShareLib/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 

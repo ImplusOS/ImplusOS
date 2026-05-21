@@ -11,7 +11,6 @@ IMAGE_DIR := Image
 IMAGE     := $(IMAGE_DIR)/ImplusOS.iso
 
 OVMF_CODE := ./OVMF_CODE_4M.fd
-OVMF_VARS := ./OVMF_VARS_4M.fd
 DISK_IMG  := disk.qcow2
 
 KERNEL_DIR   := Kernel
@@ -150,7 +149,7 @@ $(BUILD_DIR)/Loader/Loader.o: BootLoader/x86_64/UEFI/Loader.c
 
 $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 	mkdir -p $(dir $@)
-	ld -nostdlib -znocombreloc \
+	x86_64-linux-gnu-ld -nostdlib -znocombreloc \
 		-T /usr/lib/elf_x86_64_efi.lds \
 		-shared -Bsymbolic \
 		/usr/lib/crt0-efi-x86_64.o \
@@ -158,7 +157,7 @@ $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 		/usr/lib/libefi.a \
 		/usr/lib/libgnuefi.a \
 		-o $@.so
-	objcopy -j .text -j .sdata -j .data -j .dynamic \
+	x86_64-linux-gnu-objcopy -j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
 		-O efi-app-x86_64 $@.so $@
 	rm -f $@.so
@@ -187,7 +186,7 @@ $(BUILD_DIR)/BootManager/BIOS/string.o: BootManager/BootManager_libc/source/stri
 $(BIOS_STAGE2_BIN): $(BIOS_STAGE2_OBJS) BootManager/BIOS/linker.ld
 	mkdir -p $(dir $@)
 	$(LD) $(BIOS_LDFLAGS) $(BIOS_STAGE2_OBJS) -o $@.elf
-	objcopy -O binary $@.elf $@
+	x86_64-linux-gnu-objcopy -O binary $@.elf $@
 	@size=$$(wc -c < $@); max=$$(( $(BIOS_STAGE2_SECTORS) * 512 )); \
 	if [ $$size -gt $$max ]; then \
 		echo "BIOS stage2 too large: $$size > $$max bytes"; \
@@ -216,7 +215,7 @@ $(BUILD_DIR)/BootManager/BootManager_libc/%.o: BootManager/BootManager_libc/sour
 
 $(BOOTMANAGER_EFI): $(BOOTMANAGER_OBJS)
 	mkdir -p $(dir $@)
-	ld -nostdlib -znocombreloc \
+	x86_64-linux-gnu-ld -nostdlib -znocombreloc \
 		-T /usr/lib/elf_x86_64_efi.lds \
 		-shared -Bsymbolic \
 		/usr/lib/crt0-efi-x86_64.o \
@@ -224,7 +223,7 @@ $(BOOTMANAGER_EFI): $(BOOTMANAGER_OBJS)
 		/usr/lib/libefi.a \
 		/usr/lib/libgnuefi.a \
 		-o $@.so
-	objcopy -j .text -j .sdata -j .data -j .dynamic \
+	x86_64-linux-gnu-objcopy -j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
 		-O efi-app-x86_64 $@.so $@
 	rm -f $@.so
@@ -359,7 +358,6 @@ QEMU_COMMON = \
 	-netdev user,id=net0 \
 	-device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56 \
 	-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
-	-drive if=pflash,format=raw,file=${OVMF_VARS} \
 	-device ich9-ahci,id=sata \
 	-drive file=${DISK_IMG},if=none,id=nvme0,format=raw \
 	-device nvme,drive=nvme0,serial=deadbeef \

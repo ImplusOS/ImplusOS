@@ -90,6 +90,8 @@ void kernel_main(BOOT_INFO *boot_info) {
         boot_info = &g_boot_info_copy;
     }
 
+    kernel_panic_init(boot_info);
+
     {
         uintptr_t sp = (uintptr_t)(kernel_stack + sizeof(kernel_stack));
         sp -= 16;
@@ -112,9 +114,7 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     init_paging();
     memory_init();
-
-    kernel_panic_init(boot_info);
-
+    
     acpi_init(boot_info);
     platform_interrupts_configure(acpi_get_info());
     syscall_init();
@@ -145,15 +145,12 @@ void kernel_main(BOOT_INFO *boot_info) {
     bool fs_ready = false;
     if (all_fs_initialize(boot_info)) {
         fs_ready = true;
-    } else {
-        debug_printf("Filesystem initialization failed\n");
         kernel_panic("Filesystem initialization failed", "kernel_main");
     }
     
     bool diskless_boot = (!fs_ready && OS_CONFIG_ALLOW_DISKLESS_BOOT);
 
     if (!fs_ready && !diskless_boot) {
-        debug_printf("Filesystem initialization failed and diskless boot not enabled\n");
         kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");
     }
 

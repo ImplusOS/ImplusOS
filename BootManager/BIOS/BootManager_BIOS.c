@@ -436,9 +436,9 @@ static int load_kernel_elf(void *image, uint32_t image_size, uint32_t *entry_out
 static void build_memory_map(const BIOS_BOOT_PARAMS *params, BOOT_INFO *bi) {
     E820_ENTRY *e820 = (E820_ENTRY *)(uintptr_t)(uint32_t)params->e820_map;
     uint32_t count = params->e820_count;
-    if (count > 128) count = 128;
+    if (count > 127) count = 127;
     uint32_t out = 0;
-    for (uint32_t i = 0; i < count && out < 128; ++i) {
+    for (uint32_t i = 0; i < count && out < 127; ++i) {
         uint64_t base = e820[i].base;
         uint64_t length = e820[i].length;
         if (base >= 0x100000000ULL) continue;
@@ -455,6 +455,18 @@ static void build_memory_map(const BIOS_BOOT_PARAMS *params, BOOT_INFO *bi) {
         g_memory_map[out].Attribute = 0;
         ++out;
     }
+
+    if (g_alloc_ptr > 0x04000000u && out < 128) {
+        uint64_t heap_pages = ((uint64_t)(g_alloc_ptr - 0x04000000u) + 4095ULL) >> 12;
+        g_memory_map[out].Type          = EFI_RESERVED_MEMORY_TYPE;
+        g_memory_map[out].Pad           = 0;
+        g_memory_map[out].PhysicalStart = 0x04000000ULL;
+        g_memory_map[out].VirtualStart  = 0;
+        g_memory_map[out].NumberOfPages = heap_pages;
+        g_memory_map[out].Attribute     = 0;
+        ++out;
+    }
+
     bi->MemoryMap = (uint64_t)(uintptr_t)g_memory_map;
     bi->MemoryMapSize = out * sizeof(EFI_MEMORY_DESCRIPTOR);
     bi->MemoryMapDescriptorSize = sizeof(EFI_MEMORY_DESCRIPTOR);
@@ -683,7 +695,6 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     }
 
     memset(&g_boot_info, 0, sizeof(g_boot_info));
-    build_memory_map(params, &g_boot_info);
     g_boot_info.FrameBufferBase = params->framebuffer_base;
     g_boot_info.FrameBufferSize = params->framebuffer_size;
     g_boot_info.HorizontalResolution = params->horizontal_resolution;
@@ -711,7 +722,7 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
         font_buffer = bios_malloc(font_size);
         if (font_buffer) {
             fat32_read_entry_to(&fs, &font_entry, font_buffer, NULL);
-            g_boot_info.FontDataAddress = (uint64_t)(uintptr_t)font_buffer;
+            g_boot_info.FontDataAddress = (uint64_t)(UINTN)font_buffer;
             g_boot_info.FontDataSize = font_size;
             
             DrawTextGraySmallCenterBottom(DisplayText, font_buffer, font_size);
@@ -724,6 +735,8 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
             fat32_iterate_directory(&fs, entry_cluster(&dir_entry), on_driver_found);
         }
     }
+
+    build_memory_map(params, &g_boot_info);
 
     bios_enter_kernel64(entry, (uint32_t)(uintptr_t)&g_boot_info);
 }

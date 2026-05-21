@@ -61,7 +61,6 @@ sudo apt install -y build-essential pkg-config git make cmake
 sudo apt install -y gcc-multilib g++-multilib
 sudo apt install -y nasm
 sudo apt install -y binutils
-sudo apt install -y gcc-x86-64-elf g++-x86-64-elf  # Or use a custom x86_64-elf-gcc cross toolchain
 sudo apt install -y gnu-efi
 sudo apt install -y gnu-efi
 sudo apt install -y parted
@@ -71,6 +70,8 @@ sudo apt install -y dosfstools
 sudo apt install -y xorriso
 sudo apt install -y mtools
 sudo apt install -y util-linux
+brew install x86_64-elf-binutils
+brew install x86_64-elf-gcc
 ```
 2. Build and run:
 ```bash

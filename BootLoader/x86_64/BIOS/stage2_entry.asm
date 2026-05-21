@@ -17,6 +17,7 @@ bios_stage2_start:
 
     mov [boot_drive], dl
     call enable_a20
+    call collect_e820
     call setup_vbe
     call find_acpi_rsdp
 
@@ -31,6 +32,31 @@ enable_a20:
     in al, 0x92
     or al, 2
     out 0x92, al
+    ret
+
+collect_e820:
+    pushad
+    xor ebx, ebx
+    xor bp, bp
+.e820_next:
+    mov eax, 0xE820
+    mov ecx, 24
+    mov edx, 0x534D4150
+    mov di, BIOS_MEMORY_MAP_ADDRESS
+    add di, bp
+    int 0x15
+    jc .e820_done
+    cmp eax, 0x534D4150
+    jne .e820_done
+    test ecx, ecx
+    jz .e820_skip
+    add bp, 24
+    inc dword [e820_count]
+.e820_skip:
+    test ebx, ebx
+    jnz .e820_next
+.e820_done:
+    popad
     ret
 
 .next:
