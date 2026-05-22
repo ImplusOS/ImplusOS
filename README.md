@@ -76,8 +76,10 @@ brew install x86_64-elf-gcc
 2. Build and run:
 ```bash
 make
-make run_usb (USB XHCI BOOT)
-make run_ide (IDE BOOT)
+make run_uefi_usb (UEFI with USB XHCI BOOT Support)
+make run_uefi_ide (UEFI with IDE BOOT Support)
+make run_bios_usb (Legacy BIOS / CSM with USB XHCI BOOT Support)
+make run_bios_ide (Legacy BIOS / CSM with IDE BOOT Support)
 ```
 
 ## Notes
