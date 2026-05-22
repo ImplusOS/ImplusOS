@@ -1,7 +1,9 @@
 #!/bin/bash
 
+current_dir=$(pwd)/Qemu/Test
+
 qemu-system-x86_64 \
-    -machine q35,accel=hvf \
+    -machine q35 \
     -smp 4 \
     -m 4G \
     -cpu qemu64 \
@@ -11,8 +13,8 @@ qemu-system-x86_64 \
     -device usb-mouse,bus=xhci.0 \
     -netdev user,id=net0 \
     -device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56 \
-    -drive if=pflash,format=raw,readonly=on,file=Resource/OVMF_CODE.fd \
-    -drive file=Resource/ImplusOS.iso,media=cdrom \
+    -drive if=pflash,format=raw,readonly=on,file=$current_dir/Resource/OVMF_CODE.fd \
+    -drive file=$current_dir/Resource/ImplusOS.iso,media=cdrom \
     -device ich9-ahci,id=sata \
     -device ich9-intel-hda \
     -device hda-duplex \

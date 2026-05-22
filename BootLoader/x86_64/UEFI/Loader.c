@@ -226,7 +226,8 @@ static void ParseBootSectorBPB(const UINT8 *sector, FAT32_BPB *out_bpb) {
     out_bpb->total_sectors = (total16 != 0) ? (UINT32)total16 : total32;
 }
 
-static void CaptureBootPartitionBPB(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST, BOOTLOADER_HANDOFF *Handoff) {
+static void CaptureBootPartitionBPB(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST,
+                                    BOOTLOADER_HANDOFF *Handoff, UINT64 PartitionStartLBA) {
     EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
     EFI_STATUS Status = uefi_call_wrapper(
         ST->BootServices->HandleProtocol, 3,
@@ -237,7 +238,9 @@ static void CaptureBootPartitionBPB(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *S
     UINT8 *block = NULL;
     Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, block_size, (VOID **)&block);
     if (EFI_ERROR(Status) || !block) return;
-    Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, 0, block_size, block);
+    // ↓ LBA 0 → PartitionStartLBA に変更
+    Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
+                               PartitionStartLBA, block_size, block);
     if (!EFI_ERROR(Status) && block[510] == 0x55 && block[511] == 0xAA) {
         ParseBootSectorBPB(block, &Handoff->BootPartitionBPB);
         Handoff->BootPartitionBPBValid = 1;
@@ -414,7 +417,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     DiscoverSMBIOS(ST, Handoff);
     DiscoverAcpiRsdp(ST, Handoff);
     Handoff->PartitionStartLBA = GetPartitionStartLBA(LoadedImage->DeviceHandle, ST, Handoff);
-    CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST, Handoff);
+    CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST, Handoff, Handoff->PartitionStartLBA); // ← LBAを渡す
 
     EFI_GUID handoff_guid = IMPLUSOS_BOOT_HANDOFF_GUID;
     Status = uefi_call_wrapper(ST->BootServices->InstallConfigurationTable, 2, &handoff_guid, Handoff);

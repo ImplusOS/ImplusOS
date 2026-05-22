@@ -1,4 +1,5 @@
-.PHONY: all kernel run_usb run_ide run_bios clean image app_build driver_build driver_stage
+.PHONY: all kernel run_usb run_ide run_bios clean image app_build driver_build driver_stage \
+        image_esp image_linux image_macos
 
 ARCH := x86_64
 CC   = $(ARCH)-elf-gcc
@@ -25,10 +26,8 @@ USERLAND_INIT_ELF := $(BUILD_DIR)/Userland/Userland.ELF
 
 LOADER_CFLAGS := \
 	-I. \
-	-I/usr/include/efi \
-	-I/usr/include/efi/$(ARCH) \
-	-I/usr/include/efi/protocol \
-	-Ilibc/include \
+	-I/usr/local/include/efi/ \
+	-I/usr/local/include/efi/$(ARCH) \
 	-IBootManager/BootManager_libc/include \
 	-ffreestanding -fpic -fshort-wchar -fno-stack-protector \
 	-fno-builtin -mno-red-zone \
@@ -127,7 +126,6 @@ app_build: $(USERLAND_INIT_OBJS)
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_NetworkTest
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_editor
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_filemanager
-	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_clock
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_vm
 
 driver_build:
@@ -143,23 +141,35 @@ driver_stage: driver_build
 		find $(DRIVER_BUILD_ROOT) -type f -name '*.ELF' -exec cp {} $(DRIVER_STAGE_DIR)/ \; ; \
 	fi
 
+EFI_CC      := x86_64-w64-mingw32-gcc
+EFI_LD      := x86_64-elf-ld
+EFI_OBJCOPY := x86_64-elf-objcopy
+
 $(BUILD_DIR)/Loader/Loader.o: BootLoader/x86_64/UEFI/Loader.c
 	mkdir -p $(dir $@)
 	$(CC) $(LOADER_CFLAGS) -c $< -o $@
 
 $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 	mkdir -p $(dir $@)
-	$(ARCH)-linux-gnu-ld -nostdlib -znocombreloc \
-		-T /usr/lib/elf_$(ARCH)_efi.lds \
+
+	$(EFI_LD) -nostdlib \
+		-znocombreloc \
+		--defsym=_DYNAMIC=0 \
+		-T /usr/local/lib/elf_$(ARCH)_efi.lds \
 		-shared -Bsymbolic \
-		/usr/lib/crt0-efi-$(ARCH).o \
+		/usr/local/lib/crt0-efi-$(ARCH).o \
 		$< \
-		/usr/lib/libefi.a \
-		/usr/lib/libgnuefi.a \
+		/usr/local/lib/libefi.a \
+		/usr/local/lib/libgnuefi.a \
 		-o $@.so
-	$(ARCH)-linux-gnu-objcopy -j .text -j .sdata -j .data -j .dynamic \
-		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
-		-O efi-app-$(ARCH) $@.so $@
+
+	$(EFI_OBJCOPY) \
+		-j .text -j .sdata -j .data -j .dynamic \
+		-j .dynsym -j .rel -j .rela -j .reloc \
+		-j .rodata -j .rdata -j .rodata.* \
+		-O efi-app-$(ARCH) \
+		$@.so $@
+
 	rm -f $@.so
 
 $(BIOS_STAGE1_BIN): BootLoader/x86_64/BIOS/stage1.asm
@@ -186,7 +196,7 @@ $(BUILD_DIR)/BootManager/BIOS/string.o: BootManager/BootManager_libc/source/stri
 $(BIOS_STAGE2_BIN): $(BIOS_STAGE2_OBJS) BootManager/BIOS/linker.ld
 	mkdir -p $(dir $@)
 	$(LD) $(BIOS_LDFLAGS) $(BIOS_STAGE2_OBJS) -o $@.elf
-	$(ARCH)-linux-gnu-objcopy -O binary $@.elf $@
+	$(ARCH)-elf-objcopy -O binary $@.elf $@
 	@size=$$(wc -c < $@); max=$$(( $(BIOS_STAGE2_SECTORS) * 512 )); \
 	if [ $$size -gt $$max ]; then \
 		echo "BIOS stage2 too large: $$size > $$max bytes"; \
@@ -215,15 +225,15 @@ $(BUILD_DIR)/BootManager/BootManager_libc/%.o: BootManager/BootManager_libc/sour
 
 $(BOOTMANAGER_EFI): $(BOOTMANAGER_OBJS)
 	mkdir -p $(dir $@)
-	$(ARCH)-linux-gnu-ld -nostdlib -znocombreloc \
-		-T /usr/lib/elf_$(ARCH)_efi.lds \
+	$(ARCH)-elf-ld -nostdlib -znocombreloc --defsym=_DYNAMIC=0 \
+		-T /usr/local/lib//elf_$(ARCH)_efi.lds \
 		-shared -Bsymbolic \
-		/usr/lib/crt0-efi-$(ARCH).o \
+		/usr/local/lib/crt0-efi-$(ARCH).o \
 		$^ \
-		/usr/lib/libefi.a \
-		/usr/lib/libgnuefi.a \
+		/usr/local/lib/libefi.a \
+		/usr/local/lib/libgnuefi.a \
 		-o $@.so
-	$(ARCH)-linux-gnu-objcopy -j .text -j .sdata -j .data -j .dynamic \
+	$(ARCH)-elf-objcopy -j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
 		-O efi-app-$(ARCH) $@.so $@
 	rm -f $@.so
@@ -267,87 +277,144 @@ __mount_image:
 	sync; \
 	sudo umount $$MOUNT_POINT || exit 1;
 
-ISO_ROOT := $(IMAGE_DIR)/iso_root
-ESP_IMG  := $(IMAGE_DIR)/esp.iso
+ISO_ROOT    := $(IMAGE_DIR)/iso_root
+ESP_IMG     := $(IMAGE_DIR)/esp.iso
+ESP_SIZE_MB := 40
 
-image_esp: all
-	@mkdir -p $(ISO_ROOT)/EFI/BOOT $(ISO_ROOT)/Kernel/Driver
-	@mkdir -p $(ISO_ROOT)/Userland
-	@mkdir -p $(ISO_ROOT)/Userland/SystemApps
-	@mkdir -p $(ISO_ROOT)/Userland/UserApps
-	@cp $(BOOTX64_EFI) $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
-	@cp $(BOOTMANAGER_EFI) $(ISO_ROOT)/EFI/BOOT/BOOTMANAGER.EFI
-	@cp $(KERNEL_ELF) $(ISO_ROOT)/Kernel/Kernel_Main.ELF
+UNAME_S := $(shell uname -s)
+
+image: all
+ifeq ($(UNAME_S),Darwin)
+	@$(MAKE) __image_macos_impl
+else
+	@$(MAKE) __image_linux_impl
+endif
+
+image_linux: all __image_linux_impl
+
+image_macos: all __image_macos_impl
+
+__populate_iso_root:
+	@rm -rf $(ISO_ROOT)
+	@mkdir -p $(ISO_ROOT)/EFI/BOOT \
+	          $(ISO_ROOT)/Kernel/Driver \
+	          $(ISO_ROOT)/Userland/SystemApps \
+	          $(ISO_ROOT)/Userland/UserApps \
+	          $(ISO_ROOT)/BootManager
+	@cp $(BOOTX64_EFI)       $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
+	@cp $(BOOTMANAGER_EFI)   $(ISO_ROOT)/EFI/BOOT/BOOTMANAGER.EFI
+	@cp $(KERNEL_ELF)        $(ISO_ROOT)/Kernel/Kernel_Main.ELF
 	@cp $(USERLAND_INIT_ELF) $(ISO_ROOT)/Userland/Userland.ELF
 	@find $(ISO_ROOT)/Kernel/Driver -maxdepth 1 -type f -name '*.ELF' -delete
 	@if [ -d $(DRIVER_STAGE_DIR) ]; then \
-		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -exec cp {} $(ISO_ROOT)/Kernel/Driver/ \; ; \
+		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' \
+			-exec cp {} $(ISO_ROOT)/Kernel/Driver/ \; ; \
 	fi
-	@$(MAKE) __create_esp_iso
-	@rsync -a $(BUILD_DIR)/Userland/SystemApps/ $(ISO_ROOT)/Userland/SystemApps/
-	@rsync -a $(BUILD_DIR)/Userland/UserApps/ $(ISO_ROOT)/Userland/UserApps/
-	@mkdir -p $(ISO_ROOT)/BootManager
-	@rsync -a $(BOOT_RESOURCE_DIR) $(ISO_ROOT)/BootManager/
+	@if [ -d $(BUILD_DIR)/Userland/SystemApps ]; then \
+		rsync -a $(BUILD_DIR)/Userland/SystemApps/ $(ISO_ROOT)/Userland/SystemApps/; \
+	fi
+	@if [ -d $(BUILD_DIR)/Userland/UserApps ]; then \
+		rsync -a $(BUILD_DIR)/Userland/UserApps/ $(ISO_ROOT)/Userland/UserApps/; \
+	fi
+	@if [ -d $(BOOT_RESOURCE_DIR) ]; then \
+		rsync -a $(BOOT_RESOURCE_DIR) $(ISO_ROOT)/BootManager/; \
+	fi
+
+__xorriso_build:
+	@cp $(ESP_IMG) $(ISO_ROOT)/esp.img
+	@mkdir -p $(IMAGE_DIR)
 	@xorriso -as mkisofs \
 		-R -J \
-		-V "ImplusOS Clesk 0.2-beta" \
+		-V "IMPLUSOS_02B" \
 		-o $(IMAGE) \
-		-isohybrid-mbr $(BIOS_STAGE1_BIN) \
-		-append_partition 2 0xef $(ESP_IMG) \
-		-e '--interval:appended_partition_2_start_64s_to_end_disk:all::' \
+		-eltorito-alt-boot \
+		-e esp.img \
 		-no-emul-boot \
-		-isohybrid-gpt-basdat \
 		$(ISO_ROOT)
-	@dd if=$(BIOS_STAGE2_BIN) of=$(IMAGE) bs=512 seek=1 conv=notrunc 2>/dev/null
-	@cp $(IMAGE) Qemu/Test/Resource/ImplusOS.iso
 
-__create_esp_iso:
-	@ESP_MOUNT=$$(mktemp -d); \
-	trap "sudo umount $$ESP_MOUNT 2>/dev/null; rmdir $$ESP_MOUNT 2>/dev/null" EXIT; \
-	dd if=/dev/zero of=$(ESP_IMG) bs=1M count=40 2>/dev/null; \
-	mkfs.fat -F32 $(ESP_IMG) 2>/dev/null; \
-	sync; \
-	sudo mount -o loop $(ESP_IMG) $$ESP_MOUNT || exit 1; \
-	\
-	sudo mkdir -p $$ESP_MOUNT/EFI/BOOT; \
-	sudo mkdir -p $$ESP_MOUNT/BootManager; \
-	sudo mkdir -p $$ESP_MOUNT/Kernel/Driver; \
-	sudo mkdir -p $$ESP_MOUNT/Userland/SystemApps; \
-	sudo mkdir -p $$ESP_MOUNT/Userland/UserApps; \
-	\
-	sudo cp $(BOOTX64_EFI) $$ESP_MOUNT/EFI/BOOT/BOOTX64.EFI; \
-	sudo cp $(BOOTMANAGER_EFI) $$ESP_MOUNT/EFI/BOOT/BOOTMANAGER.EFI; \
-	sudo cp $(KERNEL_ELF) $$ESP_MOUNT/Kernel/Kernel_Main.ELF; \
-	sudo cp $(USERLAND_INIT_ELF) $$ESP_MOUNT/Userland/Userland.ELF; \
-	\
+__image_linux_impl: __populate_iso_root
+	@mkdir -p $(IMAGE_DIR)
+	@rm -f $(ESP_IMG)
+	@dd if=/dev/zero of=$(ESP_IMG) bs=1M count=$(ESP_SIZE_MB) status=none
+	@mkfs.fat -F 32 -n ESP $(ESP_IMG) >/dev/null
+	@mmd  -i $(ESP_IMG) ::/EFI ::/EFI/BOOT ::/Kernel ::/Kernel/Driver \
+	                    ::/Userland ::/Userland/SystemApps ::/Userland/UserApps \
+	                    ::/BootManager 2>/dev/null || true
+	@mcopy -i $(ESP_IMG) $(BOOTX64_EFI)       ::/EFI/BOOT/BOOTX64.EFI
+	@mcopy -i $(ESP_IMG) $(BOOTMANAGER_EFI)   ::/EFI/BOOT/BOOTMANAGER.EFI
+	@mcopy -i $(ESP_IMG) $(KERNEL_ELF)        ::/Kernel/Kernel_Main.ELF
+	@mcopy -i $(ESP_IMG) $(USERLAND_INIT_ELF) ::/Userland/Userland.ELF
+	@if [ -d $(DRIVER_STAGE_DIR) ]; then \
+		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' \
+			-exec mcopy -i $(ESP_IMG) {} ::/Kernel/Driver/ \; ; \
+	fi
+	@if [ -d $(BOOT_RESOURCE_DIR) ]; then \
+		mcopy -si $(ESP_IMG) $(BOOT_RESOURCE_DIR)/. ::/BootManager/ 2>/dev/null || true; \
+	fi
+	@if [ -d $(BUILD_DIR)/Userland/SystemApps ]; then \
+		find $(BUILD_DIR)/Userland/SystemApps -type f ! -name 'Userland.ELF' | while read f; do \
+			rel=$${f#$(BUILD_DIR)/Userland/SystemApps/}; \
+			mmd -i $(ESP_IMG) "::/Userland/SystemApps/$$(dirname $$rel)" 2>/dev/null || true; \
+			mcopy -i $(ESP_IMG) "$$f" "::/Userland/SystemApps/$$rel"; \
+		done; \
+	fi
+	@if [ -d $(BUILD_DIR)/Userland/UserApps ]; then \
+		find $(BUILD_DIR)/Userland/UserApps -type f ! -name 'Userland.ELF' | while read f; do \
+			rel=$${f#$(BUILD_DIR)/Userland/UserApps/}; \
+			mmd -i $(ESP_IMG) "::/Userland/UserApps/$$(dirname $$rel)" 2>/dev/null || true; \
+			mcopy -i $(ESP_IMG) "$$f" "::/Userland/UserApps/$$rel"; \
+		done; \
+	fi
+	@$(MAKE) __xorriso_build
+
+__image_macos_impl: __populate_iso_root
+	@set -eu; \
+	mkdir -p $(IMAGE_DIR); \
+	rm -f "$(ESP_IMG)"; \
+	dd if=/dev/zero of="$(ESP_IMG)" bs=1m count=$(ESP_SIZE_MB) status=none; \
+	ESP_DEV=$$(hdiutil attach -nomount "$(ESP_IMG)" | awk 'NR==1{print $$1}'); \
+	newfs_msdos -F 32 -v ESP "$$ESP_DEV" >/dev/null; \
+	hdiutil detach "$$ESP_DEV" >/dev/null; \
+	ESP_MOUNT=$$(mktemp -d /tmp/implusos-esp.XXXXXX); \
+	hdiutil attach "$(ESP_IMG)" -mountpoint "$$ESP_MOUNT" -nobrowse -noverify >/dev/null; \
+	ESP_DEV=$$(hdiutil info | grep -B5 "$$ESP_MOUNT" | awk '/\/dev\/disk/{print $$1; exit}'); \
+	trap 'hdiutil detach "$$ESP_DEV" >/dev/null 2>&1 || true; rm -rf "$$ESP_MOUNT" >/dev/null 2>&1 || true' EXIT; \
+	mkdir -p \
+		"$$ESP_MOUNT/EFI/BOOT" \
+		"$$ESP_MOUNT/BootManager" \
+		"$$ESP_MOUNT/Kernel/Driver" \
+		"$$ESP_MOUNT/Userland/SystemApps" \
+		"$$ESP_MOUNT/Userland/UserApps"; \
+	cp $(BOOTX64_EFI)       "$$ESP_MOUNT/EFI/BOOT/BOOTX64.EFI"; \
+	cp $(BOOTMANAGER_EFI)   "$$ESP_MOUNT/EFI/BOOT/BOOTMANAGER.EFI"; \
+	cp $(KERNEL_ELF)        "$$ESP_MOUNT/Kernel/Kernel_Main.ELF"; \
+	cp $(USERLAND_INIT_ELF) "$$ESP_MOUNT/Userland/Userland.ELF"; \
 	if [ -d $(DRIVER_STAGE_DIR) ]; then \
-		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -exec sudo cp {} $$ESP_MOUNT/Kernel/Driver/ \; ; \
+		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' \
+			-exec cp {} "$$ESP_MOUNT/Kernel/Driver/" \; ; \
 	fi; \
-	\
 	if [ -d $(BOOT_RESOURCE_DIR) ]; then \
-		sudo cp -r $(BOOT_RESOURCE_DIR) $$ESP_MOUNT/BootManager/; \
+		cp -R $(BOOT_RESOURCE_DIR) "$$ESP_MOUNT/BootManager/"; \
 	fi; \
-	\
 	if [ -d $(BUILD_DIR)/Userland/SystemApps ]; then \
 		find $(BUILD_DIR)/Userland/SystemApps -type f ! -name 'Userland.ELF' | while read f; do \
-			rel_path=$${f#$(BUILD_DIR)/Userland/SystemApps}; \
-			dest_file=$$ESP_MOUNT/Userland/SystemApps$${rel_path}; \
-			sudo mkdir -p $$(dirname $$dest_file); \
-			sudo cp $$f $$dest_file; \
+			rel=$${f#$(BUILD_DIR)/Userland/SystemApps/}; \
+			dest="$$ESP_MOUNT/Userland/SystemApps/$$rel"; \
+			mkdir -p "$$(dirname "$$dest")"; \
+			cp "$$f" "$$dest"; \
 		done; \
 	fi; \
-	\
 	if [ -d $(BUILD_DIR)/Userland/UserApps ]; then \
 		find $(BUILD_DIR)/Userland/UserApps -type f ! -name 'Userland.ELF' | while read f; do \
-			rel_path=$${f#$(BUILD_DIR)/Userland/UserApps}; \
-			dest_file=$$ESP_MOUNT/Userland/UserApps$${rel_path}; \
-			sudo mkdir -p $$(dirname $$dest_file); \
-			sudo cp $$f $$dest_file; \
+			rel=$${f#$(BUILD_DIR)/Userland/UserApps/}; \
+			dest="$$ESP_MOUNT/Userland/UserApps/$$rel"; \
+			mkdir -p "$$(dirname "$$dest")"; \
+			cp "$$f" "$$dest"; \
 		done; \
 	fi; \
-	\
 	sync; \
-	sudo umount $$ESP_MOUNT || exit 1
+	hdiutil detach "$$ESP_DEV" >/dev/null
+	@$(MAKE) __xorriso_build
 
 QEMU_COMMON = \
 	-machine q35,smm=on \

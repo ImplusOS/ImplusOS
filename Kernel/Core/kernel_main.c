@@ -144,6 +144,7 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     bool fs_ready = false;
     if (all_fs_initialize(boot_info)) {
+        serial_write_string("Init success");
         fs_ready = true;
     }
 
