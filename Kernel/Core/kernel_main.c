@@ -32,6 +32,9 @@
 
 static BOOT_INFO g_boot_info_copy;
 
+static uint32_t *g_fb_snapshot = NULL;
+static uint32_t g_fb_snapshot_pixels = 0;
+
 __attribute__((aligned(16))) static uint8_t kernel_stack[0x40000];
 
 static uint64_t user_entry = 0;
@@ -52,19 +55,68 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
     return true;
 }
 
+static inline uint32_t alpha_blend(uint32_t dst, uint32_t src) {
+    uint8_t a  = (src >> 24) & 0xFF;
+
+    if (a == 255) {
+        return src;
+    }
+
+    if (a == 0) {
+        return dst;
+    }
+
+    uint8_t sr = (src >> 16) & 0xFF;
+    uint8_t sg = (src >> 8)  & 0xFF;
+    uint8_t sb = (src >> 0)  & 0xFF;
+
+    uint8_t dr = (dst >> 16) & 0xFF;
+    uint8_t dg = (dst >> 8)  & 0xFF;
+    uint8_t db = (dst >> 0)  & 0xFF;
+
+    uint8_t r = (uint8_t)((sr * a + dr * (255 - a)) / 255);
+    uint8_t g = (uint8_t)((sg * a + dg * (255 - a)) / 255);
+    uint8_t b = (uint8_t)((sb * a + db * (255 - a)) / 255);
+
+    return
+        (0xFF << 24) |
+        (r << 16) |
+        (g << 8) |
+        b;
+}
+
+static bool fb_snapshot_create(BOOT_INFO *bi) {
+    if (!bi || !bi->FrameBufferBase || bi->FrameBufferSize == 0) {
+        return false;
+    }
+
+    g_fb_snapshot_pixels = (uint32_t)(bi->FrameBufferSize / 4);
+
+    g_fb_snapshot = malloc(bi->FrameBufferSize);
+
+    if (!g_fb_snapshot) {
+        return false;
+    }
+
+    memcpy(
+        g_fb_snapshot,
+        (void *)bi->FrameBufferBase,
+        bi->FrameBufferSize
+    );
+
+    return true;
+}
+
 static void fb_clear(BOOT_INFO* bi, uint32_t color) {
+    if (!g_fb_snapshot) {
+        return;
+    }
+
     uint32_t* fb = (uint32_t*)bi->FrameBufferBase;
     uint32_t pixels = (uint32_t)(bi->FrameBufferSize / 4);
-    
-    uint32_t i = 0;
-    for (; i + 8 <= pixels; i += 8) {
-        fb[i]   = color; fb[i+1] = color;
-        fb[i+2] = color; fb[i+3] = color;
-        fb[i+4] = color; fb[i+5] = color;
-        fb[i+6] = color; fb[i+7] = color;
-    }
-    for (; i < pixels; i++) {
-        fb[i] = color;
+
+    for (uint32_t i = 0; i < pixels; i++) {
+        fb[i] = alpha_blend(g_fb_snapshot[i], color);
     }
 }
 
@@ -156,10 +208,20 @@ void kernel_main(BOOT_INFO *boot_info) {
     ipc_init();
     syscall_file_init();
     network_stack_init();
+    fb_snapshot_create(boot_info);
     load_bar_finish();
 
-    const arch_ops_t *ops = arch_ops_get();
+    for (int i = 0; i <= 10; i++) {
+        timer_apic_sleep_ms(1);
+        uint8_t alpha = (uint8_t)(i * 255 / 10);
+        uint32_t color =
+            (alpha << 24) |
+            0x000000;
+        kernel_boot_screen_color(color);
+    }
 
+    const arch_ops_t *ops = arch_ops_get();
+    
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
             while (1) { __asm__("hlt"); }

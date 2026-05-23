@@ -2091,6 +2091,7 @@ void wm_service_main_loop(void) {
     wm_service_init(&g_state);
     ipc_message_t msg;
     memset(&msg, 0, sizeof(msg));
+    sleep_ms(1000);
     while (1) {
         while (ipc_receive_message(&msg) == 0) {
             wm_server_handle_message(&g_state, &msg);
