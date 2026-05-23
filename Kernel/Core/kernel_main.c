@@ -114,12 +114,11 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     init_paging();
     memory_init();
-    
     acpi_init(boot_info);
     platform_interrupts_configure(acpi_get_info());
+    timer_init(60);
     syscall_init();
     smp_init();
-    timer_init(60);
 
     vmx_init();
 
@@ -144,7 +143,6 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     bool fs_ready = false;
     if (all_fs_initialize(boot_info)) {
-        serial_write_string("Init success");
         fs_ready = true;
     }
 

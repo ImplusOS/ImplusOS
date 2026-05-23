@@ -3,84 +3,82 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../../../../Userland/API/IPC.h"
-
 #include "../../../../Userland/API/WM_Protocol.h"
 
 #define WM_MAX_WINDOWS              256
 #define WM_MAX_INPUT_SUBSCRIPTIONS  128
 #define WM_TITLE_MAX                64
 #define WM_TITLE_HEIGHT             32
-#define WM_CORNER_RADIUS            15
-#define WM_TASKBAR_HEIGHT           40
+#define WM_CORNER_RADIUS            8
+#define WM_TASKBAR_HEIGHT           48
 #define WM_TITLE_BTN_W              46
-#define WM_TASKBAR_BTN_W            76
-#define WM_TASKBAR_BTN_H            28
-#define WM_TASKBAR_BTN_GAP          8
-#define WM_SHADOW_SIZE              8
-#define WM_GLOW_SIZE                2
-#define WM_CURSOR_W  14
-#define WM_CURSOR_H  22
-#define WM_DIRTY_MARGIN_TOP    (WM_TITLE_HEIGHT + WM_SHADOW_SIZE + 10)
-#define WM_DIRTY_MARGIN_RIGHT  (WM_SHADOW_SIZE + 10)
-#define WM_DIRTY_MARGIN_BOTTOM (WM_SHADOW_SIZE + 10)
+#define WM_TITLE_ICON_SIZE          16
+#define WM_TITLE_ICON_PAD           8
+#define WM_TASKBAR_BTN_W            140
+#define WM_TASKBAR_BTN_H            36
+#define WM_TASKBAR_BTN_GAP          4
+#define WM_SHADOW_SIZE              12
+#define WM_GLOW_SIZE                1
+#define WM_CURSOR_W                 14
+#define WM_CURSOR_H                 22
+#define WM_DIRTY_MARGIN_TOP         (WM_TITLE_HEIGHT + WM_SHADOW_SIZE + 16)
+#define WM_DIRTY_MARGIN_RIGHT       (WM_SHADOW_SIZE + 16)
+#define WM_DIRTY_MARGIN_BOTTOM      (WM_SHADOW_SIZE + 16)
 
-#define COLOR_BG_TOP            0xFF061A2A
-#define COLOR_BG_MID            0xFF0C3654
-#define COLOR_BG_BOT            0xFF1B7B8F
+#define WM_TASKBAR_ALIGN_LEFT       1
+#define WM_TASKBAR_ALIGN_CENTER     0
+#define WM_TASKBAR_ALIGNMENT        WM_TASKBAR_ALIGN_LEFT
 
+#define COLOR_BG_TOP            0xFF0D1117
+#define COLOR_BG_MID            0xFF161B22
+#define COLOR_BG_BOT            0xFF1C2433
 
-#define COLOR_TITLEBAR_TOP      0xFF162433
-#define COLOR_TITLEBAR_BOT      0xFF0E1823
-#define COLOR_TITLEBAR_UNFOCUS  0xFF232C35
-#define COLOR_TITLEBAR_UNFOCUS_BOT 0xFF181F27
-#define COLOR_TITLEBAR_ACCENT   0xFF47B6D6
+#define COLOR_TITLEBAR_TOP      0xF52B3A52
+#define COLOR_TITLEBAR_BOT      0xF5243047
 
+#define COLOR_TITLEBAR_UNFOCUS      0xF5202B3C
+#define COLOR_TITLEBAR_UNFOCUS_BOT  0xF51A2334
 
-#define COLOR_ACCENT            0xFF47B6D6
-#define COLOR_ACCENT_DARK       0xFF1E6E89
-#define COLOR_ACCENT_GLOW       0x6647B6D6
-
-
-#define COLOR_CLOSE_RED         0xFFC42B1C
-#define COLOR_CLOSE_RED_HOVER   0xFFC42B1C
-#define COLOR_MAX_GREEN         0xFF47B6D6
-#define COLOR_MAX_GREEN_HOVER   0xFF24394A
-#define COLOR_MIN_YELLOW        0xFF47B6D6
-#define COLOR_MIN_YELLOW_HOVER  0xFF24394A
+#define COLOR_ACCENT            0xFF0078D4
+#define COLOR_ACCENT_DARK       0xFF106EBE
+#define COLOR_ACCENT_LIGHT      0xFF50A0E0
+#define COLOR_ACCENT_GLOW       0x400078D4
 
 
-#define COLOR_WINDOW_BG         0xFF1F1F1F
+#define COLOR_CLOSE_RED             0xFFC42B1C
+#define COLOR_CLOSE_RED_HOVER       0xFFE81123
+#define COLOR_CLOSE_BTN_HOVER_BG    0xFFC42B1C
 
+#define COLOR_MAX_BTN_HOVER         0x18FFFFFF
+#define COLOR_MIN_BTN_HOVER         0x18FFFFFF
 
-#define COLOR_BORDER            0xFF43505D
-#define COLOR_BORDER_FOCUS      0xFF47B6D6
-#define COLOR_BORDER_SUBTLE     0xFF25303A
+#define COLOR_WINDOW_BG         0xF50F1726
 
+#define COLOR_BORDER            0x3094A3B8
+#define COLOR_BORDER_FOCUS      0xFF0078D4
+#define COLOR_BORDER_SUBTLE     0x1894A3B8
 
-#define COLOR_TASKBAR_BG        0xDE102130
-#define COLOR_TASKBAR_BG_GLASS  0x8A102130
-#define COLOR_TASKBAR_BORDER    0xFF2A3E4D
-#define COLOR_TASKBAR_HIGHLIGHT 0x28FFFFFF
-#define COLOR_TASKBAR_BTN_ACT   0xFF1F3444
-#define COLOR_TASKBAR_BTN_IDLE  0xD21B2631
-#define COLOR_TASKBAR_BTN_MIN   0xC0162029
-#define COLOR_TASKBAR_INDICATOR 0xFF47B6D6
+#define COLOR_TASKBAR_BG            0xE81C2433
+#define COLOR_TASKBAR_BG_GLASS      0xE81C2433
+#define COLOR_TASKBAR_BORDER        0x2894A3B8
+#define COLOR_TASKBAR_HIGHLIGHT     0x0EFFFFFF
+#define COLOR_TASKBAR_BTN_ACT       0x400078D4
+#define COLOR_TASKBAR_BTN_IDLE      0x1094A3B8
+#define COLOR_TASKBAR_BTN_MIN       0x0894A3B8
+#define COLOR_TASKBAR_INDICATOR     0xFF0078D4
+#define COLOR_START_BTN             0xFF0078D4
 
-
-#define COLOR_BTN_ICON          0xFFCCCCCC
+#define COLOR_BTN_ICON          0xFFCDD9E5
 #define COLOR_BTN_ICON_FOCUS    0xFFFFFFFF
-#define COLOR_TASKBAR_TEXT      0xFFE7F4F7
-#define COLOR_TASKBAR_TEXT_DIM  0xFFA4BEC6
+#define COLOR_TASKBAR_TEXT      0xFFEFF3F8
+#define COLOR_TASKBAR_TEXT_DIM  0xFF8B9AB0
+#define COLOR_TEXT              0xFFEFF3F8
+#define COLOR_TEXT_DIM          0xFF6B7A8D
+
 #define COLOR_CURSOR_FILL       0xFFFFFFFF
 #define COLOR_CURSOR_BORDER     0xFF000000
-#define COLOR_CURSOR_SHADOW     0x60000000
+#define COLOR_CURSOR_SHADOW     0x40000000
 #define COLOR_SHADOW_BASE       0x40000000
-#define COLOR_TEXT              0xFFFFFFFF
-#define COLOR_TEXT_DIM          0xFF888888
-
-
-#define COLOR_CLOSE_BTN_HOVER_BG 0xFFC42B1C
-
 
 #define WM_UI_MAX_ELEMENTS     256
 #define WM_UI_TEXT_MAX         128
@@ -121,13 +119,14 @@ typedef struct wm_window {
 
     struct wm_window *z_prev;
     struct wm_window *z_next;
-    
+
     wm_ui_element_t ui_elements[WM_UI_MAX_ELEMENTS];
     uint32_t        ui_element_count;
-
     char     *xml_buffer;
-    uint32_t xml_size;
-    uint32_t xml_capacity;
+    uint32_t  xml_size;
+    uint32_t  xml_capacity;
+    uint32_t  icon[16 * 16];
+    bool      has_icon;
 } wm_window_t;
 
 typedef struct {
@@ -171,10 +170,12 @@ typedef struct {
 typedef struct {
     wm_server_t     server;
     wm_compositor_t compositor;
+
     bool     dragging;
     uint32_t drag_window_id;
     int32_t  drag_offset_x;
     int32_t  drag_offset_y;
+
     bool     resizing;
     uint32_t resize_window_id;
     uint8_t  resize_edge;
@@ -182,16 +183,20 @@ typedef struct {
     int32_t  resize_origin_y;
     uint32_t resize_orig_w;
     uint32_t resize_orig_h;
+
     uint8_t  prev_mouse_buttons;
     uint8_t *font_buffer;
     bool     font_loaded;
 } wm_state_t;
 
 void        wm_server_init(wm_server_t *srv);
-int32_t     wm_server_create_window(wm_server_t *srv, int32_t owner, uint32_t w, uint32_t h, uint32_t x, uint32_t y, uint32_t bg, const char *title);
+int32_t     wm_server_create_window(wm_server_t *srv, int32_t owner,
+                uint32_t w, uint32_t h, uint32_t x, uint32_t y,
+                uint32_t bg, const char *title);
 void        wm_server_destroy_window(wm_server_t *srv, uint32_t id);
 wm_window_t *wm_server_find_window(wm_server_t *srv, uint32_t id);
-void        wm_server_set_rect(wm_server_t *srv, uint32_t id, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+void        wm_server_set_rect(wm_server_t *srv, uint32_t id,
+                uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 void        wm_server_show(wm_server_t *srv, uint32_t id);
 void        wm_server_hide(wm_server_t *srv, uint32_t id);
 void        wm_server_raise(wm_server_t *srv, uint32_t id);
@@ -202,8 +207,10 @@ uint32_t    wm_server_hit_test(wm_server_t *srv, uint32_t x, uint32_t y);
 void        wm_server_route_keyboard(wm_server_t *srv, ipc_message_t *msg);
 void        wm_server_route_mouse(wm_server_t *srv, ipc_message_t *msg);
 void        wm_server_handle_message(wm_state_t *st, ipc_message_t *msg);
-bool        wm_compositor_init(wm_compositor_t *comp, uint32_t width, uint32_t height);
-void        wm_compositor_mark_dirty(wm_compositor_t *comp, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+bool        wm_compositor_init(wm_compositor_t *comp,
+                uint32_t width, uint32_t height);
+void        wm_compositor_mark_dirty(wm_compositor_t *comp,
+                uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 void        wm_compositor_render(wm_state_t *st);
 void        wm_service_init(wm_state_t *st);
 void        wm_service_main_loop(void);

@@ -7,6 +7,7 @@
 #define WM_CREATE_WINDOW        1
 #define WM_DESTROY_WINDOW       2
 #define WM_SET_WINDOW_RECT      3
+#define WM_SET_WINDOW_ICON      9
 #define WM_SHOW_WINDOW          4
 #define WM_HIDE_WINDOW          5
 #define WM_RAISE_WINDOW         6

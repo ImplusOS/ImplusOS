@@ -131,7 +131,7 @@ Userland/Application/
 │       ├── Makefile
 │       ├── Resource/
 │       │   ├── Background.png
-│       │   └── Fonts/NotoSansJP-VariableFont_wght.ttf
+│       │   └── Fonts/NotoSansJP-Regular.ttf
 │       ├── WindowManager.c
 │       └── WindowManager.h
 └── UserApps/

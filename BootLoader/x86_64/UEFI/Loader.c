@@ -238,7 +238,6 @@ static void CaptureBootPartitionBPB(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *S
     UINT8 *block = NULL;
     Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, block_size, (VOID **)&block);
     if (EFI_ERROR(Status) || !block) return;
-    // ↓ LBA 0 → PartitionStartLBA に変更
     Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
                                PartitionStartLBA, block_size, block);
     if (!EFI_ERROR(Status) && block[510] == 0x55 && block[511] == 0xAA) {
@@ -417,7 +416,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     DiscoverSMBIOS(ST, Handoff);
     DiscoverAcpiRsdp(ST, Handoff);
     Handoff->PartitionStartLBA = GetPartitionStartLBA(LoadedImage->DeviceHandle, ST, Handoff);
-    CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST, Handoff, Handoff->PartitionStartLBA); // ← LBAを渡す
+    CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST, Handoff, Handoff->PartitionStartLBA);
 
     EFI_GUID handoff_guid = IMPLUSOS_BOOT_HANDOFF_GUID;
     Status = uefi_call_wrapper(ST->BootServices->InstallConfigurationTable, 2, &handoff_guid, Handoff);

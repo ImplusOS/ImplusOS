@@ -90,6 +90,7 @@ utf8_codepoint_t utf8_decode(const char **s) {
     return (utf8_codepoint_t)cp;
 }
 
+// UTF8.c - utf8_next の修正
 utf8_status_t utf8_next(const char **s,
                         const char *end,
                         utf8_codepoint_t *cp)
@@ -101,17 +102,23 @@ utf8_status_t utf8_next(const char **s,
 
     if (end && p >= (const uint8_t *)end)
         return UTF8_ERR_INVALID;
-
-    int len = 0;
-    uint32_t val = 0;
-
-    if (!decode_one(p, &len, &val)) {
+    
+    int seq = utf8_seq_len(*p);
+    if (seq == 0) {
+        *cp = UTF8_REPLACEMENT_CHAR;
+        *s = (const char *)(p + 1);
+        return UTF8_ERR_INVALID;
+    }
+    if (end && (p + seq > (const uint8_t *)end)) {
         *cp = UTF8_REPLACEMENT_CHAR;
         *s = (const char *)(p + 1);
         return UTF8_ERR_INVALID;
     }
 
-    if (end && (p + len > (const uint8_t *)end)) {
+    int len = 0;
+    uint32_t val = 0;
+
+    if (!decode_one(p, &len, &val)) {
         *cp = UTF8_REPLACEMENT_CHAR;
         *s = (const char *)(p + 1);
         return UTF8_ERR_INVALID;

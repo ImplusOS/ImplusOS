@@ -235,14 +235,17 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         }
 
         case SYSCALL_SERIAL_WRITE_U64:
+            serial_write_uint64(arg1);
             set_syscall_result(saved_rsp, 0);
             break;
 
         case SYSCALL_SERIAL_WRITE_U32:
+            serial_write_uint32(arg1);
             set_syscall_result(saved_rsp, 0);
             break;
 
         case SYSCALL_SERIAL_WRITE_U16:
+            serial_write_uint16(arg1);
             set_syscall_result(saved_rsp, 0);
             break;
 

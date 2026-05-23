@@ -48,6 +48,8 @@ USERLAND_APP_LDFLAGS := -nostdlib --build-id=none
 USERLAND_CFLAGS := \
     -Ilibc/include \
     -IUserland/POSIX/include \
+	-IShareLib \
+	-IThirdparty \
     -fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
     -mcmodel=large -mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
     -Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
@@ -73,6 +75,7 @@ USERLAND_C_SRCS := \
 	libc/src/errno.c \
 	libc/src/posix.c \
 	libc/src/sys/syscalls.c \
+	ShareLib/Unicode/UTF8/UTF8.c \
 	Userland/Userland.c \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
@@ -97,14 +100,19 @@ USERLAND_APP_C_SRCS := \
 	libc/src/errno.c \
 	libc/src/posix.c \
 	libc/src/sys/syscalls.c \
+	ShareLib/Unicode/UTF8/UTF8.c \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
 	Userland/NetworkStack/DNS/DNS.c
 
-USERLAND_INIT_OBJS := $(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_C_SRCS))) \
-                      $(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_C_SRCS)))
-USERLAND_APP_OBJS  := $(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_APP_C_SRCS))) \
-                      $(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_APP_C_SRCS)))
+USERLAND_INIT_OBJS := \
+	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst ShareLib/%.c,$(BUILD_DIR)/ShareLib/%.o,$(filter ShareLib/%.c,$(USERLAND_C_SRCS)))
+USERLAND_APP_OBJS := \
+	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_APP_C_SRCS))) \
+	$(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_APP_C_SRCS))) \
+	$(patsubst ShareLib/%.c,$(BUILD_DIR)/ShareLib/%.o,$(filter ShareLib/%.c,$(USERLAND_APP_C_SRCS)))
 
 all: $(BOOTX64_EFI) \
      $(BOOTMANAGER_EFI) \
@@ -243,6 +251,10 @@ $(BUILD_DIR)/Userland/%.o: Userland/%.c
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/Userland/libc/%.o: libc/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ShareLib/%.o: ShareLib/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
@@ -417,26 +429,22 @@ __image_macos_impl: __populate_iso_root
 	@$(MAKE) __xorriso_build
 
 QEMU_COMMON = \
-	-machine q35,smm=on \
-	-smp 4,sockets=1,cores=4,threads=1 \
+	-machine q35,accel=tcg \
+	-cpu max \
+	-smp 1 \
 	-m 4G \
-	-cpu Skylake-Server,+vmx,hv_vendor_id=null,-hypervisor \
-	-device intel-iommu \
 	-device qemu-xhci,id=xhci \
 	-device usb-kbd,bus=xhci.0 \
 	-device usb-mouse,bus=xhci.0 \
 	-netdev user,id=net0 \
-	-device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56 \
-	-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
+	-device virtio-net-pci,netdev=net0 \
 	-device ich9-ahci,id=sata \
+	-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
 	-drive file=${DISK_IMG},if=none,id=nvme0,format=raw \
 	-device nvme,drive=nvme0,serial=deadbeef \
 	-device ich9-intel-hda \
 	-device hda-duplex \
-	-rtc base=localtime,clock=host \
-	-global ICH9-LPC.disable_s3=0 \
-	-global ICH9-LPC.disable_s4=0 \
-	-smbios type=1,manufacturer="Dell Inc.",product="XPS 8940" \
+	-rtc base=localtime \
 	-serial stdio
 
 QEMU_IDE = \
