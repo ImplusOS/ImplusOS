@@ -674,13 +674,11 @@ EFI_STATUS LoadKernelELF(
 
     if (Ehdr->e_ident[0] != 0x7F || Ehdr->e_ident[1] != 'E' ||
         Ehdr->e_ident[2] != 'L'  || Ehdr->e_ident[3] != 'F') {
-        Print(L"LoadKernelELF: Not a valid ELF file\n");
         return EFI_LOAD_ERROR;
     }
 
     if (Ehdr->e_phoff >= KernelImageSize ||
         Ehdr->e_phoff + (Ehdr->e_phnum * sizeof(Elf64_Phdr)) > KernelImageSize) {
-        Print(L"LoadKernelELF: Invalid Program Header offset\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -698,7 +696,6 @@ EFI_STATUS LoadKernelELF(
     }
 
     if (LoadedCount == 0 || MaxAddr <= MinAddr) {
-        Print(L"LoadKernelELF: No valid PT_LOAD segments found\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -726,8 +723,6 @@ EFI_STATUS LoadKernelELF(
     }
 
     if (EFI_ERROR(Status) || KernelBaseAddr == 0) {
-        Print(L"LoadKernelELF: failed to allocate kernel image (Base: 0x%lx, Pages: %d, Status: %r)\n",
-              MinAddr, TotalPages, Status);
         return Status;
     }
 
@@ -738,7 +733,6 @@ EFI_STATUS LoadKernelELF(
         if (Ph->p_offset >= KernelImageSize ||
             Ph->p_offset + Ph->p_filesz > KernelImageSize ||
             Ph->p_memsz < Ph->p_filesz) {
-            Print(L"LoadKernelELF: Invalid PT_LOAD segment\n");
             uefi_call_wrapper(ST->BootServices->FreePages, 2, KernelBaseAddr, TotalPages);
             return EFI_LOAD_ERROR;
         }
@@ -1264,7 +1258,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     }
 
     if (EFI_ERROR(Status)) {
-        Print(L"efi_main: Kernel_Main.ELF could not be opened: %r\n", Status);
         return Status;
     }
 
@@ -1285,7 +1278,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
 
     Status = PreloadDriverModules(ST, KernelRoot, &BootInfo);
     if (EFI_ERROR(Status)) {
-        Print(L"efi_main: PreloadDriverModules failed: %r\n", Status);
         while (1) __asm__ volatile("cli; hlt");
     }
 

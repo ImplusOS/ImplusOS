@@ -289,8 +289,7 @@ __mount_image:
 	sync; \
 	sudo umount $$MOUNT_POINT || exit 1;
 
-ISO_ROOT    := $(IMAGE_DIR)/iso_root
-ESP_IMG     := $(IMAGE_DIR)/esp.iso
+ESP_IMG     := $(IMAGE_DIR)/ImplusOS.iso
 ESP_SIZE_MB := 40
 
 UNAME_S := $(shell uname -s)
@@ -306,45 +305,7 @@ image_linux: all __image_linux_impl
 
 image_macos: all __image_macos_impl
 
-__populate_iso_root:
-	@rm -rf $(ISO_ROOT)
-	@mkdir -p $(ISO_ROOT)/EFI/BOOT \
-	          $(ISO_ROOT)/Kernel/Driver \
-	          $(ISO_ROOT)/Userland/SystemApps \
-	          $(ISO_ROOT)/Userland/UserApps \
-	          $(ISO_ROOT)/BootManager
-	@cp $(BOOTX64_EFI)       $(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI
-	@cp $(BOOTMANAGER_EFI)   $(ISO_ROOT)/EFI/BOOT/BOOTMANAGER.EFI
-	@cp $(KERNEL_ELF)        $(ISO_ROOT)/Kernel/Kernel_Main.ELF
-	@cp $(USERLAND_INIT_ELF) $(ISO_ROOT)/Userland/Userland.ELF
-	@find $(ISO_ROOT)/Kernel/Driver -maxdepth 1 -type f -name '*.ELF' -delete
-	@if [ -d $(DRIVER_STAGE_DIR) ]; then \
-		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' \
-			-exec cp {} $(ISO_ROOT)/Kernel/Driver/ \; ; \
-	fi
-	@if [ -d $(BUILD_DIR)/Userland/SystemApps ]; then \
-		rsync -a $(BUILD_DIR)/Userland/SystemApps/ $(ISO_ROOT)/Userland/SystemApps/; \
-	fi
-	@if [ -d $(BUILD_DIR)/Userland/UserApps ]; then \
-		rsync -a $(BUILD_DIR)/Userland/UserApps/ $(ISO_ROOT)/Userland/UserApps/; \
-	fi
-	@if [ -d $(BOOT_RESOURCE_DIR) ]; then \
-		rsync -a $(BOOT_RESOURCE_DIR) $(ISO_ROOT)/BootManager/; \
-	fi
-
-__xorriso_build:
-	@cp $(ESP_IMG) $(ISO_ROOT)/esp.img
-	@mkdir -p $(IMAGE_DIR)
-	@xorriso -as mkisofs \
-		-R -J \
-		-V "IMPLUSOS_02B" \
-		-o $(IMAGE) \
-		-eltorito-alt-boot \
-		-e esp.img \
-		-no-emul-boot \
-		$(ISO_ROOT)
-
-__image_linux_impl: __populate_iso_root
+__image_linux_impl:
 	@mkdir -p $(IMAGE_DIR)
 	@rm -f $(ESP_IMG)
 	@dd if=/dev/zero of=$(ESP_IMG) bs=1M count=$(ESP_SIZE_MB) status=none
@@ -377,9 +338,8 @@ __image_linux_impl: __populate_iso_root
 			mcopy -i $(ESP_IMG) "$$f" "::/Userland/UserApps/$$rel"; \
 		done; \
 	fi
-	@$(MAKE) __xorriso_build
 
-__image_macos_impl: __populate_iso_root
+__image_macos_impl:
 	@set -eu; \
 	mkdir -p $(IMAGE_DIR); \
 	rm -f "$(ESP_IMG)"; \
@@ -426,7 +386,6 @@ __image_macos_impl: __populate_iso_root
 	fi; \
 	sync; \
 	hdiutil detach "$$ESP_DEV" >/dev/null
-	@$(MAKE) __xorriso_build
 
 QEMU_COMMON = \
 	-machine q35,accel=tcg \
@@ -442,18 +401,16 @@ QEMU_COMMON = \
 	-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
 	-drive file=${DISK_IMG},if=none,id=nvme0,format=raw \
 	-device nvme,drive=nvme0,serial=deadbeef \
-	--vga none \
-	-device virtio-gpu-pci  \
 	-device ich9-intel-hda \
 	-device hda-duplex \
 	-rtc base=localtime \
 	-serial stdio
 
 QEMU_IDE = \
-	-drive format=raw,file=${IMAGE}
+	-drive format=raw,file=${ESP_IMG}
 
 QEMU_USB = \
-	-drive if=none,id=usbstick,format=raw,file=${IMAGE} \
+	-drive if=none,id=usbstick,format=raw,file=${ESP_IMG} \
 	-device usb-storage,drive=usbstick
 
 run_uefi_ide:
@@ -468,7 +425,7 @@ run_bios_ide:
 		-smp 4,sockets=1,cores=4,threads=1 \
 		-m 4G \
 		-serial stdio \
-		-drive format=raw,file=$(IMAGE)
+		-drive format=raw,file=$(ESP_IMG)
 
 run_bios_usb:
 	@qemu-system-$(ARCH) \
@@ -477,7 +434,7 @@ run_bios_usb:
 		-m 4G \
 		-serial stdio \
 		-device qemu-xhci,id=xhci \
-		-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
+		-drive if=none,id=usbstick,format=raw,file=$(ESP_IMG) \
 		-device usb-storage,drive=usbstick
 
 clean:

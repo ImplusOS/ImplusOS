@@ -40,12 +40,14 @@ __attribute__((aligned(16))) static uint8_t kernel_stack[0x40000];
 static uint64_t user_entry = 0;
 extern const arch_ops_t *arch_ops_get(void);
 
+#include "Debug/serial/Serial.h"
+
 bool all_fs_initialize(const BOOT_INFO *boot_info) {
     const FAT32_BPB *initial_bpb = NULL;
     if (boot_info != NULL && boot_info->BootPartitionBPBValid != 0) {
         initial_bpb = &boot_info->BootPartitionBPB;
     }
-
+    
     if (!fat32_init(initial_bpb)) {
         return false;
     }

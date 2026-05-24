@@ -238,12 +238,26 @@ static void CaptureBootPartitionBPB(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *S
     UINT8 *block = NULL;
     Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, block_size, (VOID **)&block);
     if (EFI_ERROR(Status) || !block) return;
-    Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
-                               PartitionStartLBA, block_size, block);
-    if (!EFI_ERROR(Status) && block[510] == 0x55 && block[511] == 0xAA) {
-        ParseBootSectorBPB(block, &Handoff->BootPartitionBPB);
-        Handoff->BootPartitionBPBValid = 1;
+
+    UINT64 lba_to_try[2] = { PartitionStartLBA, 0ULL };
+    BOOLEAN found = FALSE;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        UINT64 lba = lba_to_try[attempt];
+        if (attempt == 1 && lba == PartitionStartLBA) break;
+        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
+                                   lba, block_size, block);
+        if (!EFI_ERROR(Status) && block[510] == 0x55 && block[511] == 0xAA) {
+            UINT16 bps = (UINT16)block[11] | ((UINT16)block[12] << 8);
+            if (bps == 512 || bps == 1024 || bps == 2048 || bps == 4096) {
+                ParseBootSectorBPB(block, &Handoff->BootPartitionBPB);
+                Handoff->BootPartitionBPBValid = 1;
+                Handoff->PartitionStartLBA = lba;
+                found = TRUE;
+                break;
+            }
+        }
     }
+
     uefi_call_wrapper(ST->BootServices->FreePool, 1, block);
 }
 
@@ -318,7 +332,7 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
         }
         uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
     }
-    return 2048ULL;
+    return 0ULL;
 }
 
 static EFI_FILE_PROTOCOL *OpenFsRootFromHandle(EFI_HANDLE Handle, EFI_SYSTEM_TABLE *ST) {

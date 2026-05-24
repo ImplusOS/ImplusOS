@@ -1463,10 +1463,12 @@ static void fat32_write_cluster_to_entry(uint8_t *entry, uint32_t cluster) {
 }
 
 static bool _fat32_init(const FAT32_BPB *initial_bpb) {
-    (void)initial_bpb;
-
-    if (!fat32_read_boot_sector_bpb(&bpb)) {
-        return false;
+    if (initial_bpb) {
+        bpb = *initial_bpb;
+    } else {
+        if (!fat32_read_boot_sector_bpb(&bpb)) {
+            return false;
+        }
     }
 
     if (!fat32_validate_bpb()) {
