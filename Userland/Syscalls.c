@@ -96,6 +96,9 @@ static void handle_input_message(ipc_message_t *msg) {
 #define SYSCALL_DISPLAY_FILL_RECT 53ULL
 #define SYSCALL_DISPLAY_PRESENT 54ULL
 #define SYSCALL_GET_DISPLAY_FRAMEBUFFER 55ULL
+#define SYSCALL_DISPLAY_GET_PIXEL  56ULL
+#define SYSCALL_SYSTEM_SHUTDOWN    250ULL
+#define SYSCALL_SYSTEM_REBOOT      251ULL
 #define SYSCALL_PROCESS_SPAWN_ELF 36ULL
 
 extern uint64_t syscall0(uint64_t num);
@@ -744,6 +747,11 @@ __attribute__((optimize("O2"))) void draw_fill_rect(uint32_t x, uint32_t y, uint
     ipc_send_message(window_get_wm_pid(), &cmd, sizeof(cmd));
 }
 
+uint32_t get_pixel(uint32_t x, uint32_t y)
+{
+    return (uint32_t)syscall2(SYSCALL_DISPLAY_GET_PIXEL, (uint64_t)x, (uint64_t)y);
+}
+
 __attribute__((optimize("O2"))) void draw_present(void)
 {
     if (g_current_window_id == 0) {
@@ -933,9 +941,9 @@ void window_draw_text(window_id_t wid, uint32_t x, uint32_t y, const char *text,
         float font_size;
         char text[128];
     } cmd;
-    
+
     if (!text || wid == 0) return;
-    
+
     cmd.hdr.type = WM_DRAW_TEXT;
     cmd.hdr.window_id = wid;
     cmd.x = x;
@@ -943,10 +951,27 @@ void window_draw_text(window_id_t wid, uint32_t x, uint32_t y, const char *text,
     cmd.color = color;
     cmd.font_size = font_size;
     os_strcpy_s(cmd.text, sizeof(cmd.text), text);
-    
+
     ipc_send_message(window_get_wm_pid(), &cmd, sizeof(cmd));
 }
 
+void window_show_notification(const char *title, const char *message)
+{
+    struct {
+        wm_msg_header_t hdr;
+        char title[64];
+        char message[128];
+    } cmd;
+
+    if (!title || !message) return;
+
+    cmd.hdr.type = WM_SHOW_NOTIFICATION;
+    cmd.hdr.window_id = 0;
+    os_strcpy_s(cmd.title, sizeof(cmd.title), title);
+    os_strcpy_s(cmd.message, sizeof(cmd.message), message);
+
+    ipc_send_message(window_get_wm_pid(), &cmd, sizeof(cmd));
+}
 bool udp_send(uint32_t dst_ipv4_addr,
               uint16_t src_port,
               uint16_t dst_port,
@@ -1053,6 +1078,18 @@ int32_t process_getppid(void)
 void process_exit(int32_t status)
 {
     (void)syscall1(SYSCALL_PROCESS_EXIT_STATUS, (uint64_t)(int64_t)status);
+    while (1) { process_yield(); }
+}
+
+void system_shutdown(void)
+{
+    (void)syscall0(SYSCALL_SYSTEM_SHUTDOWN);
+    while (1) { process_yield(); }
+}
+
+void system_reboot(void)
+{
+    (void)syscall0(SYSCALL_SYSTEM_REBOOT);
     while (1) { process_yield(); }
 }
 

@@ -11,6 +11,8 @@ int32_t process_spawn(const char *path);
 int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options);
 int32_t process_getppid(void);
 void process_exit(int32_t status);
+void system_shutdown(void);
+void system_reboot(void);
 void sleep_ms(uint64_t milliseconds);
 uint64_t get_uptime_ms(void);
 

@@ -16,7 +16,13 @@ typedef struct {
     uint32_t pit_gsi;
     uint8_t  pit_level_trigger;
     uint8_t  pit_active_low;
+    
+    uint32_t pm1a_cnt_blk;
+    uint16_t slp_typ_s5;
+    bool     has_s5;
 } acpi_info_t;
 
 int  acpi_init(const BOOT_INFO *boot_info);
 const acpi_info_t *acpi_get_info(void);
+void acpi_shutdown(void);
+void acpi_reboot(void);

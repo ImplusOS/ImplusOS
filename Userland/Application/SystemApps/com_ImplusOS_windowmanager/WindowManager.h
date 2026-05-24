@@ -168,6 +168,17 @@ typedef struct {
 } wm_compositor_t;
 
 typedef struct {
+    char     title[64];
+    char     message[128];
+    uint64_t start_time;
+    uint32_t duration_ms;
+    bool     active;
+    float    anim_y;
+} wm_notification_t;
+
+#define WM_MAX_NOTIFICATIONS 4
+
+typedef struct {
     wm_server_t     server;
     wm_compositor_t compositor;
 
@@ -187,6 +198,9 @@ typedef struct {
     uint8_t  prev_mouse_buttons;
     uint8_t *font_buffer;
     bool     font_loaded;
+    
+    bool              start_menu_open;
+    wm_notification_t notifications[WM_MAX_NOTIFICATIONS];
 } wm_state_t;
 
 void        wm_server_init(wm_server_t *srv);

@@ -63,6 +63,7 @@ bool driver_manager_display_is_ready(void);
 uint32_t driver_manager_display_width(void);
 uint32_t driver_manager_display_height(void);
 void driver_manager_display_draw_pixel(uint32_t x, uint32_t y, uint32_t color);
+uint32_t driver_manager_display_get_pixel(uint32_t x, uint32_t y);
 void driver_manager_display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 void driver_manager_display_present(void);
 void *driver_manager_display_get_framebuffer(void);

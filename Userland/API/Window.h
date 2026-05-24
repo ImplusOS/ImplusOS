@@ -36,3 +36,4 @@ int32_t window_input_mouse_pending(void);
 int32_t window_set_layout_xml(window_id_t wid, const char *xml_str, uint32_t xml_len);
 int32_t window_load_layout(window_id_t wid, const char *xml_path);
 void window_draw_text(window_id_t wid, uint32_t x, uint32_t y, const char *text, uint32_t color, float font_size);
+void window_show_notification(const char *title, const char *message);

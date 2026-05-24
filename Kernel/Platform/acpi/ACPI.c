@@ -73,8 +73,83 @@ typedef struct {
     uint16_t flags;
 } __attribute__((packed)) madt_iso_t; 
 
+typedef struct {
+    sdt_header_t header;
+    uint32_t firmware_ctrl;
+    uint32_t dsdt;
+    uint8_t  reserved;
+    uint8_t  preferred_pm_profile;
+    uint16_t sci_int;
+    uint32_t smi_cmd;
+    uint8_t  acpi_enable;
+    uint8_t  acpi_disable;
+    uint8_t  s4bios_req;
+    uint8_t  pstate_cnt;
+    uint32_t pm1a_evt_blk;
+    uint32_t pm1b_evt_blk;
+    uint32_t pm1a_cnt_blk;
+    uint32_t pm1b_cnt_blk;
+    uint32_t pm2_cnt_blk;
+    uint32_t pm_tmr_blk;
+    uint32_t gpe0_blk;
+    uint32_t gpe1_blk;
+    uint8_t  pm1_evt_len;
+    uint8_t  pm1_cnt_len;
+} __attribute__((packed)) fadt_t;
+
 static acpi_info_t g_info;
 static int g_ready = 0;
+
+#include "Platform/io/IO_Main.h"
+
+void acpi_reboot(void)
+{
+    
+    outb(0x64, 0xFE);
+    
+    
+    __asm__ volatile ("lidt %0; int3" :: "m"((uint16_t[3]){0,0,0}));
+    
+    while(1);
+}
+
+void acpi_shutdown(void)
+{
+    if (g_info.has_s5 && g_info.pm1a_cnt_blk != 0) {
+        outw((uint16_t)g_info.pm1a_cnt_blk, (uint16_t)(g_info.slp_typ_s5 | (1 << 13)));
+    }
+    
+    
+    outw(0xB004, 0x2000);
+    outw(0x604, 0x2000);
+    outw(0x4004, 0x3400);
+    
+    while(1);
+}
+
+static void parse_dsdt(const sdt_header_t *dsdt)
+{
+    if (dsdt == NULL) return;
+    
+    const uint8_t *s5_ptr = (const uint8_t *)dsdt + sizeof(sdt_header_t);
+    uint32_t len = dsdt->length - sizeof(sdt_header_t);
+    
+    
+    for (uint32_t i = 0; i < len - 4; i++) {
+        if (memcmp(s5_ptr + i, "_S5_", 4) == 0) {
+            i += 4;
+            
+            
+            if (s5_ptr[i] == 0x12) { 
+                i += 3; 
+                if (s5_ptr[i] == 0x0A) i++; 
+                g_info.slp_typ_s5 = (uint16_t)((uint16_t)s5_ptr[i] << 10);
+                g_info.has_s5 = true;
+                return;
+            }
+        }
+    }
+}
 
 static uint8_t checksum8(const uint8_t *p, uint32_t len)
 {
@@ -99,6 +174,17 @@ static const sdt_header_t *validate_sdt(const void *addr, const char sig[4])
         return NULL;
     }
     return hdr;
+}
+
+static void parse_fadt(const fadt_t *fadt)
+{
+    if (fadt == NULL) return;
+    
+    g_info.pm1a_cnt_blk = fadt->pm1a_cnt_blk;
+    
+    const sdt_header_t *dsdt = (const sdt_header_t *)map_mmio_virt(fadt->dsdt);
+    dsdt = validate_sdt(dsdt, "DSDT");
+    parse_dsdt(dsdt);
 }
 
 static const sdt_header_t *find_sdt_entry(const sdt_header_t *xsdt,
@@ -253,6 +339,12 @@ int acpi_init(const BOOT_INFO *boot_info)
     }
  
     parse_madt((const madt_t *)madt_hdr);
+
+    const sdt_header_t *fadt_hdr = find_sdt_entry(root, use_xsdt, "FACP");
+    if (fadt_hdr != NULL) {
+        parse_fadt((const fadt_t *)fadt_hdr);
+    }
+
     g_ready = 1;
     return 0;
 }

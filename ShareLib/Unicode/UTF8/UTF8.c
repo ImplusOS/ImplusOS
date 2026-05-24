@@ -90,7 +90,7 @@ utf8_codepoint_t utf8_decode(const char **s) {
     return (utf8_codepoint_t)cp;
 }
 
-// UTF8.c - utf8_next の修正
+
 utf8_status_t utf8_next(const char **s,
                         const char *end,
                         utf8_codepoint_t *cp)

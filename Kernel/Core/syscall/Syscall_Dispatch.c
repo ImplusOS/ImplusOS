@@ -761,13 +761,32 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 uint64_t end = start + size;
                 uint64_t aligned_start = start & ~4095ULL;
                 uint64_t aligned_end = (end + 4095ULL) & ~4095ULL;
-                
+
                 int res = paging_set_user_access(cr3, aligned_start, aligned_end - aligned_start, 1);
             }
             set_syscall_result(saved_rsp, (uint64_t)(uintptr_t)ptr);
             break;
         }
 
+        case SYSCALL_DISPLAY_GET_PIXEL: {
+            uint32_t color = driver_manager_display_get_pixel((uint32_t)arg1, (uint32_t)arg2);
+            set_syscall_result(saved_rsp, (uint64_t)color);
+            break;
+        }
+
+        case SYSCALL_SYSTEM_SHUTDOWN: {
+            extern void acpi_shutdown(void);
+            acpi_shutdown();
+            set_syscall_result(saved_rsp, 0);
+            break;
+        }
+
+        case SYSCALL_SYSTEM_REBOOT: {
+            extern void acpi_reboot(void);
+            acpi_reboot();
+            set_syscall_result(saved_rsp, 0);
+            break;
+        }
         case SYSCALL_PROCESS_WAITPID: {
             int32_t *status_ptr = (int32_t *)(uintptr_t)arg2;
             if (status_ptr != NULL && !user_buffer_ok(status_ptr, sizeof(int32_t))) {

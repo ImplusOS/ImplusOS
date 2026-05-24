@@ -40,6 +40,7 @@
 #define WM_SET_LAYOUT_XML_CHUNK 61
 #define WM_SET_LAYOUT_XML_END   62
 #define WM_UPDATE_CLOCK         70
+#define WM_SHOW_NOTIFICATION    80
 
 
 #define WM_STATUS_OK             0

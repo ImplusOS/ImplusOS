@@ -8,6 +8,7 @@ bool display_is_ready(void);
 uint32_t display_width(void);
 uint32_t display_height(void);
 void display_draw_pixel(uint32_t x, uint32_t y, uint32_t color);
+uint32_t display_get_pixel(uint32_t x, uint32_t y);
 void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 void display_present(void);
 void *display_get_framebuffer(void);

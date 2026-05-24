@@ -7,6 +7,7 @@
 #include "API/Memory.h"
 #include "API/Graphics.h"
 #include "API/File.h"
+#include "API/Window.h"
 #include "API/Serial.h"
 #include "Unicode/UTF8/UTF8.h"
 
@@ -443,49 +444,23 @@ void _start(void)
         "Userland/SystemApps/com_ImplusOS_windowmanager/com_ImplusOS_windowmanager.ELF",
     };
 
-    static const char *const com_ImplusOS_shell[] = {
-        "Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF",
-    };
-
-    static const char *const com_ImplusOS_clock[] = {
-        "Userland/UserApps/com_ImplusOS_clock/com_ImplusOS_clock.ELF",
-    };
-
-    static const char *const com_ImplusOS_editor[] = {
-        "Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF",
-    };
-
-    static const char *const com_ImplusOS_exampleApp[] = {
-        "Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF",
-    };
-
-    static const char *const com_ImplusOS_filemanager[] = {
-        "Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF",
-    };
-
-    static const char *const com_ImplusOS_vm[] = {
-        "Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF",
-    };
-
     spawn_with_fallbacks(com_ImplusOS_windowmanager, sizeof(com_ImplusOS_windowmanager) / sizeof(com_ImplusOS_windowmanager[0]));
     process_yield();
-
-    spawn_with_fallbacks(com_ImplusOS_shell, sizeof(com_ImplusOS_shell) / sizeof(com_ImplusOS_shell[0]));
-    process_yield();
-
+    
+    
+    int32_t wm_pid = -1;
+    for (int i = 0; i < 50; i++) {
+        wm_pid = window_get_wm_pid();
+        if (wm_pid >= 0) break;
+        sleep_ms(100);
+    }
+    
+    if (wm_pid >= 0) {
+        sleep_ms(500); 
+        window_show_notification("System", "Welcome to ImplusOS!");
+    }
+    
     spawn_with_fallbacks(com_ImplusOS_version, sizeof(com_ImplusOS_version) / sizeof(com_ImplusOS_version[0]));
-    process_yield();
-
-    spawn_with_fallbacks(com_ImplusOS_editor, sizeof(com_ImplusOS_editor) / sizeof(com_ImplusOS_editor[0]));
-    process_yield();
-
-    spawn_with_fallbacks(com_ImplusOS_exampleApp, sizeof(com_ImplusOS_exampleApp) / sizeof(com_ImplusOS_exampleApp[0]));
-    process_yield();
-
-    spawn_with_fallbacks(com_ImplusOS_filemanager, sizeof(com_ImplusOS_filemanager) / sizeof(com_ImplusOS_filemanager[0]));
-    process_yield();
-
-    spawn_with_fallbacks(com_ImplusOS_vm, sizeof(com_ImplusOS_vm) / sizeof(com_ImplusOS_vm[0]));
     process_yield();
 
     while (1) {

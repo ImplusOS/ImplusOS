@@ -442,6 +442,8 @@ QEMU_COMMON = \
 	-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
 	-drive file=${DISK_IMG},if=none,id=nvme0,format=raw \
 	-device nvme,drive=nvme0,serial=deadbeef \
+	--vga none \
+	-device virtio-gpu-pci  \
 	-device ich9-intel-hda \
 	-device hda-duplex \
 	-rtc base=localtime \

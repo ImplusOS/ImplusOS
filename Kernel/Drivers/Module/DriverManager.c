@@ -305,6 +305,11 @@ void driver_manager_display_draw_pixel(uint32_t x, uint32_t y, uint32_t color)
     display_draw_pixel(x, y, color);
 }
 
+uint32_t driver_manager_display_get_pixel(uint32_t x, uint32_t y)
+{
+    return display_get_pixel(x, y);
+}
+
 void driver_manager_display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color)
 {
     display_fill_rect(x, y, w, h, color);

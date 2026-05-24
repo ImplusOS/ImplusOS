@@ -149,6 +149,18 @@ void display_draw_pixel(uint32_t x, uint32_t y, uint32_t color) {
     g_active_display_driver->draw_pixel(x, y, color);
 }
 
+uint32_t display_get_pixel(uint32_t x, uint32_t y) {
+    if (!display_is_ready()) {
+        return 0;
+    }
+
+    if (x >= g_fb_width || y >= g_fb_height || !g_framebuffer) {
+        return 0;
+    }
+
+    return g_framebuffer[y * g_fb_width + x];
+}
+
 void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     if (!display_is_ready()) {
         return;
