@@ -138,9 +138,40 @@ static inline void current_pid_set(int32_t pid)
     g_current_pid_per_cpu[cpu] = pid;
 }
 
+
 static void halt_forever(void)
 {
     while (1) {
+        __asm__ volatile ("hlt");
+    }
+}
+
+void process_broadcast_shutdown(void)
+{
+    uint32_t signal = IPC_SIGNAL_SHUTDOWN;
+    for (int32_t i = 0; i < g_process_capacity; ++i) {
+        if (g_processes[i].state == PROCESS_STATE_RUNNING ||
+            g_processes[i].state == PROCESS_STATE_READY) {
+            if (i != current_pid_get()) {
+                ipc_send_message(i, &signal, sizeof(uint32_t));
+            }
+        }
+    }
+
+    
+    for (int retry = 0; retry < 100; retry++) {
+        int all_dead = 1;
+        for (int32_t i = 0; i < g_process_capacity; ++i) {
+            if (i == current_pid_get()) continue;
+            if (g_processes[i].state != PROCESS_STATE_UNUSED &&
+                g_processes[i].state != PROCESS_STATE_DEAD) {
+                all_dead = 0;
+                break;
+            }
+        }
+        if (all_dead) break;
+        
+        
         __asm__ volatile ("hlt");
     }
 }

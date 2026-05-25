@@ -32,7 +32,6 @@ LIBC_SRCS := \
 
 OBJS += $(patsubst $(ROOT_DIR)/libc/%.c,$(KERNEL_BUILD)/libc/%.o,$(LIBC_SRCS))
 
-# ShareLib — shared kernel/userland libraries
 SHARELIB_SRCS := \
 	$(ROOT_DIR)/ShareLib/Unicode/UTF8/UTF8.c
 

@@ -3,6 +3,7 @@
 #include <string.h>
 #include "mmu/Paging_Main.h"
 #include "Debug/serial/Serial.h"
+#include "Drivers/Module/DriverManager.h"
 
 typedef struct {
     char     signature[8];
@@ -115,6 +116,21 @@ void acpi_reboot(void)
 
 void acpi_shutdown(void)
 {
+    
+    const driver_display_t *display = driver_manager_get_display_driver(NULL);
+    if (display) {
+        uint32_t w = display->width();
+        uint32_t h = display->height();
+        display->fill_rect(0, 0, w, h, 0x000000); 
+        
+        for (uint32_t y = h/2 - 20; y < h/2 + 20; y++) {
+            for (uint32_t x = w/2 - 100; x < w/2 + 100; x++) {
+                display->draw_pixel(x, y, 0xFFFFFF); 
+            }
+        }
+        display->present();
+    }
+
     if (g_info.has_s5 && g_info.pm1a_cnt_blk != 0) {
         outw((uint16_t)g_info.pm1a_cnt_blk, (uint16_t)(g_info.slp_typ_s5 | (1 << 13)));
     }

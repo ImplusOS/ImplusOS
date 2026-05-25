@@ -99,6 +99,7 @@ static void handle_input_message(ipc_message_t *msg) {
 #define SYSCALL_DISPLAY_GET_PIXEL  56ULL
 #define SYSCALL_SYSTEM_SHUTDOWN    250ULL
 #define SYSCALL_SYSTEM_REBOOT      251ULL
+#define SYSCALL_SYSTEM_SHUTDOWN_BROADCAST 252ULL
 #define SYSCALL_PROCESS_SPAWN_ELF 36ULL
 
 extern uint64_t syscall0(uint64_t num);
@@ -1085,6 +1086,11 @@ void system_shutdown(void)
 {
     (void)syscall0(SYSCALL_SYSTEM_SHUTDOWN);
     while (1) { process_yield(); }
+}
+
+void system_shutdown_broadcast(void)
+{
+    (void)syscall0(SYSCALL_SYSTEM_SHUTDOWN_BROADCAST);
 }
 
 void system_reboot(void)

@@ -30,8 +30,8 @@ USERLAND_INIT_ELF := $(BUILD_DIR)/Userland/Userland.ELF
 
 LOADER_CFLAGS := \
 	-I. \
-	-I/usr/include/efi/ \
-	-I/usr/include/efi/$(ARCH) \
+	-I/usr/local/include/efi/ \
+	-I/usr/local/include/efi/$(ARCH) \
 	-IBootManager/BootManager_libc/include \
 	-ffreestanding -fpic -fshort-wchar -fno-stack-protector \
 	-fno-builtin -mno-red-zone \
@@ -167,12 +167,12 @@ $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 	$(EFI_LD) -nostdlib \
 		-znocombreloc \
 		--defsym=_DYNAMIC=0 \
-		-T /usr/lib/elf_$(ARCH)_efi.lds \
+		-T /usr/local/lib/elf_$(ARCH)_efi.lds \
 		-shared -Bsymbolic \
-		/usr/lib/crt0-efi-$(ARCH).o \
+		/usr/local/lib/crt0-efi-$(ARCH).o \
 		$< \
-		/usr/lib/libefi.a \
-		/usr/lib/libgnuefi.a \
+		/usr/local/lib/libefi.a \
+		/usr/local/lib/libgnuefi.a \
 		-o $@.so
 
 	$(EFI_OBJCOPY) \
@@ -211,11 +211,9 @@ $(BIOS_STAGE2_BIN): $(BIOS_STAGE2_OBJS) BootManager/BIOS/linker.ld
 	$(ARCH)-elf-objcopy -O binary $@.elf $@
 	@size=$$(wc -c < $@); max=$$(( $(BIOS_STAGE2_SECTORS) * 512 )); \
 	if [ $$size -gt $$max ]; then \
-		echo "BIOS stage2 too large: $$size > $$max bytes"; \
 		exit 1; \
 	fi; \
 	truncate -s $$max $@
-	# rm -f $@.elf
 
 BOOTMANAGER_OBJS := \
 	$(BUILD_DIR)/BootManager/UEFI/BootManager.o \
@@ -238,12 +236,12 @@ $(BUILD_DIR)/BootManager/BootManager_libc/%.o: BootManager/BootManager_libc/sour
 $(BOOTMANAGER_EFI): $(BOOTMANAGER_OBJS)
 	mkdir -p $(dir $@)
 	$(ARCH)-elf-ld -nostdlib -znocombreloc --defsym=_DYNAMIC=0 \
-		-T /usr/lib//elf_$(ARCH)_efi.lds \
+		-T /usr/local/lib//elf_$(ARCH)_efi.lds \
 		-shared -Bsymbolic \
-		/usr/lib/crt0-efi-$(ARCH).o \
+		/usr/local/lib/crt0-efi-$(ARCH).o \
 		$^ \
-		/usr/lib/libefi.a \
-		/usr/lib/libgnuefi.a \
+		/usr/local/lib/libefi.a \
+		/usr/local/lib/libgnuefi.a \
 		-o $@.so
 	$(ARCH)-elf-objcopy -j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
@@ -334,7 +332,6 @@ image: all
 		done; \
 	fi
 
-	# Create EFI boot image (FAT32) containing the runtime filesystem used after ExitBootServices.
 	@rm -f $(BUILD_DIR)/efiboot.img
 	@truncate -s 96M $(BUILD_DIR)/efiboot.img
 	@mformat -i $(BUILD_DIR)/efiboot.img -F -v ESP ::
@@ -347,13 +344,8 @@ image: all
 	@mcopy -s -i $(BUILD_DIR)/efiboot.img $(BUILD_DIR)/iso_root/BootManager ::/
 	@cp $(BUILD_DIR)/efiboot.img $(BUILD_DIR)/iso_root/efiboot.img
 
-	# Create BIOS boot image (combined stage1 and stage2)
 	@cat $(BIOS_STAGE1_BIN) $(BIOS_STAGE2_BIN) > $(BUILD_DIR)/iso_root/biosboot.img
 
-	# Create Hybrid ISO using xorriso
-	# -partition_offset 16 is used to align the ISO9660 filesystem to help some BIOSes.
-	# -isohybrid-mbr makes the ISO bootable from a USB stick/Hard drive.
-	# -eltorito-alt-boot and -e specify the EFI boot image.
 	@xorriso -as mkisofs \
 		-R -J -joliet-long -V "IMPLUSOS" \
 		-partition_offset 16 \
@@ -366,9 +358,6 @@ image: all
 		-o $(IMAGE) \
 		$(BUILD_DIR)/iso_root
 	@rm -rf $(BUILD_DIR)/iso_root $(BUILD_DIR)/efiboot.img
-
-image_linux: image
-image_macos: image
 
 QEMU_COMMON = \
 	-machine q35,accel=tcg \

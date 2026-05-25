@@ -781,6 +781,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
 
+        case SYSCALL_SYSTEM_SHUTDOWN_BROADCAST: {
+            extern void process_broadcast_shutdown(void);
+            process_broadcast_shutdown();
+            set_syscall_result(saved_rsp, 0);
+            break;
+        }
+
         case SYSCALL_SYSTEM_REBOOT: {
             extern void acpi_reboot(void);
             acpi_reboot();
