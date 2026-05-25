@@ -1,10 +1,12 @@
 #include "BIOS_Handoff.h"
 #include "../BootManager_libc/include/string.h"
 #include "../../Kernel/FileSystem/FAT32_BPB.h"
+#include "../ISO9660.h"
 #include <stdint.h>
 #include <stddef.h>
 
 #define SECTOR_SIZE 512u
+#define ISO_SECTOR_SIZE 2048u
 #include "../BootInfo.h"
 #include "../ElfDefs.h"
 
@@ -120,7 +122,9 @@ typedef struct {
     uint32_t bytes_per_cluster;
 } BIOS_FAT32;
 
-
+typedef struct {
+    ISO9660_FS iso;
+} BIOS_ISO9660;
 
 typedef struct {
     uint64_t base;
@@ -132,7 +136,7 @@ typedef struct {
 extern int bios_read_sector32(uint32_t drive, uint32_t lba_low, uint32_t lba_high, void *buffer);
 extern void bios_enter_kernel64(uint32_t entry_low, uint32_t boot_info_low) __attribute__((noreturn));
 
-static uint8_t g_sector[SECTOR_SIZE] __attribute__((aligned(16)));
+static uint8_t g_sector[ISO_SECTOR_SIZE] __attribute__((aligned(16)));
 static EFI_MEMORY_DESCRIPTOR g_memory_map[128] __attribute__((aligned(16)));
 
 static BOOT_INFO g_boot_info __attribute__((aligned(16)));
@@ -154,6 +158,159 @@ static int read_sector(BIOS_FAT32 *fs, uint64_t sector, void *buffer) {
 
 static int read_absolute(uint8_t drive, uint64_t lba, void *buffer) {
     return bios_read_sector32(drive, (uint32_t)lba, (uint32_t)(lba >> 32), buffer);
+}
+
+static char bios_tolower(char c) {
+    if (c >= 'A' && c <= 'Z') return (char)(c + ('a' - 'A'));
+    return c;
+}
+
+static int bios_strcasecmp(const char *a, const char *b) {
+    while (*a && bios_tolower(*a) == bios_tolower(*b)) {
+        a++;
+        b++;
+    }
+    return (int)(unsigned char)bios_tolower(*a) - (int)(unsigned char)bios_tolower(*b);
+}
+
+static void iso_normalize_name(char *name) {
+    char *semicolon = NULL;
+    for (int i = 0; name[i]; i++) {
+        if (name[i] == ';') {
+            semicolon = &name[i];
+            break;
+        }
+    }
+    if (semicolon) *semicolon = 0;
+
+    int len = strlen(name);
+    if (len > 0 && name[len - 1] == '.') name[len - 1] = 0;
+}
+
+static void iso_get_record_name(ISO9660_DIR_RECORD *rec, uint8_t *record_end, char *out, size_t out_size) {
+    if (!out || out_size == 0) return;
+    out[0] = 0;
+
+    size_t len = rec->name_length;
+    if (len >= out_size) len = out_size - 1;
+    memcpy(out, rec->name, len);
+    out[len] = 0;
+
+    size_t sys_use_offset = offsetof(ISO9660_DIR_RECORD, name) + rec->name_length;
+    if (sys_use_offset & 1) sys_use_offset++;
+    uint8_t *sus = (uint8_t *)rec + sys_use_offset;
+
+    while (sus + 4 <= record_end) {
+        uint8_t sus_len = sus[2];
+        if (sus_len < 4 || sus + sus_len > record_end) break;
+
+        if (sus[0] == 'N' && sus[1] == 'M' && sus_len >= 5) {
+            uint8_t flags = sus[4];
+            size_t name_len = sus_len - 5;
+            if ((flags & 0x06) == 0 && name_len > 0) {
+                if (name_len >= out_size) name_len = out_size - 1;
+                memcpy(out, sus + 5, name_len);
+                out[name_len] = 0;
+            }
+            break;
+        }
+
+        sus += sus_len;
+    }
+
+    iso_normalize_name(out);
+}
+
+static int iso_init(BIOS_ISO9660 *fs, uint8_t drive) {
+    memset(fs, 0, sizeof(*fs));
+    fs->iso.boot_drive = drive;
+    
+    if (read_absolute(drive, 64, g_sector) != 0) return -1;
+    ISO9660_PVD *pvd = (ISO9660_PVD *)g_sector;
+    if (pvd->type != 1 || memcmp(pvd->identifier, "CD001", 5) != 0) return -1;
+    
+    fs->iso.root_lba = pvd->root_dir_record.extent_lba_le;
+    fs->iso.root_size = pvd->root_dir_record.data_length_le;
+    return 0;
+}
+
+static int iso_find_in_dir(BIOS_ISO9660 *fs, uint32_t dir_lba, uint32_t dir_size, const char *name, uint32_t *lba_out, uint32_t *size_out, int *is_dir) {
+    uint32_t sectors = (dir_size + ISO_SECTOR_SIZE - 1) / ISO_SECTOR_SIZE;
+    for (uint32_t s = 0; s < sectors; ++s) {
+        for (int b = 0; b < 4; ++b) {
+            if (read_absolute(fs->iso.boot_drive, (uint64_t)dir_lba * 4 + s * 4 + b, g_sector + b * 512) != 0) return -1;
+        }
+        
+        uint8_t *ptr = g_sector;
+        while (ptr < g_sector + ISO_SECTOR_SIZE && *ptr != 0) {
+            ISO9660_DIR_RECORD *rec = (ISO9660_DIR_RECORD *)ptr;
+            if (rec->length == 0 || ptr + rec->length > g_sector + ISO_SECTOR_SIZE) break;
+            if (rec->name_length > 0) {
+                char entry_name[256];
+                iso_get_record_name(rec, ptr + rec->length, entry_name, sizeof(entry_name));
+
+                if (bios_strcasecmp(entry_name, name) == 0) {
+                    *lba_out = rec->extent_lba_le;
+                    *size_out = rec->data_length_le;
+                    *is_dir = (rec->flags & 2) != 0;
+                    return 0;
+                }
+            }
+            ptr += rec->length;
+        }
+    }
+    return -1;
+}
+
+static int iso_find_path(BIOS_ISO9660 *fs, const char *path, uint32_t *lba_out, uint32_t *size_out) {
+    uint32_t cur_lba = fs->iso.root_lba;
+    uint32_t cur_size = fs->iso.root_size;
+    const char *p = path;
+    while (*p == '/') ++p;
+    
+    while (*p) {
+        char component[128];
+        int n = 0;
+        while (p[n] && p[n] != '/' && n < 127) {
+            component[n] = p[n];
+            ++n;
+        }
+        component[n] = 0;
+        
+        int is_dir = 0;
+        if (iso_find_in_dir(fs, cur_lba, cur_size, component, &cur_lba, &cur_size, &is_dir) != 0) return -1;
+        
+        p += n;
+        while (*p == '/') ++p;
+        if (*p && !is_dir) return -1;
+    }
+    
+    *lba_out = cur_lba;
+    *size_out = cur_size;
+    return 0;
+}
+
+static int iso_read_file_to(BIOS_ISO9660 *fs, const char *path, void *dest, uint32_t *size_out) {
+    uint32_t lba, size;
+    if (iso_find_path(fs, path, &lba, &size) != 0) return -1;
+    
+    uint8_t *dst = (uint8_t *)dest;
+    uint32_t remaining = size;
+    uint32_t cur_lba = lba;
+    
+    while (remaining > 0) {
+        for (int b = 0; b < 4; ++b) {
+            if (read_absolute(fs->iso.boot_drive, (uint64_t)cur_lba * 4 + b, g_sector + b * 512) != 0) return -1;
+        }
+        uint32_t copy = (remaining < ISO_SECTOR_SIZE) ? remaining : ISO_SECTOR_SIZE;
+        memcpy(dst, g_sector, copy);
+        dst += copy;
+        remaining -= copy;
+        cur_lba++;
+    }
+    
+    if (size_out) *size_out = size;
+    return 0;
 }
 
 static void bpb_from_sector(const FAT32_BOOT_SECTOR *bs, FAT32_BPB *bpb) {
@@ -187,7 +344,7 @@ static int fat32_init(BIOS_FAT32 *fs, const BIOS_BOOT_PARAMS *params) {
     }
 
     if (partition_lba == 0) {
-        partition_lba = 2048;
+        partition_lba = 0;
     }
 
     fs->partition_lba = partition_lba;
@@ -670,23 +827,106 @@ static void bios_put_hex(uint32_t v) {
     }
 }
 
+typedef void (*iso_dir_callback)(BIOS_ISO9660 *fs, const char *name, uint32_t lba, uint32_t size, int is_dir);
+
+static int iso_iterate_directory(BIOS_ISO9660 *fs, uint32_t dir_lba, uint32_t dir_size, iso_dir_callback cb) {
+    uint32_t sectors = (dir_size + ISO_SECTOR_SIZE - 1) / ISO_SECTOR_SIZE;
+    for (uint32_t s = 0; s < sectors; ++s) {
+        for (int b = 0; b < 4; ++b) {
+            if (read_absolute(fs->iso.boot_drive, (uint64_t)dir_lba * 4 + s * 4 + b, g_sector + b * 512) != 0) return -1;
+        }
+        
+        uint8_t *ptr = g_sector;
+        while (ptr < g_sector + ISO_SECTOR_SIZE && *ptr != 0) {
+            ISO9660_DIR_RECORD *rec = (ISO9660_DIR_RECORD *)ptr;
+            if (rec->length == 0 || ptr + rec->length > g_sector + ISO_SECTOR_SIZE) break;
+            if (rec->name_length > 0 && rec->name[0] != 0 && rec->name[0] != 1) {
+                char entry_name[256];
+                iso_get_record_name(rec, ptr + rec->length, entry_name, sizeof(entry_name));
+
+                cb(fs, entry_name, rec->extent_lba_le, rec->data_length_le, (rec->flags & 2) != 0);
+            }
+            ptr += rec->length;
+        }
+    }
+    return 0;
+}
+
+static void on_driver_found_iso(BIOS_ISO9660 *fs, const char *name, uint32_t lba, uint32_t size, int is_dir) {
+    if (is_dir) return;
+    int len = 0; while (name[len]) len++;
+    if (len < 4) return;
+    if (!(name[len-4] == '.' && (name[len-3] == 'E' || name[len-3] == 'e') &&
+          (name[len-2] == 'L' || name[len-2] == 'l') && (name[len-1] == 'F' || name[len-1] == 'f'))) {
+        return;
+    }
+
+    if (g_boot_info.LoadedFileCount >= MAX_LOADED_FILES) return;
+    
+    void *buffer = bios_malloc(size);
+    if (!buffer) return;
+    
+    uint8_t *dst = (uint8_t *)buffer;
+    uint32_t remaining = size;
+    uint32_t cur_lba = lba;
+    
+    while (remaining > 0) {
+        uint8_t temp[ISO_SECTOR_SIZE];
+        for (int b = 0; b < 4; ++b) {
+            if (read_absolute(fs->iso.boot_drive, (uint64_t)cur_lba * 4 + b, temp + b * 512) != 0) return;
+        }
+        uint32_t copy = (remaining < ISO_SECTOR_SIZE) ? remaining : ISO_SECTOR_SIZE;
+        memcpy(dst, temp, copy);
+        dst += copy;
+        remaining -= copy;
+        cur_lba++;
+    }
+
+    UINTN idx = g_boot_info.LoadedFileCount++;
+    int p = 0;
+    for (; name[p] && p < LOADED_FILE_NAME_MAX - 1; p++) {
+        g_boot_info.LoadedFiles[idx].Name[p] = name[p];
+    }
+    g_boot_info.LoadedFiles[idx].Name[p] = 0;
+    g_boot_info.LoadedFiles[idx].PhysAddr = (EFI_PHYSICAL_ADDRESS)(uintptr_t)buffer;
+    g_boot_info.LoadedFiles[idx].Size = size;
+}
+
+
 void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     if (!params || params->signature != BIOS_BOOT_PARAMS_SIGNATURE) {
         for (;;) __asm__ volatile("hlt");
     }
 
+    int has_kernel = 0;
+    uint32_t kernel_size = 0;
+
     BIOS_FAT32 fs;
-    if (fat32_init(&fs, params) != 0) {
-        for (;;) __asm__ volatile("hlt");
+    BIOS_ISO9660 iso_fs;
+    int is_iso = 0;
+
+    if (fat32_init(&fs, params) == 0) {
+        if (fat32_read_file_to(&fs, "/Kernel/Kernel_Main.ELF",
+                (void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, &kernel_size) == 0) {
+            has_kernel = 1;
+        } else if (fat32_read_file_to(&fs, "/Kernel/Kernel_Main.ELF",
+                (void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, &kernel_size) == 0) {
+            has_kernel = 1;
+        }
     }
 
-    uint32_t kernel_size = 0;
-    if (fat32_read_file_to(&fs, "/Kernel/Kernel_Main.ELF",
-            (void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, &kernel_size) != 0) {
-        if (fat32_read_file_to(&fs, "/Kernel/KERNEL~1.ELF",
-                (void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, &kernel_size) != 0) {
-            for (;;) __asm__ volatile("hlt");
+    if (!has_kernel) {
+        if (iso_init(&iso_fs, params->boot_drive) == 0) {
+            if (iso_read_file_to(&iso_fs, "/Kernel/Kernel_Main.ELF",
+                    (void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, &kernel_size) == 0) {
+                has_kernel = 1;
+                is_iso = 1;
+            }
         }
+    }
+
+    if (!has_kernel) {
+        for (;;) __asm__ volatile("hlt");
     }
 
     uint32_t entry = 0;
@@ -700,39 +940,108 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     g_boot_info.HorizontalResolution = params->horizontal_resolution;
     g_boot_info.VerticalResolution = params->vertical_resolution;
     g_boot_info.PixelsPerScanLine = params->pixels_per_scan_line;
-    g_boot_info.PartitionStartLBA = fs.partition_lba;
-    g_boot_info.BootPartitionBPBValid = 1;
-    memcpy(&g_boot_info.BootPartitionBPB, &fs.bpb, sizeof(FAT32_BPB));
+    g_boot_info.PartitionStartLBA = is_iso ? 0 : fs.partition_lba;
+    
+    if (!is_iso) {
+        g_boot_info.BootPartitionBPBValid = 1;
+        memcpy(&g_boot_info.BootPartitionBPB, &fs.bpb, sizeof(FAT32_BPB));
+    }
+    
     g_boot_info.AcpiRsdpAddress = params->acpi_rsdp;
     g_boot_info.AcpiRsdpSize = params->acpi_rsdp ? 20 : 0;
     g_boot_info.AcpiRsdpRevision = 0;
     g_boot_info.BootDriveType = BOOT_DRIVE_TYPE_IDE;
 
     FillScreen(0x000000);
-    DisplayBMP(&fs);
+    
+    if (is_iso) {
+        uint32_t lba, size;
+        if (iso_find_path(&iso_fs, "/BootManager/Resource/Images/BootLogo.bmp", &lba, &size) == 0) {
+            void *Buffer = bios_malloc(size);
+            if (Buffer) {
+                if (iso_read_file_to(&iso_fs, "/BootManager/Resource/Images/BootLogo.bmp", Buffer, NULL) == 0) {
+                    BMP_FILE_HEADER *FileHdr = (BMP_FILE_HEADER *)Buffer;
+                    BMP_INFO_HEADER *InfoHdr = (BMP_INFO_HEADER *)((uint8_t *)Buffer + sizeof(BMP_FILE_HEADER));
+                    if (FileHdr->bfType == 0x4D42) {
+                        uint8_t *PixelData = (uint8_t *)Buffer + FileHdr->bfOffBits;
+                        uint32_t width = (uint32_t)InfoHdr->biWidth;
+                        int32_t heightSigned = InfoHdr->biHeight;
+                        uint32_t height = (heightSigned > 0) ? (uint32_t)heightSigned : (uint32_t)(-heightSigned);
+                        int TopDown = (heightSigned < 0);
+                        uint32_t bpp = InfoHdr->biBitCount;
+                        if (bpp == 24 || bpp == 32) {
+                            uint32_t ScreenWidth = g_boot_info.HorizontalResolution;
+                            uint32_t ScreenHeight = g_boot_info.VerticalResolution;
+                            uint32_t StartX = (ScreenWidth > width) ? (ScreenWidth - width) / 2 : 0;
+                            uint32_t StartY = (ScreenHeight > height) ? (ScreenHeight - height) / 2 : 0;
+                            uint32_t RowSize = ((width * (bpp / 8) + 3) & ~3u);
+                            uint32_t *FrameBuffer = (uint32_t *)(uintptr_t)g_boot_info.FrameBufferBase;
+                            uint32_t Pitch = g_boot_info.PixelsPerScanLine;
+                            for (uint32_t y = 0; y < height; y++) {
+                                uint32_t srcY = TopDown ? y : (height - 1 - y);
+                                uint8_t *Row = PixelData + srcY * RowSize;
+                                for (uint32_t x = 0; x < width; x++) {
+                                    uint8_t b_val = Row[x * (bpp / 8) + 0];
+                                    uint8_t g_val = Row[x * (bpp / 8) + 1];
+                                    uint8_t r_val = Row[x * (bpp / 8) + 2];
+                                    uint8_t a_val = (bpp == 32) ? Row[x * (bpp / 8) + 3] : 0xFF;
+                                    if (a_val == 0) continue;
+                                    uint32_t dstColor = FrameBuffer[(StartY + y) * Pitch + (StartX + x)];
+                                    FrameBuffer[(StartY + y) * Pitch + (StartX + x)] = AlphaBlend(dstColor, r_val, g_val, b_val, a_val);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        DisplayBMP(&fs);
+    }
 
     char DisplayText[256] = {0};
     AppendString(DisplayText, "CPU: Unknown | Maker: Unknown | Model: Unknown");
 
     void *font_buffer = NULL;
     uint32_t font_size = 0;
-    FAT32_DIR_ENTRY font_entry;
-    if (fat32_find_path(&fs, "/BootManager/Resource/Fonts/NotoSansJP-Regular.ttf", &font_entry) == 0) {
-        font_size = font_entry.FileSize;
-        font_buffer = bios_malloc(font_size);
-        if (font_buffer) {
-            fat32_read_entry_to(&fs, &font_entry, font_buffer, NULL);
-            g_boot_info.FontDataAddress = (uint64_t)(UINTN)font_buffer;
-            g_boot_info.FontDataSize = font_size;
-            
-            DrawTextGraySmallCenterBottom(DisplayText, font_buffer, font_size);
+    
+    if (is_iso) {
+        uint32_t lba, size;
+        if (iso_find_path(&iso_fs, "/BootManager/Resource/Fonts/NotoSansJP-Regular.ttf", &lba, &size) == 0) {
+            font_size = size;
+            font_buffer = bios_malloc(font_size);
+            if (font_buffer) {
+                iso_read_file_to(&iso_fs, "/BootManager/Resource/Fonts/NotoSansJP-Regular.ttf", font_buffer, NULL);
+            }
+        }
+    } else {
+        FAT32_DIR_ENTRY font_entry;
+        if (fat32_find_path(&fs, "/BootManager/Resource/Fonts/NotoSansJP-Regular.ttf", &font_entry) == 0) {
+            font_size = font_entry.FileSize;
+            font_buffer = bios_malloc(font_size);
+            if (font_buffer) {
+                fat32_read_entry_to(&fs, &font_entry, font_buffer, NULL);
+            }
         }
     }
 
-    FAT32_DIR_ENTRY dir_entry;
-    if (fat32_find_path(&fs, "/Kernel/Driver", &dir_entry) == 0) {
-        if (dir_entry.Attr & 0x10u) {
-            fat32_iterate_directory(&fs, entry_cluster(&dir_entry), on_driver_found);
+    if (font_buffer) {
+        g_boot_info.FontDataAddress = (uint64_t)(UINTN)font_buffer;
+        g_boot_info.FontDataSize = font_size;
+        DrawTextGraySmallCenterBottom(DisplayText, font_buffer, font_size);
+    }
+
+    if (is_iso) {
+        uint32_t lba, size;
+        if (iso_find_path(&iso_fs, "/Kernel/Driver", &lba, &size) == 0) {
+            iso_iterate_directory(&iso_fs, lba, size, on_driver_found_iso);
+        }
+    } else {
+        FAT32_DIR_ENTRY dir_entry;
+        if (fat32_find_path(&fs, "/Kernel/Driver", &dir_entry) == 0) {
+            if (dir_entry.Attr & 0x10u) {
+                fat32_iterate_directory(&fs, entry_cluster(&dir_entry), on_driver_found);
+            }
         }
     }
 

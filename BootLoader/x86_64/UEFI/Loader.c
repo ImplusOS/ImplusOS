@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "../../../libc/include/string.h"
 #include "../../../BootManager/Handoff.h"
+#include "../../../BootManager/ISO9660.h"
 
 #ifndef ACPI_TABLE_GUID
 #define ACPI_TABLE_GUID \
@@ -372,6 +373,145 @@ static EFI_STATUS TryStartBootManagerFromHandle(
     Status = uefi_call_wrapper(ST->BootServices->LoadImage, 6,
         FALSE, ImageHandle, BootManagerPath, NULL, 0, &BootManagerHandle);
     uefi_call_wrapper(ST->BootServices->FreePool, 1, BootManagerPath);
+    if (EFI_ERROR(Status)) {
+        return Status;
+    }
+
+    UINTN ExitDataSize = 0;
+    CHAR16 *ExitData = NULL;
+    return uefi_call_wrapper(ST->BootServices->StartImage, 3,
+        BootManagerHandle, &ExitDataSize, &ExitData);
+}
+
+static char tolower(char c) {
+    if (c >= 'A' && c <= 'Z') return (char)(c + ('a' - 'A'));
+    return c;
+}
+
+static int strcasecmp(const char *s1, const char *s2) {
+    while (*s1 && (tolower(*s1) == tolower(*s2))) {
+        s1++;
+        s2++;
+    }
+    return (int)(unsigned char)tolower(*s1) - (int)(unsigned char)tolower(*s2);
+}
+
+static EFI_STATUS TryStartBootManagerFromISO(
+    EFI_HANDLE ImageHandle,
+    EFI_SYSTEM_TABLE *ST,
+    EFI_HANDLE BlockHandle
+) {
+    EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
+    EFI_STATUS Status = uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
+        BlockHandle, &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
+    if (EFI_ERROR(Status) || !Bio || !Bio->Media) return EFI_NOT_FOUND;
+
+    UINT32 BS = Bio->Media->BlockSize;
+    if (BS < 512 || BS > 4096) return EFI_NOT_FOUND;
+
+    UINT8 *Buf = NULL;
+    Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, 2048, (VOID **)&Buf);
+    if (EFI_ERROR(Status)) return Status;
+    
+    UINT64 Lba16 = (16ULL * 2048ULL) / (UINT64)BS;
+    Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, Lba16, 2048, Buf);
+    if (EFI_ERROR(Status) || Buf[1] != 'C' || Buf[2] != 'D' || Buf[3] != '0' || Buf[4] != '0' || Buf[5] != '1') {
+        uefi_call_wrapper(ST->BootServices->FreePool, 1, Buf);
+        return EFI_NOT_FOUND;
+    }
+
+    ISO9660_PVD *Pvd = (ISO9660_PVD *)Buf;
+    UINT32 RootLba = Pvd->root_dir_record.extent_lba_le;
+    UINT32 RootSize = Pvd->root_dir_record.data_length_le;
+
+    const char *Path[] = { "EFI", "BOOT", "BOOTMANAGER.EFI" };
+    UINT32 CurLba = RootLba;
+    UINT32 CurSize = RootSize;
+
+    for (int i = 0; i < 3; i++) {
+        UINT32 Sectors = (CurSize + 2047) / 2048;
+        if (Sectors > 32) Sectors = 32;
+
+        BOOLEAN Found = FALSE;
+        for (UINT32 s = 0; s < Sectors; s++) {
+            Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, 
+                ((UINT64)(CurLba + s) * 2048ULL) / (UINT64)BS, 2048, Buf);
+            if (EFI_ERROR(Status)) break;
+
+            UINT8 *ptr = Buf;
+            while (ptr < Buf + 2048 && *ptr != 0) {
+                ISO9660_DIR_RECORD *rec = (ISO9660_DIR_RECORD *)ptr;
+                if (rec->length < 33) break;
+
+                if (rec->name_length > 0 && rec->name[0] != 0 && rec->name[0] != 1) {
+                    char EntryName[256];
+                    UINTN Len = rec->name_length;
+                    if (Len > 255) Len = 255;
+                    memcpy(EntryName, rec->name, Len);
+                    EntryName[Len] = 0;
+                    
+                    char *Semicolon = strchr(EntryName, ';');
+                    if (Semicolon) *Semicolon = 0;
+                    Len = strlen(EntryName);
+                    if (Len > 0 && EntryName[Len-1] == '.') EntryName[Len-1] = 0;
+
+                    if (strcasecmp(EntryName, Path[i]) == 0) {
+                        CurLba = rec->extent_lba_le;
+                        CurSize = rec->data_length_le;
+                        Found = TRUE;
+                        break;
+                    }
+                }
+                ptr += rec->length;
+                if (rec->length == 0 || ptr >= Buf + 2048) break;
+            }
+            if (Found) break;
+        }
+        if (!Found) {
+            uefi_call_wrapper(ST->BootServices->FreePool, 1, Buf);
+            return EFI_NOT_FOUND;
+        }
+    }
+    
+    if (CurSize > 1024 * 1024 * 4) {
+        uefi_call_wrapper(ST->BootServices->FreePool, 1, Buf);
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    VOID *FileBuffer = NULL;
+    Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, CurSize, &FileBuffer);
+    if (EFI_ERROR(Status)) {
+        uefi_call_wrapper(ST->BootServices->FreePool, 1, Buf);
+        return Status;
+    }
+
+    UINT32 Remaining = CurSize;
+    UINT32 Lba = CurLba;
+    UINT8 *Dst = (UINT8 *)FileBuffer;
+    while (Remaining > 0) {
+        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, 
+            ((UINT64)Lba * 2048ULL) / (UINT64)BS, 2048, Buf);
+        if (EFI_ERROR(Status)) break;
+        UINT32 Copy = (Remaining < 2048) ? Remaining : 2048;
+        memcpy(Dst, Buf, Copy);
+        Dst += Copy;
+        Remaining -= Copy;
+        Lba++;
+    }
+
+    uefi_call_wrapper(ST->BootServices->FreePool, 1, Buf);
+
+    if (EFI_ERROR(Status)) {
+        uefi_call_wrapper(ST->BootServices->FreePool, 1, FileBuffer);
+        return Status;
+    }
+
+    EFI_HANDLE BootManagerHandle = NULL;
+    Status = uefi_call_wrapper(ST->BootServices->LoadImage, 6,
+        FALSE, ImageHandle, NULL, FileBuffer, CurSize, &BootManagerHandle);
+    
+    uefi_call_wrapper(ST->BootServices->FreePool, 1, FileBuffer);
+
     if (EFI_ERROR(Status)) return Status;
 
     UINTN ExitDataSize = 0;
@@ -396,7 +536,6 @@ static EFI_STATUS StartBootManager(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST)
         ByProtocol, &gEfiSimpleFileSystemProtocolGuid, NULL, &Count, &Handles);
     if (EFI_ERROR(Status) || !Handles) return Status;
 
-    EFI_STATUS LastStatus = EFI_NOT_FOUND;
     for (UINTN i = 0; i < Count; ++i) {
         if (Handles[i] == LoadedImage->DeviceHandle) continue;
         Status = TryStartBootManagerFromHandle(ImageHandle, ST, Handles[i]);
@@ -404,10 +543,9 @@ static EFI_STATUS StartBootManager(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST)
             uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
             return EFI_SUCCESS;
         }
-        LastStatus = Status;
     }
     uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
-    return LastStatus;
+    return EFI_NOT_FOUND;
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
