@@ -347,16 +347,21 @@ image: all
 	@cat $(BIOS_STAGE1_BIN) $(BIOS_STAGE2_BIN) > $(BUILD_DIR)/iso_root/biosboot.img
 
 	@xorriso -as mkisofs \
-		-R -J -joliet-long -V "IMPLUSOS" \
-		-partition_offset 16 \
-		-b biosboot.img -no-emul-boot -boot-load-size 256 -boot-info-table \
-		-eltorito-alt-boot \
-		-e efiboot.img -no-emul-boot \
-		-eltorito-platform efi \
-		-isohybrid-mbr $(BIOS_STAGE1_BIN) \
-		-isohybrid-gpt-basdat \
-		-o $(IMAGE) \
-		$(BUILD_DIR)/iso_root
+    -iso-level 3 \
+    -full-iso9660-filenames \
+    -volid "IMPLUSOS" \
+    -eltorito-boot biosboot.img \
+        -no-emul-boot \
+        -boot-load-size 4 \
+        -boot-info-table \
+    -eltorito-alt-boot \
+    -e efiboot.img \
+        -no-emul-boot \
+    -isohybrid-apm-hfsplus \
+    -J -joliet-long \
+    -R \
+    -o $(IMAGE) \
+    $(BUILD_DIR)/iso_root
 	@rm -rf $(BUILD_DIR)/iso_root $(BUILD_DIR)/efiboot.img
 
 QEMU_COMMON = \
