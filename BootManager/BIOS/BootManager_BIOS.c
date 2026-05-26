@@ -133,8 +133,8 @@ typedef struct {
     uint32_t attr;
 } __attribute__((packed)) E820_ENTRY;
 
-extern int bios_read_sector32(uint32_t drive, uint32_t lba_low, uint32_t lba_high, void *buffer);
-extern void bios_enter_kernel64(uint32_t entry_low, uint32_t boot_info_low) __attribute__((noreturn));
+static int (*g_bios_read_sector)(uint32_t, uint32_t, uint32_t, void *);
+static void (*g_bios_enter_kernel)(uint32_t, uint32_t);
 
 static uint8_t g_sector[ISO_SECTOR_SIZE] __attribute__((aligned(16)));
 static EFI_MEMORY_DESCRIPTOR g_memory_map[128] __attribute__((aligned(16)));
@@ -153,11 +153,11 @@ static inline uint8_t inb(uint16_t port) {
 
 static int read_sector(BIOS_FAT32 *fs, uint64_t sector, void *buffer) {
     uint64_t lba = fs->partition_lba + sector;
-    return bios_read_sector32(fs->boot_drive, (uint32_t)lba, (uint32_t)(lba >> 32), buffer);
+    return g_bios_read_sector(fs->boot_drive, (uint32_t)lba, (uint32_t)(lba >> 32), buffer);
 }
 
 static int read_absolute(uint8_t drive, uint64_t lba, void *buffer) {
-    return bios_read_sector32(drive, (uint32_t)lba, (uint32_t)(lba >> 32), buffer);
+    return g_bios_read_sector(drive, (uint32_t)lba, (uint32_t)(lba >> 32), buffer);
 }
 
 static char bios_tolower(char c) {
@@ -898,6 +898,9 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
         for (;;) __asm__ volatile("hlt");
     }
 
+    g_bios_read_sector = (int (*)(uint32_t, uint32_t, uint32_t, void *))params->read_sector_ptr;
+    g_bios_enter_kernel = (void (*)(uint32_t, uint32_t))params->enter_kernel_ptr;
+
     int has_kernel = 0;
     uint32_t kernel_size = 0;
 
@@ -1047,5 +1050,5 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
 
     build_memory_map(params, &g_boot_info);
 
-    bios_enter_kernel64(entry, (uint32_t)(uintptr_t)&g_boot_info);
+    g_bios_enter_kernel(entry, (uint32_t)(uintptr_t)&g_boot_info);
 }

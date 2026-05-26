@@ -24,20 +24,23 @@ USERLAND_DIR := Userland
 KERNEL_ELF        := $(BUILD_DIR)/Kernel/Kernel_Main.ELF
 BOOTX64_EFI       := $(BUILD_DIR)/Loader/BOOTX64.EFI
 BOOTMANAGER_EFI   := $(BUILD_DIR)/BootManager/BOOTMANAGER.EFI
-BIOS_STAGE1_BIN   := $(BUILD_DIR)/Loader/BIOS/stage1.bin
-BIOS_STAGE2_BIN   := $(BUILD_DIR)/Loader/BIOS/stage2.bin
-USERLAND_INIT_ELF := $(BUILD_DIR)/Userland/Userland.ELF
+BIOS_STAGE1_BIN     := $(BUILD_DIR)/Loader/BIOS/stage1.bin
+BIOS_STAGE2_BIN     := $(BUILD_DIR)/Loader/BIOS/stage2.bin
+BIOS_BOOTMANAGER_BIN := $(BUILD_DIR)/BootManager/BootManager_BIOS.BIN
+USERLAND_INIT_ELF   := $(BUILD_DIR)/Userland/Userland.ELF
 
 LOADER_CFLAGS := \
-	-I. \
-	-I/usr/local/include/efi/ \
-	-I/usr/local/include/efi/$(ARCH) \
-	-IBootManager/BootManager_libc/include \
-	-ffreestanding -fpic -fshort-wchar -fno-stack-protector \
-	-fno-builtin -mno-red-zone \
-	-Wall -Wextra -DEFI_FUNCTION_WRAPPER
+    -I. \
+    -I/usr/local/include/efi/ \
+    -I/usr/local/include/efi/$(ARCH) \
+    -IBootManager/BootManager_libc/include \
+    -ffreestanding -fpie -fshort-wchar -fno-stack-protector \
+    -fno-builtin -mno-red-zone \
+    -mno-sse2 -mno-sse3 -mno-ssse3 -mno-sse4 \
+    -msoft-float \
+    -Wall -Wextra -DEFI_FUNCTION_WRAPPER
 
-BIOS_STAGE2_SECTORS := 127
+BIOS_STAGE2_SECTORS := 32
 BIOS_CFLAGS := \
 	-m32 -I. -IKernel -IKernel/include -IBootManager/BIOS \
 	-ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
@@ -46,6 +49,7 @@ BIOS_CFLAGS := \
 	-Wall -Wextra -O2
 
 BIOS_LDFLAGS := -m elf_i386 -nostdlib --build-id=none -T BootManager/BIOS/linker.ld
+BIOS_BM_LDFLAGS := -m elf_i386 -nostdlib --build-id=none -T BootManager/BIOS/bootmanager_bios.ld
 
 USERLAND_LDFLAGS     := -T Userland/Userland.ld -nostdlib --build-id=none
 USERLAND_APP_LDFLAGS := -nostdlib --build-id=none
@@ -122,6 +126,7 @@ all: $(BOOTX64_EFI) \
      $(BOOTMANAGER_EFI) \
      $(BIOS_STAGE1_BIN) \
      $(BIOS_STAGE2_BIN) \
+     $(BIOS_BOOTMANAGER_BIN) \
      kernel \
      $(USERLAND_INIT_ELF) \
      driver_stage \
@@ -188,14 +193,23 @@ $(BIOS_STAGE1_BIN): BootLoader/x86_64/BIOS/stage1.asm
 	mkdir -p $(dir $@)
 	$(NASM) -f bin -DSTAGE2_SECTORS=$(BIOS_STAGE2_SECTORS) $< -o $@
 
-BIOS_STAGE2_OBJS := \
+$(BUILD_DIR)/Loader/BIOS/lowlevel.o: BootLoader/x86_64/BIOS/lowlevel.asm BootManager/BIOS/stage2_constants.inc
+	mkdir -p $(dir $@)
+	$(NASM) -f elf32 -I. $< -o $@
+
+BIOS_LOADER_OBJS := \
 	$(BUILD_DIR)/Loader/BIOS/stage2_entry.o \
-	$(BUILD_DIR)/BootManager/BIOS/BootManager_BIOS.o \
+	$(BUILD_DIR)/Loader/BIOS/lowlevel.o \
+	$(BUILD_DIR)/Loader/BIOS/BiosLoader.o \
 	$(BUILD_DIR)/BootManager/BIOS/string.o
 
 $(BUILD_DIR)/Loader/BIOS/stage2_entry.o: BootLoader/x86_64/BIOS/stage2_entry.asm BootManager/BIOS/stage2_constants.inc
 	mkdir -p $(dir $@)
 	$(NASM) -f elf32 -I. $< -o $@
+
+$(BUILD_DIR)/Loader/BIOS/BiosLoader.o: BootLoader/x86_64/BIOS/BiosLoader.c
+	mkdir -p $(dir $@)
+	$(CC) $(BIOS_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/BootManager/BIOS/BootManager_BIOS.o: BootManager/BIOS/BootManager_BIOS.c BootManager/BIOS/BIOS_Handoff.h
 	mkdir -p $(dir $@)
@@ -205,15 +219,30 @@ $(BUILD_DIR)/BootManager/BIOS/string.o: BootManager/BootManager_libc/source/stri
 	mkdir -p $(dir $@)
 	$(CC) $(BIOS_CFLAGS) -c $< -o $@
 
-$(BIOS_STAGE2_BIN): $(BIOS_STAGE2_OBJS) BootManager/BIOS/linker.ld
+$(BIOS_STAGE2_BIN): $(BIOS_LOADER_OBJS) BootManager/BIOS/linker.ld
 	mkdir -p $(dir $@)
-	$(LD) $(BIOS_LDFLAGS) $(BIOS_STAGE2_OBJS) -o $@.elf
+	$(LD) $(BIOS_LDFLAGS) $(BIOS_LOADER_OBJS) -o $@.elf
 	$(ARCH)-elf-objcopy -O binary $@.elf $@
 	@size=$$(wc -c < $@); max=$$(( $(BIOS_STAGE2_SECTORS) * 512 )); \
 	if [ $$size -gt $$max ]; then \
+		echo "BIOS Loader too large: $$size bytes (max $$max)"; \
 		exit 1; \
 	fi; \
 	truncate -s $$max $@
+
+$(BUILD_DIR)/BootManager/BIOS/bm_entry.o: BootManager/BIOS/bm_entry.asm
+	mkdir -p $(dir $@)
+	$(NASM) -f elf32 $< -o $@
+
+BIOS_BM_OBJS := \
+	$(BUILD_DIR)/BootManager/BIOS/bm_entry.o \
+	$(BUILD_DIR)/BootManager/BIOS/BootManager_BIOS.o \
+	$(BUILD_DIR)/BootManager/BIOS/string.o
+
+$(BIOS_BOOTMANAGER_BIN): $(BIOS_BM_OBJS) BootManager/BIOS/bootmanager_bios.ld
+	mkdir -p $(dir $@)
+	$(LD) $(BIOS_BM_LDFLAGS) $(BIOS_BM_OBJS) -o $@.elf
+	$(ARCH)-elf-objcopy -O binary $@.elf $@
 
 BOOTMANAGER_OBJS := \
 	$(BUILD_DIR)/BootManager/UEFI/BootManager.o \
@@ -280,13 +309,14 @@ __mount_image:
 	sudo mkdir -p $$MOUNT_POINT/EFI/BOOT $$MOUNT_POINT/Kernel/Driver $$MOUNT_POINT/Userland $$MOUNT_POINT/BootManager; \
 	sudo cp $(BOOTX64_EFI) $$MOUNT_POINT/EFI/BOOT/BOOTX64.EFI; \
 	sudo cp $(BOOTMANAGER_EFI) $$MOUNT_POINT/EFI/BOOT/BOOTMANAGER.EFI; \
+	sudo cp $(BIOS_BOOTMANAGER_BIN) $$MOUNT_POINT/BootManager/BootManager_BIOS.BIN; \
 	sudo cp $(KERNEL_ELF) $$MOUNT_POINT/Kernel/Kernel_Main.ELF; \
 	sudo cp $(USERLAND_INIT_ELF) $$MOUNT_POINT/Userland/Userland.ELF; \
 	if [ -d $(DRIVER_STAGE_DIR) ]; then \
 		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -exec sudo cp {} $$MOUNT_POINT/Kernel/Driver/ \; ; \
 	fi; \
 	if [ -d $(BOOT_RESOURCE_DIR) ]; then \
-		sudo cp -r $(BOOT_RESOURCE_DIR) $$MOUNT_POINT/BootManager/; \
+		sudo cp -r $(BOOT_RESOURCE_DIR)/* $$MOUNT_POINT/BootManager/Resource/; \
 	fi; \
 	sync; \
 	sudo umount $$MOUNT_POINT || exit 1;
@@ -294,8 +324,12 @@ __mount_image:
 ESP_IMG     := $(IMAGE_DIR)/ImplusOS.iso
 ESP_SIZE_MB := 40
 
-UNAME_S := $(shell uname -s)
+IMAGE_DIR := Image
 
+UEFI_IMAGE := $(IMAGE_DIR)/ImplusOS_UEFI.iso
+BIOS_IMAGE := $(IMAGE_DIR)/ImplusOS_BIOS.iso
+
+image_esp: image
 image: all
 	@mkdir -p $(IMAGE_DIR)
 	@mkdir -p $(BUILD_DIR)/iso_root/EFI/BOOT
@@ -306,6 +340,7 @@ image: all
 	
 	@cp $(BOOTX64_EFI)       $(BUILD_DIR)/iso_root/EFI/BOOT/BOOTX64.EFI
 	@cp $(BOOTMANAGER_EFI)   $(BUILD_DIR)/iso_root/EFI/BOOT/BOOTMANAGER.EFI
+	@cp $(BIOS_BOOTMANAGER_BIN) $(BUILD_DIR)/iso_root/BootManager/BootManager_BIOS.BIN
 	@mkdir -p $(BUILD_DIR)/iso_root/Kernel && cp $(KERNEL_ELF) $(BUILD_DIR)/iso_root/Kernel/Kernel_Main.ELF
 	@cp $(USERLAND_INIT_ELF) $(BUILD_DIR)/iso_root/Userland/Userland.ELF
 	@if [ -d $(DRIVER_STAGE_DIR) ]; then \
@@ -332,17 +367,13 @@ image: all
 		done; \
 	fi
 
-	@rm -f $(BUILD_DIR)/efiboot.img
-	@truncate -s 96M $(BUILD_DIR)/efiboot.img
-	@mformat -i $(BUILD_DIR)/efiboot.img -F -v ESP ::
-	@mmd -i $(BUILD_DIR)/efiboot.img ::/EFI
-	@mmd -i $(BUILD_DIR)/efiboot.img ::/EFI/BOOT
-	@mcopy -i $(BUILD_DIR)/efiboot.img $(BOOTX64_EFI) ::/EFI/BOOT/BOOTX64.EFI
-	@mcopy -i $(BUILD_DIR)/efiboot.img $(BOOTMANAGER_EFI) ::/EFI/BOOT/BOOTMANAGER.EFI
-	@mcopy -s -i $(BUILD_DIR)/efiboot.img $(BUILD_DIR)/iso_root/Kernel ::/
-	@mcopy -s -i $(BUILD_DIR)/efiboot.img $(BUILD_DIR)/iso_root/Userland ::/
-	@mcopy -s -i $(BUILD_DIR)/efiboot.img $(BUILD_DIR)/iso_root/BootManager ::/
-	@cp $(BUILD_DIR)/efiboot.img $(BUILD_DIR)/iso_root/efiboot.img
+	@rm -f $(BUILD_DIR)/espboot.img
+	@truncate -s 64M $(BUILD_DIR)/espboot.img
+	@mformat -i $(BUILD_DIR)/espboot.img -F -v ESP ::
+	@mmd -i $(BUILD_DIR)/espboot.img ::/EFI
+	@mmd -i $(BUILD_DIR)/espboot.img ::/EFI/BOOT
+	@mcopy -i $(BUILD_DIR)/espboot.img $(BOOTX64_EFI) ::/EFI/BOOT/BOOTX64.EFI
+	@cp $(BUILD_DIR)/espboot.img $(BUILD_DIR)/iso_root/espboot.img
 
 	@cat $(BIOS_STAGE1_BIN) $(BIOS_STAGE2_BIN) > $(BUILD_DIR)/iso_root/biosboot.img
 
@@ -355,14 +386,14 @@ image: all
         -boot-load-size 4 \
         -boot-info-table \
     -eltorito-alt-boot \
-    -e efiboot.img \
+    -e espboot.img \
         -no-emul-boot \
     -isohybrid-apm-hfsplus \
     -J -joliet-long \
     -R \
     -o $(IMAGE) \
     $(BUILD_DIR)/iso_root
-	@rm -rf $(BUILD_DIR)/iso_root $(BUILD_DIR)/efiboot.img
+	@rm -rf $(BUILD_DIR)/iso_root $(BUILD_DIR)/espboot.img
 
 QEMU_COMMON = \
 	-machine q35,accel=tcg \

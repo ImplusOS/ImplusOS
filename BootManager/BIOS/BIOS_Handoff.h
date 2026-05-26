@@ -30,6 +30,9 @@ typedef struct {
     uint32_t e820_desc_size;
 
     uint64_t acpi_rsdp;
+
+    uint32_t read_sector_ptr;
+    uint32_t enter_kernel_ptr;
 } BIOS_BOOT_PARAMS;
 #pragma pack(pop)
 

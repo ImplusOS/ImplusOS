@@ -921,7 +921,12 @@ static EFI_STATUS PreloadDriversFromISO(EFI_SYSTEM_TABLE *ST, BOOT_INFO *BootInf
                                             D += Copy; Rem -= Copy; L++;
                                         }
                                         UINTN idx = BootInfo->LoadedFileCount++;
-                                        memcpy(BootInfo->LoadedFiles[idx].Name, EntryName, LOADED_FILE_NAME_MAX);
+                                        UINTN len = 0;
+                                        while (EntryName[len] && len < LOADED_FILE_NAME_MAX - 1) {
+                                            BootInfo->LoadedFiles[idx].Name[len] = EntryName[len];
+                                            len++;
+                                         }
+                                        BootInfo->LoadedFiles[idx].Name[len] = '\0';
                                         BootInfo->LoadedFiles[idx].PhysAddr = (EFI_PHYSICAL_ADDRESS)(UINTN)FileBuf;
                                         BootInfo->LoadedFiles[idx].Size = rec->data_length_le;
                                     }
@@ -950,7 +955,7 @@ static EFI_FILE_PROTOCOL *ResolveResourceRoot(EFI_HANDLE ImageHandle, EFI_SYSTEM
     if (Root) {
         EFI_FILE_PROTOCOL *TestFile = NULL;
         Status = uefi_call_wrapper(Root->Open, 5, Root, &TestFile,
-            L"BootManager\\Resource\\Images\\BootLogo.bmp", EFI_FILE_MODE_READ, 0);
+            L"\\BootManager\\Resource\\Images\\BootLogo.bmp", EFI_FILE_MODE_READ, 0);
         if (!EFI_ERROR(Status)) {
             uefi_call_wrapper(TestFile->Close, 1, TestFile);
             return Root;
@@ -971,7 +976,7 @@ static EFI_FILE_PROTOCOL *ResolveResourceRoot(EFI_HANDLE ImageHandle, EFI_SYSTEM
         if (!R) continue;
         EFI_FILE_PROTOCOL *TestFile = NULL;
         Status = uefi_call_wrapper(R->Open, 5, R, &TestFile,
-            L"BootManager\\Resource\\Images\\BootLogo.bmp", EFI_FILE_MODE_READ, 0);
+            L"\\BootManager\\Resource\\Images\\BootLogo.bmp", EFI_FILE_MODE_READ, 0);
         if (!EFI_ERROR(Status)) {
             uefi_call_wrapper(TestFile->Close, 1, TestFile);
             Found = R;
@@ -1082,8 +1087,8 @@ EFI_STATUS LoadKernelELF(
 
     for (UINTN i = 0; i < Ehdr->e_phnum; i++) {
         if (Phdrs[i].p_type != PT_LOAD) continue;
-        if (Phdrs[i].p_paddr < MinAddr) MinAddr = Phdrs[i].p_paddr;
-        if (Phdrs[i].p_paddr + Phdrs[i].p_memsz > MaxAddr) MaxAddr = Phdrs[i].p_paddr + Phdrs[i].p_memsz;
+        if (Phdrs[i].p_vaddr < MinAddr) MinAddr = Phdrs[i].p_vaddr;
+        if (Phdrs[i].p_vaddr + Phdrs[i].p_memsz > MaxAddr) MaxAddr = Phdrs[i].p_vaddr + Phdrs[i].p_memsz;
         LoadedCount++;
     }
 
@@ -1115,7 +1120,7 @@ EFI_STATUS LoadKernelELF(
     }
 
     if (EFI_ERROR(Status) || KernelBaseAddr == 0) {
-        return Status;
+        return EFI_ERROR(Status) ? Status : EFI_LOAD_ERROR;
     }
 
     for (UINTN i = 0; i < Ehdr->e_phnum; i++) {
@@ -1129,9 +1134,9 @@ EFI_STATUS LoadKernelELF(
             return EFI_LOAD_ERROR;
         }
 
-        EFI_PHYSICAL_ADDRESS Dest = KernelBaseAddr + (Ph->p_paddr - MinAddr);
-        memcpy((VOID *)Dest, (UINT8 *)KernelImage + Ph->p_offset, Ph->p_filesz);
-        memset((VOID *)(Dest + Ph->p_filesz), 0, Ph->p_memsz - Ph->p_filesz);
+        EFI_PHYSICAL_ADDRESS Dest = KernelBaseAddr + (Ph->p_vaddr - MinAddr);
+        memcpy((VOID *)(UINTN)Dest, (UINT8 *)KernelImage + Ph->p_offset, Ph->p_filesz);
+        memset((VOID *)(UINTN)(Dest + Ph->p_filesz), 0, Ph->p_memsz - Ph->p_filesz);
     }
 
     UINT64 LoadBias = KernelBaseAddr - MinAddr;
@@ -1145,7 +1150,7 @@ EFI_STATUS LoadKernelELF(
                 for (UINTN j = 0; j < RelasCount; j++) {
                     UINT32 type = (UINT32)(Relas[j].r_info & 0xFFFFFFFF);
                     if (type == R_X86_64_RELATIVE) {
-                        UINT64 *Target = (UINT64 *)(KernelBaseAddr + (Relas[j].r_offset - MinAddr));
+                        UINT64 *Target = (UINT64 *)(UINTN)(KernelBaseAddr + (Relas[j].r_offset - MinAddr));
                         *Target = LoadBias + Relas[j].r_addend;
                     }
                 }
@@ -1243,8 +1248,8 @@ EFI_STATUS ExitBootServicesComplete(
         if (EFI_ERROR(Status)) return Status;
 
         Status = uefi_call_wrapper(ST->BootServices->GetMemoryMap, 5,
-            &BufferSize, BootInfo->MemoryMap, &MapKey,
-            &BootInfo->MemoryMapDescriptorSize, &BootInfo->MemoryMapDescriptorVersion);
+            &BufferSize, (EFI_MEMORY_DESCRIPTOR *)(UINTN)BootInfo->MemoryMap, &MapKey,
+            (UINTN *)&BootInfo->MemoryMapDescriptorSize, &BootInfo->MemoryMapDescriptorVersion);
         if (EFI_ERROR(Status)) {
             uefi_call_wrapper(ST->BootServices->FreePool, 1, BootInfo->MemoryMap);
             continue;
@@ -1550,21 +1555,25 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
 
     if (EFI_ERROR(Status) || !LoadedImage) return Status;
     
-    Status = uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
-        LoadedImage->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
-    if (!EFI_ERROR(Status) && Fs) {
-        Status = uefi_call_wrapper(Fs->OpenVolume, 2, Fs, &Root);
+    if (LoadedImage->DeviceHandle) {
+        Status = uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
+            LoadedImage->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
+        if (!EFI_ERROR(Status) && Fs) {
+            uefi_call_wrapper(Fs->OpenVolume, 2, Fs, &Root);
+        }
     }
     
     Status = uefi_call_wrapper(ST->BootServices->LocateProtocol, 3,
         &gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Gop);
 
-    BootInfo.PartitionStartLBA = GetPartitionStartLBA(LoadedImage->DeviceHandle, ST, &BootInfo);
-    
-    CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST, &BootInfo);
+    if (LoadedImage->DeviceHandle) {
+        BootInfo.PartitionStartLBA = GetPartitionStartLBA(LoadedImage->DeviceHandle, ST, &BootInfo);
+        CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST, &BootInfo);
+    }
 
-    Status = uefi_call_wrapper(Fs->OpenVolume, 2, Fs, &Root);
-    if (EFI_ERROR(Status) || !Root) return Status;
+    if (Root == NULL && Fs != NULL) {
+        Status = uefi_call_wrapper(Fs->OpenVolume, 2, Fs, &Root);
+    }
 
     Status = uefi_call_wrapper(ST->BootServices->LocateProtocol, 3,
         &gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Gop);
@@ -1587,19 +1596,42 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
 
     VOID  *FontBuffer = NULL;
     UINTN  FontSize   = 0;
+
     if (ResourceRoot) {
-        EFI_FILE_PROTOCOL *FontFile;
-        Status = uefi_call_wrapper(ResourceRoot->Open, 5, ResourceRoot, &FontFile,
-            L"BootManager\\Resource\\Fonts\\NotoSansJP-Regular.ttf", EFI_FILE_MODE_READ, 0);
-        if (!EFI_ERROR(Status)) {
+        EFI_FILE_PROTOCOL *FontFile = NULL;
+
+        Status = uefi_call_wrapper(
+            ResourceRoot->Open,
+            5,
+            ResourceRoot,
+            &FontFile,
+            L"Fonts\\NotoSansJP-Regular.ttf",
+            EFI_FILE_MODE_READ,
+            0
+        );
+        if (EFI_ERROR(Status)) {
+            Print(L"Font open failed: %r\n", Status);
+        } else {
             Status = LoadFileToMemory(ST, FontFile, &FontBuffer, &FontSize);
+            if (EFI_ERROR(Status)) {
+                Print(L"Load font failed: %r\n", Status);
+            }
             uefi_call_wrapper(FontFile->Close, 1, FontFile);
         }
-
         if (FontBuffer && FontSize > 0) {
-            DrawTextGraySmallCenterBottom(ST, ResourceRoot, Gop, DisplayText, FontBuffer, FontSize);
+            DrawTextGraySmallCenterBottom(
+                ST,
+                ResourceRoot,
+                Gop,
+                DisplayText,
+                FontBuffer,
+                FontSize
+            );
         }
         uefi_call_wrapper(ResourceRoot->Close, 1, ResourceRoot);
+    } else {
+        Print(L"ResourceRoot OK: %p\n", ResourceRoot);
+        Print(L"ResourceRoot == NULL\n");
     }
 
     BootInfo.FontDataAddress = (uint64_t)(UINTN)FontBuffer;
@@ -1628,7 +1660,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
         UINT32 EfibootIsoLba = 0;
         UINT32 EfibootSize = 0;
         BOOLEAN EfibootIsDir = FALSE;
-        if (!EFI_ERROR(FindISOPath(ST, "efiboot.img", &EfibootIsoLba, &EfibootSize, &EfibootIsDir)) &&
+        if (!EFI_ERROR(FindISOPath(ST, "espboot.img", &EfibootIsoLba, &EfibootSize, &EfibootIsDir)) &&
             !EfibootIsDir && EfibootIsoLba != 0 && EfibootSize >= 512) {
             BootInfo.PartitionStartLBA = ISO_TO_ATA(EfibootIsoLba);
             if (BootInfo.BootDriveType == BOOT_DRIVE_TYPE_UNKNOWN) {
@@ -1638,8 +1670,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     }
 
     KernelRoot = NULL;
-    Status = uefi_call_wrapper(Root->Open, 5, Root, &KernelFile,
-        L"Kernel\\Kernel_Main.ELF", EFI_FILE_MODE_READ, 0);
+    
+    if (Root != NULL) {
+        Status = uefi_call_wrapper(Root->Open, 5, Root, &KernelFile,
+            L"Kernel\\Kernel_Main.ELF", EFI_FILE_MODE_READ, 0);
+    } else {
+        Status = EFI_NOT_FOUND;
+    }
 
     if (EFI_ERROR(Status)) {
         UINTN      Count   = 0;
