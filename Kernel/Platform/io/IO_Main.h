@@ -54,3 +54,4 @@ bool disk_read(uint32_t lba, uint8_t *buffer, uint32_t sectors);
 bool disk_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors);
 bool disk_io_is_working(void);
 io_protocol_type_t disk_io_get_protocol(void);
+uint32_t disk_get_partition_lba(void);

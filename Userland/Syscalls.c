@@ -52,7 +52,6 @@ static void handle_input_message(ipc_message_t *msg) {
 #define SYSCALL_PROCESS_YIELD     7ULL
 #define SYSCALL_PROCESS_EXIT      8ULL
 #define SYSCALL_THREAD_CREATE     9ULL
-#define SYSCALL_GET_FAT32_FILE_T  60ULL
 #define SYSCALL_FILE_OPEN         23ULL
 #define SYSCALL_FILE_READ         24ULL
 #define SYSCALL_FILE_WRITE        25ULL
@@ -234,10 +233,6 @@ int os_strcat_s(char *dst, size_t dst_size, const char *src)
     return 0;
 }
 
-int32_t get_fat32_file_t()
-{
-    return os_errno_from_i32_status((int32_t)syscall0(SYSCALL_GET_FAT32_FILE_T));
-}
 
 __attribute__((unused)) int32_t file_open(const char *path, uint64_t flags)
 {

@@ -1,0 +1,5 @@
+#pragma once
+
+#include "kernel/interfaces/vfs_types.h"
+
+const vfs_driver_t *iso9660_vfs_get_driver(void);

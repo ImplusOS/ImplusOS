@@ -102,7 +102,6 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
         case SYSCALL_THREAD_CREATE:
             return PROCESS_CAP_PROCESS;
             
-        case SYSCALL_GET_FAT32_FILE_T:
         case SYSCALL_FILE_OPEN:
         case SYSCALL_FILE_CREAT:
         case SYSCALL_FILE_READ:
@@ -287,11 +286,6 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
 
-        case SYSCALL_GET_FAT32_FILE_T: {
-            set_syscall_i32(saved_rsp, (int32_t)sizeof(FAT32_FILE));
-            break;
-        }
-
         case SYSCALL_FILE_OPEN: {
             char path[SYSCALL_MAX_PATH_LEN];
             if (copy_user_cstring(path, sizeof(path),
@@ -384,8 +378,8 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         }
 
         case SYSCALL_FILE_READDIR: {
-            FAT32_DIRENT *entry_out = (FAT32_DIRENT *)(uintptr_t)arg2;
-            if (!user_buffer_ok(entry_out, sizeof(FAT32_DIRENT))) {
+            vfs_dirent_t *entry_out = (vfs_dirent_t *)(uintptr_t)arg2;
+            if (!user_buffer_ok(entry_out, sizeof(vfs_dirent_t))) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_dirent_buffer");
                 break;
             }

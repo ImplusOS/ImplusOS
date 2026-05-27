@@ -4,7 +4,7 @@
 #include "DriverModule.h"
 #include "Debug/serial/Serial.h"
 #include "Drivers/Client/Display/Display_Main.h"
-#include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
+#include "Core/vfs/VFS.h"
 #include "Drivers/Client/NIC/NIC.h"
 #include "Drivers/Client/PS2/PS2_Input.h"
 #include "Drivers/Client/USB/USB_Driver_API.h"
@@ -155,11 +155,6 @@ const pci_driver_t *driver_manager_get_pci_driver(void)
     return (const pci_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_PCI);
 }
 
-const fat32_driver_t *driver_manager_get_fat32_driver(void)
-{
-    return (const fat32_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_FAT32);
-}
-
 const iso9660_driver_t *driver_manager_get_iso9660_driver(void)
 {
     return (const iso9660_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_ISO9660);
@@ -197,92 +192,89 @@ bool driver_manager_reload_module(const char *module_name)
     return driver_module_manager_reload_by_name(module_name);
 }
 
-bool driver_manager_fs_init(const FAT32_BPB *initial_bpb)
+bool driver_manager_fs_init(void)
 {
-    return fat32_init(initial_bpb);
+    return vfs_init();
 }
 
-bool driver_manager_fs_find_file(const char *path, FAT32_FILE *file)
+bool driver_manager_fs_find_file(const char *path, vfs_file_t *file)
 {
-    bool result = fat32_find_file(path, file);
-    return result;
+    return vfs_find_file(path, file);
 }
 
-bool driver_manager_fs_read_file(FAT32_FILE *file, uint8_t *buffer)
+bool driver_manager_fs_read_file(vfs_file_t *file, uint8_t *buffer)
 {
-    bool result = fat32_read_file(file, buffer);
-    return result;
+    return vfs_read_file(file, buffer);
 }
 
-bool driver_manager_fs_write_file(FAT32_FILE *file, const uint8_t *buffer)
+bool driver_manager_fs_write_file(vfs_file_t *file, const uint8_t *buffer)
 {
-    return fat32_write_file(file, buffer);
+    return vfs_write_file(file, buffer);
 }
 
-bool driver_manager_fs_read_at(FAT32_FILE *file, uint32_t offset, uint8_t *buffer, uint32_t size)
+bool driver_manager_fs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer, uint32_t size)
 {
-    bool result = fat32_read_at(file, offset, buffer, size);
-    return result;
+    return vfs_read_at(file, offset, buffer, size);
 }
 
-bool driver_manager_fs_write_at(FAT32_FILE *file, uint32_t offset, const uint8_t *buffer, uint32_t size)
+bool driver_manager_fs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size)
 {
-    return fat32_write_at(file, offset, buffer, size);
+    return vfs_write_at(file, offset, buffer, size);
 }
 
-bool driver_manager_fs_truncate(FAT32_FILE *file, uint32_t new_size)
+bool driver_manager_fs_truncate(vfs_file_t *file, uint32_t new_size)
 {
-    return fat32_truncate(file, new_size);
+    return vfs_truncate(file, new_size);
 }
 
-uint32_t driver_manager_fs_get_file_size(FAT32_FILE *file)
+uint32_t driver_manager_fs_get_file_size(vfs_file_t *file)
 {
-    return fat32_get_file_size(file);
+    return vfs_get_file_size(file);
 }
 
 void driver_manager_fs_list_root_files(void)
 {
-    fat32_list_root_files();
+    vfs_list_root();
 }
 
 bool driver_manager_fs_creat(const char *path)
 {
-    return fat32_creat(path);
+    return vfs_creat(path);
 }
 
 bool driver_manager_fs_mkdir(const char *path)
 {
-    return fat32_mkdir(path);
+    return vfs_mkdir(path);
 }
 
 int32_t driver_manager_fs_opendir(const char *path)
 {
-    return fat32_opendir(path);
+    return vfs_opendir(path);
 }
 
-int32_t driver_manager_fs_readdir(int32_t dir_handle, FAT32_DIRENT *out_entry)
+int32_t driver_manager_fs_readdir(int32_t dir_handle, vfs_dirent_t *out_entry)
 {
-    return fat32_readdir(dir_handle, out_entry);
+    return vfs_readdir(dir_handle, out_entry);
 }
 
 int32_t driver_manager_fs_closedir(int32_t dir_handle)
 {
-    return fat32_closedir(dir_handle);
+    return vfs_closedir(dir_handle);
 }
 
 bool driver_manager_fs_unlink(const char *path)
 {
-    return fat32_unlink(path);
+    return vfs_unlink(path);
 }
 
 void driver_manager_fs_set_case_sensitive_lookup(bool enabled)
 {
-    fat32_set_case_sensitive_lookup(enabled);
+    vfs_set_case_sensitive(enabled);
 }
 
 bool driver_manager_fs_get_case_sensitive_lookup(void)
 {
-    return fat32_get_case_sensitive_lookup();
+    return vfs_get_case_sensitive();
 }
 
 bool driver_manager_display_init(void)

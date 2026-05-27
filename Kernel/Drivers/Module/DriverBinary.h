@@ -42,6 +42,7 @@ typedef struct {
 
     bool (*disk_read)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
     bool (*disk_write)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
+    uint32_t (*disk_get_partition_lba)(void);
 
     uint32_t (*pci_read_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset);
     void (*pci_write_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset, uint32_t value);
@@ -85,8 +86,6 @@ typedef struct {
     driver_storage_t storage;
     driver_usb_t     usb;
 } usb_master_vtable_t;
-
-
 
 typedef struct {
     void *addr;

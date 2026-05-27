@@ -32,4 +32,7 @@ typedef struct vfs_driver {
     int32_t (*readdir)(int32_t handle, vfs_dirent_t *out_entry);
     int32_t (*closedir)(int32_t handle);
     bool (*unlink)(const char *path);
+    void (*list_root)(void);
+    void (*set_case_sensitive)(bool enabled);
+    bool (*get_case_sensitive)(void);
 } vfs_driver_t;

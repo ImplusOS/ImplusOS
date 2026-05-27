@@ -769,7 +769,7 @@ int32_t process_spawn_user_elf(const char *path)
         .max_vaddr = USER_CODE_LIMIT,
     };
     elf_loaded_image_info_t image_info = {0};
-
+    
     if (!elf_loader_load_from_path(proc->cr3, path, &policy, &image_info)) {
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();

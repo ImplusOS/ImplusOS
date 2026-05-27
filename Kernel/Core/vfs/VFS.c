@@ -28,13 +28,19 @@ bool vfs_set_default_fs(const char *fs_type) {
 }
 
 static const vfs_driver_t* vfs_find_driver(const char *path) {
+    const vfs_driver_t* best_match = g_default_fs;
+    size_t best_match_len = 0;
+
     for (int i = 0; i < g_vfs_driver_count; i++) {
         size_t len = strlen(g_vfs_drivers[i].prefix);
-        if (strncmp(path, g_vfs_drivers[i].prefix, len) == 0) {
-            return &g_vfs_drivers[i];
+        if (len > 0 && strncmp(path, g_vfs_drivers[i].prefix, len) == 0) {
+            if (len > best_match_len) {
+                best_match = &g_vfs_drivers[i];
+                best_match_len = len;
+            }
         }
     }
-    return g_default_fs;
+    return best_match;
 }
 
 bool vfs_init(void) {
@@ -104,4 +110,23 @@ int32_t vfs_closedir(int32_t handle) {
 bool vfs_unlink(const char *path) {
     const vfs_driver_t *drv = vfs_find_driver(path);
     return drv ? drv->unlink(path) : false;
+}
+
+void vfs_list_root(void) {
+    if (g_default_fs && g_default_fs->list_root) {
+        g_default_fs->list_root();
+    }
+}
+
+void vfs_set_case_sensitive(bool enabled) {
+    if (g_default_fs && g_default_fs->set_case_sensitive) {
+        g_default_fs->set_case_sensitive(enabled);
+    }
+}
+
+bool vfs_get_case_sensitive(void) {
+    if (g_default_fs && g_default_fs->get_case_sensitive) {
+        return g_default_fs->get_case_sensitive();
+    }
+    return false;
 }

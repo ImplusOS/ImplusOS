@@ -31,6 +31,11 @@ typedef struct {
     uint32_t root_size;
     uint32_t vol_space_size;
     uint16_t logical_block_size;
+    bool     has_joliet;
+    uint32_t joliet_root_extent;
+    uint32_t joliet_root_size;
+    bool     has_rock_ridge;
+    uint8_t  rr_susp_skip;
 } ISO9660_CONTEXT;
 
 bool     iso9660_init(void);

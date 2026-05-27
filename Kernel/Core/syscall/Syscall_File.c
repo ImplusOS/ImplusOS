@@ -367,7 +367,7 @@ int32_t syscall_file_opendir(const char *path)
     return (int32_t)OS_STATUS_LIMIT_REACHED;
 }
 
-int32_t syscall_file_readdir(int32_t dir_handle, FAT32_DIRENT *out_entry)
+int32_t syscall_file_readdir(int32_t dir_handle, vfs_dirent_t *out_entry)
 {
     if (dir_handle < 0 || dir_handle >= FILE_MAX_DIR_HANDLE || out_entry == NULL ||
         g_dirs[dir_handle].used == 0) {
@@ -377,7 +377,7 @@ int32_t syscall_file_readdir(int32_t dir_handle, FAT32_DIRENT *out_entry)
         return (int32_t)OS_STATUS_ACCESS_DENIED;
     }
 
-    return vfs_readdir(g_dirs[dir_handle].vfs_handle, (vfs_dirent_t *)out_entry);
+    return vfs_readdir(g_dirs[dir_handle].vfs_handle, out_entry);
 }
 
 int32_t syscall_file_closedir(int32_t dir_handle)

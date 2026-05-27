@@ -56,6 +56,7 @@ static const driver_binary_t g_driver_api = {
     .outl = outl,
     .disk_read = disk_read,
     .disk_write = disk_write,
+    .disk_get_partition_lba = disk_get_partition_lba,
     .pci_read_config = pci_read_config,
     .pci_write_config = pci_write_config,
     .map_mmio_virt = map_mmio_virt,

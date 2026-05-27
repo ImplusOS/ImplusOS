@@ -6,65 +6,39 @@
 #include "Debug/printf/printf.h"
  
 static io_protocol_type_t g_current_protocol = IO_PROTOCOL_TYPE_NONE;
+static uint32_t g_partition_lba = 0;
  
 void disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type) {
     g_current_protocol = IO_PROTOCOL_TYPE_NONE;
-
-    serial_write_string("[disk] disk_io_init start\n");
-
+    g_partition_lba = (uint32_t)partition_lba;
+    
     if (boot_drive_type == 1) {
-        serial_write_string("[disk] trying ATA boot device\n");
-
         if (ata_init(partition_lba)) {
             g_current_protocol = IO_PROTOCOL_TYPE_ATA;
-            serial_write_string("[disk] ATA initialized\n");
             return;
         }
-
-        serial_write_string("[disk] ATA init failed\n");
     }
     else if (boot_drive_type == 2) {
-        serial_write_string("[disk] trying USB mass storage boot device\n");
-
         if (usb_ms_init(partition_lba)) {
             g_current_protocol = IO_PROTOCOL_TYPE_USB_MASS_STORAGE;
-            serial_write_string("[disk] USB mass storage initialized\n");
             return;
         }
-
-        serial_write_string("[disk] USB mass storage init failed\n");
     }
-
     if (g_current_protocol == IO_PROTOCOL_TYPE_NONE) {
-
-        serial_write_string("[disk] fallback probing start\n");
 
         if (ahci_init(partition_lba)) {
             g_current_protocol = IO_PROTOCOL_TYPE_AHCI;
-            serial_write_string("[disk] AHCI initialized\n");
             return;
         }
-
-        serial_write_string("[disk] AHCI init failed\n");
-
         if (ata_init(partition_lba)) {
             g_current_protocol = IO_PROTOCOL_TYPE_ATA;
-            serial_write_string("[disk] ATA initialized (fallback)\n");
             return;
         }
-
-        serial_write_string("[disk] ATA fallback failed\n");
-
         if (usb_ms_init(partition_lba)) {
             g_current_protocol = IO_PROTOCOL_TYPE_USB_MASS_STORAGE;
-            serial_write_string("[disk] USB initialized (fallback)\n");
             return;
         }
-
-        serial_write_string("[disk] USB fallback failed\n");
     }
-
-    serial_write_string("[disk] disk_io_init end\n");
 }
  
 bool disk_read(uint32_t lba, uint8_t *buffer, uint32_t sectors) {
@@ -99,4 +73,8 @@ bool disk_io_is_working(void) {
  
 io_protocol_type_t disk_io_get_protocol(void) {
     return g_current_protocol;
+}
+
+uint32_t disk_get_partition_lba(void) {
+    return g_partition_lba;
 }

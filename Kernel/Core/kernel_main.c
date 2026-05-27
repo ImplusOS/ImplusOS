@@ -20,7 +20,9 @@
 #include "Platform/interrupt/Interrupts.h"
 #include "Core/vfs/VFS.h"
 #include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
+#include "Drivers/Client/FileSystem/FAT32/FAT32_VFS_Adapter.h"
 #include "Drivers/Client/FileSystem/ISO9660/ISO9660_Main.h"
+#include "Drivers/Client/FileSystem/ISO9660/ISO9660_VFS_Adapter.h"
 #include <string.h>
 #include "IPC/IPC_Main.h"
 #include "Core/window/WindowManager_Kernel.h"
@@ -48,7 +50,7 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
     if (!vfs_init()) {
         return false;
     }
-
+    
     if (!fat32_init(&boot_info->BootPartitionBPB)) {
         return false;
     }
@@ -56,6 +58,10 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
     if (!iso9660_init()) {
         return false;
     }
+    
+    vfs_mount("", fat32_vfs_get_driver());
+    vfs_mount("", iso9660_vfs_get_driver());
+    
     vfs_set_default_fs("iso9660");
     
     return true;
@@ -204,6 +210,8 @@ void kernel_main(BOOT_INFO *boot_info) {
         fs_ready = true;
     }
 
+    iso9660_list_root_files();
+
     if (!fs_ready) {
         kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");
     }
@@ -231,8 +239,6 @@ void kernel_main(BOOT_INFO *boot_info) {
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
             while (1) { __asm__("hlt"); }
-        } else {
-            serial_write_string("Failed Register Userland");
         }
     }
 

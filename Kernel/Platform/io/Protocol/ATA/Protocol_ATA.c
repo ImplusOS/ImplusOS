@@ -43,13 +43,11 @@ static uint16_t g_ata_control  = ATA_PRI_CONTROL;
 static uint16_t g_ata_feature  = ATA_PRI_DATA + 1;
 static uint8_t  g_ata_devsel_value = 0xA0u;
 
-static uint64_t g_partition_start_lba = 2048u;
 static bool g_disk_io_working = false;
 static bool g_atapi = false;
 static uint16_t g_atapi_sector_bytes = 2048u;
 
 static uint8_t g_atapi_scratch[2048] __attribute__((aligned(2)));
-
 
 static uint32_t g_last_atapi_block = 0xFFFFFFFFu;
 static uint8_t  g_atapi_cache_buf[2048] __attribute__((aligned(2)));
@@ -349,7 +347,7 @@ static bool ata_probe_device(uint8_t devsel_value) {
 }
 
 bool ata_init(uint64_t partition_lba) {
-    g_partition_start_lba = partition_lba;
+    (void)partition_lba;
     g_disk_io_working = false;
 
     ide_configure_ports_from_pci();
@@ -402,7 +400,6 @@ bool ata_init(uint64_t partition_lba) {
         ata_set_channel(slots[atapi_slot].ch);
         if (ata_probe_device(slots[atapi_slot].devsel)) {
             g_atapi = true;
-            g_partition_start_lba = 0;
             g_disk_io_working = true;
             return true;
         }
@@ -432,8 +429,7 @@ bool ata_read(uint32_t lba, uint8_t *buffer, uint32_t sectors) {
 
     if (g_atapi) {
         for (uint32_t s = 0; s < sectors; ++s) {
-            uint64_t byte_off = ((uint64_t)g_partition_start_lba * 512ULL)
-                          + ((uint64_t)(lba + s) * 512ULL);
+            uint64_t byte_off = ((uint64_t)(lba + s) * 512ULL);
             uint32_t block        = (uint32_t)(byte_off / g_atapi_sector_bytes);
             uint32_t off_in_block = (uint32_t)(byte_off % g_atapi_sector_bytes);
 
@@ -452,8 +448,7 @@ bool ata_read(uint32_t lba, uint8_t *buffer, uint32_t sectors) {
     while (done < sectors) {
         uint8_t chunk_sectors =
             (uint8_t)((sectors - done) > 255u ? 255u : (sectors - done));
-        uint32_t real_lba =
-            (uint32_t)(g_partition_start_lba + (uint64_t)lba + (uint64_t)done);
+        uint32_t real_lba = lba + done;
 
         if (!ata_pio_read_chunk(real_lba, buffer, chunk_sectors)) {
             return false;
@@ -478,8 +473,7 @@ bool ata_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors) {
     while (done < sectors) {
         uint8_t chunk_sectors =
             (uint8_t)((sectors - done) > 255u ? 255u : (sectors - done));
-        uint32_t real_lba =
-            (uint32_t)(g_partition_start_lba + (uint64_t)lba + (uint64_t)done);
+        uint32_t real_lba = lba + done;
 
         if (!ata_pio_write_chunk(real_lba, buffer, chunk_sectors)) {
             return false;

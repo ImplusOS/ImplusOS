@@ -10,8 +10,7 @@
 #define SYSCALL_PROCESS_YIELD     7
 #define SYSCALL_PROCESS_EXIT      8
 #define SYSCALL_THREAD_CREATE     9
-#define SYSCALL_GET_FAT32_FILE_T  60
-#define SYSCALL_FILE_OPEN         23
+#define SYSCALL_FILE_OPEN          61
 #define SYSCALL_FILE_READ         24
 #define SYSCALL_FILE_WRITE        25
 #define SYSCALL_FILE_CLOSE        26

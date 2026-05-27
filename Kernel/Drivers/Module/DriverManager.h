@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "DriverBinary.h"
-#include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
+#include "Core/vfs/VFS.h"
 #include "Drivers/Client/FileSystem/ISO9660/ISO9660_Main.h"
 #include "Drivers/Client/PCI/PCI_Main.h"
 
@@ -33,7 +33,6 @@ const void *driver_manager_get_named(driver_manager_kind_t kind,
                                      const char *module_name);
 
 const pci_driver_t *driver_manager_get_pci_driver(void);
-const fat32_driver_t *driver_manager_get_fat32_driver(void);
 const iso9660_driver_t *driver_manager_get_iso9660_driver(void);
 const driver_input_t *driver_manager_get_ps2_driver(void);
 const usb_master_vtable_t *driver_manager_get_usb_driver(void);
@@ -43,19 +42,19 @@ const driver_nic_t *driver_manager_get_nic_driver(void);
 bool driver_manager_unload_module(const char *module_name);
 bool driver_manager_reload_module(const char *module_name);
 
-bool driver_manager_fs_init(const FAT32_BPB *initial_bpb);
-bool driver_manager_fs_find_file(const char *path, FAT32_FILE *file);
-bool driver_manager_fs_read_file(FAT32_FILE *file, uint8_t *buffer);
-bool driver_manager_fs_write_file(FAT32_FILE *file, const uint8_t *buffer);
-bool driver_manager_fs_read_at(FAT32_FILE *file, uint32_t offset, uint8_t *buffer, uint32_t size);
-bool driver_manager_fs_write_at(FAT32_FILE *file, uint32_t offset, const uint8_t *buffer, uint32_t size);
-bool driver_manager_fs_truncate(FAT32_FILE *file, uint32_t new_size);
-uint32_t driver_manager_fs_get_file_size(FAT32_FILE *file);
+bool driver_manager_fs_init(void);
+bool driver_manager_fs_find_file(const char *path, vfs_file_t *file);
+bool driver_manager_fs_read_file(vfs_file_t *file, uint8_t *buffer);
+bool driver_manager_fs_write_file(vfs_file_t *file, const uint8_t *buffer);
+bool driver_manager_fs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer, uint32_t size);
+bool driver_manager_fs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size);
+bool driver_manager_fs_truncate(vfs_file_t *file, uint32_t new_size);
+uint32_t driver_manager_fs_get_file_size(vfs_file_t *file);
 void driver_manager_fs_list_root_files(void);
 bool driver_manager_fs_creat(const char *path);
 bool driver_manager_fs_mkdir(const char *path);
 int32_t driver_manager_fs_opendir(const char *path);
-int32_t driver_manager_fs_readdir(int32_t dir_handle, FAT32_DIRENT *out_entry);
+int32_t driver_manager_fs_readdir(int32_t dir_handle, vfs_dirent_t *out_entry);
 int32_t driver_manager_fs_closedir(int32_t dir_handle);
 bool driver_manager_fs_unlink(const char *path);
 void driver_manager_fs_set_case_sensitive_lookup(bool enabled);

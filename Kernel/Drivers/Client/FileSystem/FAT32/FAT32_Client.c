@@ -14,7 +14,7 @@ static FAT32_BPB g_initial_bpb;
 static uint8_t g_initial_bpb_valid = 0;
 
 static bool ensure_fat32_initialized(const FAT32_BPB *initial_bpb) {
-    const fat32_driver_t *driver = driver_manager_get_fat32_driver();
+    const fat32_driver_t *driver = driver_manager_get_by_module_name("FAT32_Driver.ELF");
 
     if (driver == NULL) {
         g_fat32_driver = NULL;
