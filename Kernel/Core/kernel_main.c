@@ -46,6 +46,23 @@ extern const arch_ops_t *arch_ops_get(void);
 
 #include "Debug/serial/Serial.h"
 
+void list_dir(const char *path)
+{
+    int32_t handle = vfs_opendir(path);
+    if (handle < 0) {
+        printf("open dir failed: %s\n", path);
+        return;
+    }
+
+    vfs_dirent_t entry;
+
+    while (vfs_readdir(handle, &entry) > 0) {
+        printf("file: %s\n", entry.name);
+    }
+
+    vfs_closedir(handle);
+}
+
 bool all_fs_initialize(const BOOT_INFO *boot_info) {
     if (!vfs_init()) {
         return false;
@@ -64,7 +81,7 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
     
     vfs_set_default_fs("iso9660");
 
-    vfs_list_root();
+    list_dir("/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Fonts"); // List root directory for debugging
     
     return true;
 }
