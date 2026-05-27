@@ -73,6 +73,8 @@ DRIVER_DIRS := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
 DRIVER_BUILD_ROOT := $(BUILD_DIR)/Modules
 DRIVER_STAGE_DIR := $(BUILD_DIR)/Kernel/Drivers
 
+SHARELIB_C_SRCS := $(shell find ShareLib -name "*.c" 2>/dev/null)
+
 USERLAND_C_SRCS := \
 	libc/src/assert.c \
 	libc/src/math.c \
@@ -82,7 +84,7 @@ USERLAND_C_SRCS := \
 	libc/src/errno.c \
 	libc/src/posix.c \
 	libc/src/sys/syscalls.c \
-	ShareLib/Unicode/UTF8/UTF8.c \
+	$(SHARELIB_C_SRCS) \
 	Userland/Userland.c \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
@@ -107,7 +109,7 @@ USERLAND_APP_C_SRCS := \
 	libc/src/errno.c \
 	libc/src/posix.c \
 	libc/src/sys/syscalls.c \
-	ShareLib/Unicode/UTF8/UTF8.c \
+	$(SHARELIB_C_SRCS) \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
 	Userland/NetworkStack/DNS/DNS.c

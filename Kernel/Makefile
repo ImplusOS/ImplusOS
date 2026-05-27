@@ -32,8 +32,7 @@ LIBC_SRCS := \
 
 OBJS += $(patsubst $(ROOT_DIR)/libc/%.c,$(KERNEL_BUILD)/libc/%.o,$(LIBC_SRCS))
 
-SHARELIB_SRCS := \
-	$(ROOT_DIR)/ShareLib/Unicode/UTF8/UTF8.c
+SHARELIB_SRCS := $(shell find $(ROOT_DIR)/ShareLib -name "*.c" 2>/dev/null)
 
 OBJS += $(patsubst $(ROOT_DIR)/ShareLib/%.c,$(KERNEL_BUILD)/ShareLib/%.o,$(SHARELIB_SRCS))
 
