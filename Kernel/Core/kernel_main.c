@@ -55,9 +55,7 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
         return false;
     }
     
-    if (!iso9660_init()) {
-        return false;
-    }
+    iso9660_init();
     
     vfs_mount("", fat32_vfs_get_driver());
     vfs_mount("", iso9660_vfs_get_driver());

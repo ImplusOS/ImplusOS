@@ -411,12 +411,12 @@ QEMU_COMMON = \
 	-rtc base=localtime \
 	-serial stdio
 
-QEMU_USB = \
-	-drive if=none,id=usbstick,format=raw,file=${IMAGE} \
-	-device usb-storage,bus=xhci.0,drive=usbstick
+QEMU_CDROM = \
+	-drive file=${IMAGE},format=raw,media=cdrom \
+	-boot d
 
-run_uefi_usb:
-	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_USB)
+run_uefi_cdrom:
+	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_CDROM)
 
 run_bios_usb:
 	@qemu-system-$(ARCH) \
