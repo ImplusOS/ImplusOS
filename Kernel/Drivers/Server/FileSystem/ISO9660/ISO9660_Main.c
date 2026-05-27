@@ -19,67 +19,38 @@ static inline void spinlock_unlock(spinlock_t *l) { __sync_lock_release(&l->lock
 
 static const driver_binary_t *g_driver_api = NULL;
 
-#define disk_read           g_driver_api->disk_read
-#define disk_write          g_driver_api->disk_write
-#define serial_write_string g_driver_api->serial_write_string
-#define serial_write_uint32 g_driver_api->serial_write_uint32
+#define disk_read               g_driver_api->disk_read
+#define disk_write              g_driver_api->disk_write
+#define disk_get_partition_lba  g_driver_api->disk_get_partition_lba
+#define serial_write_string     g_driver_api->serial_write_string
+#define serial_write_uint32     g_driver_api->serial_write_uint32
+
+static inline uint64_t irq_save_disable(void)
+{
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    return flags;
+}
+
+static inline void irq_restore(uint64_t flags)
+{
+    if (flags & (1ull << 9)) {
+        __asm__ volatile("sti" ::: "memory");
+    }
+}
 
 void *memcpy(void *dest, const void *src, size_t n)
 {
     uint8_t *d = (uint8_t *)dest;
     const uint8_t *s = (const uint8_t *)src;
-
-    while (n && ((uintptr_t)d & (sizeof(size_t) - 1))) {
-        *d++ = *s++;
-        n--;
-    }
-
-    size_t *dw = (size_t *)d;
-    const size_t *sw = (const size_t *)s;
-
-    while (n >= sizeof(size_t)) {
-        *dw++ = *sw++;
-        n -= sizeof(size_t);
-    }
-
-    d = (uint8_t *)dw;
-    s = (const uint8_t *)sw;
-
-    while (n--) {
-        *d++ = *s++;
-    }
-
+    while (n--) *d++ = *s++;
     return dest;
 }
 
 void *memset(void *s, int c, size_t n)
 {
     uint8_t *p = (uint8_t *)s;
-    uint8_t v = (uint8_t)c;
-
-    while (n && ((uintptr_t)p & (sizeof(size_t) - 1))) {
-        *p++ = v;
-        n--;
-    }
-
-    size_t pattern = 0;
-    for (size_t i = 0; i < sizeof(size_t); i++) {
-        pattern = (pattern << 8) | v;
-    }
-
-    size_t *pw = (size_t *)p;
-
-    while (n >= sizeof(size_t)) {
-        *pw++ = pattern;
-        n -= sizeof(size_t);
-    }
-
-    p = (uint8_t *)pw;
-
-    while (n--) {
-        *p++ = v;
-    }
-
+    while (n--) *p++ = (uint8_t)c;
     return s;
 }
 
@@ -121,10 +92,13 @@ static const uint8_t k_joliet_esc[3][3] = {
 #define SUSP_SP_CHECK2  0xEFu
 
 static ISO9660_CONTEXT g_iso_context;
-static uint8_t g_iso_sector_buffer[ISO9660_SECTOR_BUFFER_SIZE];
-static uint8_t g_iso_read_buffer  [ISO9660_SECTOR_BUFFER_SIZE];
-static uint8_t g_iso_ce_buffer    [ISO9660_SECTOR_BUFFER_SIZE];
+
+static uint8_t g_iso_sector_buffer[ISO9660_SECTOR_BUFFER_SIZE] __attribute__((aligned(4096)));
+static uint8_t g_iso_read_buffer  [ISO9660_SECTOR_BUFFER_SIZE] __attribute__((aligned(4096)));
+static uint8_t g_iso_ce_buffer    [ISO9660_SECTOR_BUFFER_SIZE] __attribute__((aligned(4096)));
+
 static spinlock_t g_iso_lock;
+static uint32_t g_iso_partition_lba = 0;
 
 typedef struct {
     uint8_t  used;
@@ -148,12 +122,8 @@ static inline uint32_t iso9660_read_u32_both(const uint8_t *p) {
 }
 
 static bool iso9660_read_sector(uint32_t lba, uint8_t *buffer) {
-    uint32_t base = lba * (ISO9660_SECTOR_SIZE / 512u);
-    for (uint32_t i = 0; i < (ISO9660_SECTOR_SIZE / 512u); i++) {
-        if (!disk_read(base + i, buffer + (i * 512u), 1))
-            return false;
-    }
-    return true;
+    uint32_t base = g_iso_partition_lba + lba * (ISO9660_SECTOR_SIZE / 512u);
+    return disk_read(base, buffer, ISO9660_SECTOR_SIZE / 512u);
 }
 
 static void ucs2be_to_utf8(const uint8_t *src, uint32_t src_bytes,
@@ -183,7 +153,7 @@ static void iso9660_strip_version(char *name) {
     while (*p) p++;
     char *end = p;
     while (end > name && (unsigned char)(end[-1] - '0') <= 9u) end--;
-    if (end > name + 1 && end[-1] == ';') {
+    if (end > name && end[-1] == ';') {
         end--;
         if (end > name && end[-1] == '.') end--;
         *end = '\0';
@@ -261,15 +231,15 @@ static bool iso9660_parse_rock_ridge(const uint8_t *rec, uint8_t rec_len,
             uint8_t s0  = p[0], s1 = p[1], len = p[2];
             if (len < 4u || p + len > end) break;
             if (s0 == 'C' && s1 == 'E' && len >= 28u) {
-                uint32_t ce_block  = iso9660_read_u32_le(p + 4);
-                uint32_t ce_offset = iso9660_read_u32_le(p + 12);
-                uint32_t ce_length = iso9660_read_u32_le(p + 20);
-                if (ce_length > 0u &&
-                    ce_length <= (uint32_t)ISO9660_SECTOR_SIZE &&
-                    iso9660_read_sector(ce_block, g_iso_ce_buffer) &&
-                    ce_offset + ce_length <= (uint32_t)ISO9660_SECTOR_SIZE) {
+                uint32_t cb_val = iso9660_read_u32_le(p + 4);
+                uint32_t co_val = iso9660_read_u32_le(p + 12);
+                uint32_t cl_val = iso9660_read_u32_le(p + 20);
+                if (cl_val > 0u &&
+                    cl_val <= (uint32_t)ISO9660_SECTOR_SIZE &&
+                    iso9660_read_sector(cb_val, g_iso_ce_buffer) &&
+                    co_val + cl_val <= (uint32_t)ISO9660_SECTOR_SIZE) {
                     bool ce_ok = iso9660_parse_susp_fields(
-                        g_iso_ce_buffer + ce_offset, ce_length,
+                        g_iso_ce_buffer + co_val, cl_val,
                         file, nm_buf, &nm_len, &nm_cont);
                     if (ce_ok) found = true;
                 }
@@ -328,7 +298,7 @@ static bool iso9660_parse_pvd(const uint8_t *sector, ISO9660_CONTEXT *ctx) {
 
 static bool iso9660_scan_descriptors(ISO9660_CONTEXT *ctx) {
     bool found_pvd = false;
-
+    
     for (uint32_t lba = 16u; lba < 32u; lba++) {
         if (!iso9660_read_sector(lba, g_iso_sector_buffer)) break;
 
@@ -393,12 +363,12 @@ static bool iso9660_read_dir_record(const uint8_t *data, ISO9660_FILE *file,
 
     if (name_len == 1u) {
         if (data[33] == 0x00u) {
-            file->name[0] = '.';  file->name[1] = '\0';          return true;
+            file->name[0] = '.';  file->name[1] = '\0';
+            return true;
         } else if (data[33] == 0x01u) {
-            file->name[0] = '.';  file->name[1] = '.';
-            file->name[2] = '\0';                                 return true;
+            file->name[0] = '.';  file->name[1] = '.';  file->name[2] = '\0';
+            return true;
         }
-        return false;
     }
 
     if (joliet) {
@@ -535,9 +505,11 @@ static bool _iso9660_init(void) {
 }
 
 bool iso9660_init(void) {
+    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     bool ret = _iso9660_init();
     spinlock_unlock(&g_iso_lock);
+    irq_restore(flags);
     return ret;
 }
 
@@ -554,9 +526,11 @@ static bool _iso9660_find_file(const char *path, ISO9660_FILE *file) {
 }
 
 bool iso9660_find_file(const char *path, ISO9660_FILE *file) {
+    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     bool ret = _iso9660_find_file(path, file);
     spinlock_unlock(&g_iso_lock);
+    irq_restore(flags);
     return ret;
 }
 
@@ -571,13 +545,26 @@ static bool _iso9660_read_at(ISO9660_FILE *file, uint32_t offset,
     uint32_t offset_in_sector= offset % ISO9660_SECTOR_SIZE;
 
     while (bytes_done < size) {
-        if (!iso9660_read_sector(current_extent, g_iso_read_buffer)) return false;
+        uint64_t flags = irq_save_disable();
+        spinlock_lock(&g_iso_lock);
+
+        bool read_ok = iso9660_read_sector(current_extent, g_iso_read_buffer);
 
         uint32_t can_read = ISO9660_SECTOR_SIZE - offset_in_sector;
         uint32_t to_read  = (size - bytes_done) < can_read
                             ? (size - bytes_done) : can_read;
 
-        memcpy(&buf[bytes_done], &g_iso_read_buffer[offset_in_sector], to_read);
+        if (read_ok) {
+            memcpy(&buf[bytes_done], &g_iso_read_buffer[offset_in_sector], to_read);
+        }
+
+        spinlock_unlock(&g_iso_lock);
+        irq_restore(flags);
+
+        if (!read_ok) {
+            return false;
+        }
+
         bytes_done      += to_read;
         offset_in_sector = 0u;
         current_extent++;
@@ -588,10 +575,7 @@ static bool _iso9660_read_at(ISO9660_FILE *file, uint32_t offset,
 
 bool iso9660_read_at(ISO9660_FILE *file, uint32_t offset,
                       uint8_t *buf, uint32_t size) {
-    spinlock_lock(&g_iso_lock);
-    bool ret = _iso9660_read_at(file, offset, buf, size);
-    spinlock_unlock(&g_iso_lock);
-    return ret;
+    return _iso9660_read_at(file, offset, buf, size);
 }
 
 bool iso9660_read_file(ISO9660_FILE *file, uint8_t *buf) {
@@ -604,6 +588,7 @@ uint32_t iso9660_get_file_size(ISO9660_FILE *file) {
 }
 
 void iso9660_list_root_files(void) {
+    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
 
     bool     joliet = g_iso_context.has_joliet;
@@ -642,6 +627,7 @@ void iso9660_list_root_files(void) {
     }
 
     spinlock_unlock(&g_iso_lock);
+    irq_restore(flags);
 }
 
 static int32_t _iso9660_opendir(const char *path) {
@@ -670,9 +656,11 @@ static int32_t _iso9660_opendir(const char *path) {
 }
 
 int32_t iso9660_opendir(const char *path) {
+    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     int32_t ret = _iso9660_opendir(path);
     spinlock_unlock(&g_iso_lock);
+    irq_restore(flags);
     return ret;
 }
 
@@ -737,9 +725,11 @@ static int32_t _iso9660_readdir(int32_t handle, ISO9660_DIRENT *out) {
 }
 
 int32_t iso9660_readdir(int32_t handle, ISO9660_DIRENT *out) {
+    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     int32_t ret = _iso9660_readdir(handle, out);
     spinlock_unlock(&g_iso_lock);
+    irq_restore(flags);
     return ret;
 }
 
@@ -750,9 +740,11 @@ static int32_t _iso9660_closedir(int32_t handle) {
 }
 
 int32_t iso9660_closedir(int32_t handle) {
+    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     int32_t ret = _iso9660_closedir(handle);
     spinlock_unlock(&g_iso_lock);
+    irq_restore(flags);
     return ret;
 }
 
@@ -771,6 +763,7 @@ static const iso9660_driver_t g_iso9660_driver = {
 
 static void iso9660_driver_shutdown(void) {
     g_driver_api = NULL;
+    g_iso_partition_lba = 0;
     memset(&g_iso_context, 0, sizeof(g_iso_context));
 }
 
@@ -781,16 +774,18 @@ static const driver_module_descriptor_t g_iso9660_module = {
 
 #undef disk_read
 #undef disk_write
+#undef disk_get_partition_lba
 #undef memset
 #undef memcpy
 #undef serial_write_string
 #undef serial_write_uint32
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api) {
-    if (!api || !api->disk_read || !api->memset ||
-        !api->memcpy || !api->serial_write_string)
+    if (!api || !api->disk_read || !api->disk_get_partition_lba ||
+        !api->memset || !api->memcpy || !api->serial_write_string)
         return NULL;
     g_driver_api = api;
+    g_iso_partition_lba = 0;
     spinlock_init(&g_iso_lock);
     return &g_iso9660_module;
 }

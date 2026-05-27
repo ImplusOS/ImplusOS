@@ -73,8 +73,9 @@ static int32_t iso9660_vfs_readdir(int32_t handle, vfs_dirent_t *out_entry) {
     if (!out_entry) return -1;
     
     ISO9660_DIRENT iso_dirent;
+    memset(&iso_dirent, 0, sizeof(iso_dirent));
     int32_t result = iso9660_readdir(handle, &iso_dirent);
-    if (result < 0) return result;
+    if (result <= 0) return result;
     
     strncpy(out_entry->name, iso_dirent.name, sizeof(out_entry->name) - 1);
     out_entry->name[sizeof(out_entry->name) - 1] = '\0';

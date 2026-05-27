@@ -49,37 +49,41 @@ bool vfs_init(void) {
 
 bool vfs_find_file(const char *path, vfs_file_t *out_file) {
     const vfs_driver_t *drv = vfs_find_driver(path);
-    return drv ? drv->find_file(path, out_file) : false;
+    if (drv && drv->find_file(path, out_file)) {
+        out_file->fs_driver = drv;
+        return true;
+    }
+    return false;
 }
 
 bool vfs_read_file(vfs_file_t *file, uint8_t *buffer) {
-    const vfs_driver_t *drv = g_default_fs;
-    return drv ? drv->read_file(file, buffer) : false;
+    if (!file || !file->fs_driver) return false;
+    return file->fs_driver->read_file(file, buffer);
 }
 
 bool vfs_write_file(vfs_file_t *file, const uint8_t *buffer) {
-    const vfs_driver_t *drv = g_default_fs;
-    return drv ? drv->write_file(file, buffer) : false;
+    if (!file || !file->fs_driver) return false;
+    return file->fs_driver->write_file(file, buffer);
 }
 
 bool vfs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer, uint32_t size) {
-    const vfs_driver_t *drv = g_default_fs;
-    return drv ? drv->read_at(file, offset, buffer, size) : false;
+    if (!file || !file->fs_driver) return false;
+    return file->fs_driver->read_at(file, offset, buffer, size);
 }
 
 bool vfs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size) {
-    const vfs_driver_t *drv = g_default_fs;
-    return drv ? drv->write_at(file, offset, buffer, size) : false;
+    if (!file || !file->fs_driver) return false;
+    return file->fs_driver->write_at(file, offset, buffer, size);
 }
 
 bool vfs_truncate(vfs_file_t *file, uint32_t new_size) {
-    const vfs_driver_t *drv = g_default_fs;
-    return drv ? drv->truncate(file, new_size) : false;
+    if (!file || !file->fs_driver) return false;
+    return file->fs_driver->truncate(file, new_size);
 }
 
 uint32_t vfs_get_file_size(vfs_file_t *file) {
-    const vfs_driver_t *drv = g_default_fs;
-    return drv ? drv->get_file_size(file) : 0;
+    if (!file || !file->fs_driver) return 0;
+    return file->fs_driver->get_file_size(file);
 }
 
 bool vfs_creat(const char *path) {

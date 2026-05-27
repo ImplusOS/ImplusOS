@@ -65,8 +65,9 @@ static int32_t fat32_vfs_readdir(int32_t handle, vfs_dirent_t *out_entry) {
     if (!out_entry) return -1;
     
     FAT32_DIRENT fat_dirent;
+    memset(&fat_dirent, 0, sizeof(fat_dirent));
     int32_t result = fat32_readdir(handle, &fat_dirent);
-    if (result < 0) return result;
+    if (result <= 0) return result;
     
     strncpy(out_entry->name, fat_dirent.name, sizeof(out_entry->name) - 1);
     out_entry->name[sizeof(out_entry->name) - 1] = '\0';

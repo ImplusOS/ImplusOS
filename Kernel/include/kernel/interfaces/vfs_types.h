@@ -4,10 +4,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+struct vfs_driver;
+
 typedef struct vfs_file {
     uint64_t internal_id;
     uint32_t size;
     void *driver_data;
+    const struct vfs_driver *fs_driver;
 } vfs_file_t;
 
 typedef struct vfs_dirent {

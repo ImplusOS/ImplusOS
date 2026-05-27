@@ -49,7 +49,7 @@ typedef struct __attribute__((packed)) {
 static ahci_cmd_hdr_t   s_clb[32]  __attribute__((aligned(1024)));
 static uint8_t          s_fis[256] __attribute__((aligned(256)));
 static ahci_cmd_table_t s_ctbl     __attribute__((aligned(128)));
-static uint8_t          s_dma[2048] __attribute__((aligned(4)));
+static uint8_t          s_dma[2048] __attribute__((aligned(2048)));
 
 static uint32_t g_abar    = 0;
 static int      g_port    = -1;
@@ -119,14 +119,13 @@ static void port_setup(int p) {
 
 static bool atapi_read_one(uint32_t lba2048) {
     if (lba2048 == g_cached_block) return true;
-
     
     for (uint32_t t = 1000000u; t; --t) {
         uint32_t tfd = port_rd(g_port, P_TFD);
         if (!((tfd & 0x80u) || (tfd & 0x08u))) break;
         if (t == 1u) return false;
     }
-    
+
     for (uint32_t t = 1000000u; t; --t) {
         if (!port_rd(g_port, P_CI)) break;
         if (t == 1u) return false;
@@ -135,47 +134,41 @@ static bool atapi_read_one(uint32_t lba2048) {
     port_wr(g_port, P_SERR, port_rd(g_port, P_SERR));
     port_wr(g_port, P_IS,   port_rd(g_port, P_IS));
 
-    
     s_clb[0].flags =
-    (5u & 0x1Fu) |   
-    (1u << 5);       
+    (5u & 0x1Fu) |
+    (1u << 5);
     s_clb[0].prdtl = 1u;
     s_clb[0].prdbc = 0u;
 
-    
     memset(&s_ctbl, 0, sizeof(s_ctbl));
 
-    
-    s_ctbl.cfis[0] = 0x27u;  
-    s_ctbl.cfis[1] = 0x80u;  
-    s_ctbl.cfis[2] = 0xA0u;  
-    s_ctbl.cfis[3] = 0x00u;  
-    s_ctbl.cfis[7] = 0xA0u;  
+    s_ctbl.cfis[0] = 0x27u;
+    s_ctbl.cfis[1] = 0x80u;
+    s_ctbl.cfis[2] = 0xA0u;
+    s_ctbl.cfis[3] = 0x01u;
+    s_ctbl.cfis[7] = 0xA0u;
 
-    
-    s_ctbl.acmd[0] = 0xA8u;
+    s_ctbl.acmd[0] = 0x28u;
     s_ctbl.acmd[2] = (uint8_t)((lba2048 >> 24) & 0xFFu);
     s_ctbl.acmd[3] = (uint8_t)((lba2048 >> 16) & 0xFFu);
     s_ctbl.acmd[4] = (uint8_t)((lba2048 >>  8) & 0xFFu);
     s_ctbl.acmd[5] = (uint8_t)( lba2048        & 0xFFu);
-    s_ctbl.acmd[9] = 1u;     
+    s_ctbl.acmd[7] = 0x00u;
+    s_ctbl.acmd[8] = 0x01u;
 
-    
     s_ctbl.prdt[0].dba  = (uint32_t)(uintptr_t)s_dma;
     s_ctbl.prdt[0].dbau = 0u;
     s_ctbl.prdt[0].dbc  = (2048u - 1u) | (1u << 31);
 
-    
     port_wr(g_port, P_CI, 1u);
 
-    
     for (uint32_t t = 10000000u; t; --t) {
         if (!(port_rd(g_port, P_CI) & 1u)) {
             g_cached_block = lba2048;
             return true;
         }
         uint32_t is = port_rd(g_port, P_IS);
-        if (is & (1u << 30)) {   
+        if (is & (1u << 30)) {
             port_wr(g_port, P_IS, is);
             return false;
         }
@@ -246,23 +239,31 @@ bool ahci_init(uint64_t partition_lba) {
                 
                 hba_wr(AHCI_GHC, hba_rd(AHCI_GHC) | (1u << 31));
 
-                
                 uint32_t pi = hba_rd(AHCI_PI);
                 for (int p = 0; p < 32; ++p) {
                     if (!(pi & (1u << p))) continue;
 
-                    
                     uint32_t ssts = port_rd(p, P_SSTS);
                     if ((ssts & 0xFu) != 3u || ((ssts >> 8) & 0xFu) != 1u) continue;
-
-                    
-                    if (port_rd(p, P_SIG) != ATAPI_SIG) continue;
 
                     g_port = p;
                     port_setup(p);
 
+                    for (int spin = 0; spin < 1000; spin++) {
+                        uint32_t sig = port_rd(p, P_SIG);
+                        if (sig == ATAPI_SIG) break;
+                        
+                        for (volatile int delay = 0; delay < 10000; delay++);
+                    }
                     
+                    if (port_rd(p, P_SIG) != ATAPI_SIG) {
+                        port_stop(p);
+                        g_port = -1;
+                        continue;
+                    }
+
                     if (!atapi_read_one(0u)) {
+                        port_stop(p);
                         g_port = -1;
                         continue;
                     }

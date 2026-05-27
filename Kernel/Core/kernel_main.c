@@ -55,12 +55,16 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
         return false;
     }
     
-    iso9660_init();
-    
+    if (!iso9660_init()) {
+        return false;
+    }
+
     vfs_mount("", fat32_vfs_get_driver());
     vfs_mount("", iso9660_vfs_get_driver());
     
     vfs_set_default_fs("iso9660");
+
+    vfs_list_root();
     
     return true;
 }

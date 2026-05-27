@@ -415,6 +415,13 @@ QEMU_CDROM = \
 	-drive file=${IMAGE},format=raw,media=cdrom \
 	-boot d
 
+QEMU_USB = \
+	-drive if=none,id=usbstick,format=raw,file=${IMAGE} \
+	-device usb-storage,bus=xhci.0,drive=usbstick
+
+run_uefi_usb: 
+	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_USB)
+
 run_uefi_cdrom:
 	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_CDROM)
 

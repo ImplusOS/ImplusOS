@@ -70,8 +70,8 @@ void *memset(void *s, int c, size_t n) {
 #define FAT32_DIR_HANDLE_MAX            FILE_MAX_DIR_HANDLE_CONFIG
 
 static FAT32_BPB bpb;
-static uint8_t g_sector_buffer[FAT32_MAX_SECTOR_SIZE];
-static uint8_t g_read_buffer[FAT32_CLUSTER_BUFFER_SIZE];
+static uint8_t g_sector_buffer[FAT32_MAX_SECTOR_SIZE] __attribute__((aligned(4096)));
+static uint8_t g_read_buffer[FAT32_CLUSTER_BUFFER_SIZE] __attribute__((aligned(4096)));
 static bool    g_case_sensitive_lookup = false;
 static spinlock_t g_fat32_lock;
 
