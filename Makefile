@@ -16,7 +16,6 @@ IMAGE_DIR := Image
 IMAGE     := $(IMAGE_DIR)/ImplusOS.iso
 
 OVMF_CODE := ./OVMF_CODE_4M.fd
-DISK_IMG  := disk.qcow2
 
 KERNEL_DIR   := Kernel
 USERLAND_DIR := Userland
@@ -407,33 +406,17 @@ QEMU_COMMON = \
 	-device virtio-net-pci,netdev=net0 \
 	-device ich9-ahci,id=sata \
 	-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
-	-drive file=${DISK_IMG},if=none,id=nvme0,format=raw \
-	-device nvme,drive=nvme0,serial=deadbeef \
 	-device ich9-intel-hda \
 	-device hda-duplex \
 	-rtc base=localtime \
 	-serial stdio
 
-QEMU_CDROM = \
-	-drive file=${IMAGE},format=raw,if=ide,index=0,media=cdrom
-
 QEMU_USB = \
 	-drive if=none,id=usbstick,format=raw,file=${IMAGE} \
-	-device usb-storage,drive=usbstick
-
-run_uefi_ide:
-	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_CDROM)
+	-device usb-storage,bus=xhci.0,drive=usbstick
 
 run_uefi_usb:
 	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_USB)
-
-run_bios_ide:
-	@qemu-system-$(ARCH) \
-		-machine q35 \
-		-smp 4,sockets=1,cores=4,threads=1 \
-		-m 4G \
-		-serial stdio \
-		$(QEMU_CDROM)
 
 run_bios_usb:
 	@qemu-system-$(ARCH) \

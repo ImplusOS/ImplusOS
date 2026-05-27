@@ -5,12 +5,14 @@
 
 #include "DriverBinary.h"
 #include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
+#include "Drivers/Client/FileSystem/ISO9660/ISO9660_Main.h"
 #include "Drivers/Client/PCI/PCI_Main.h"
 
 typedef enum {
     DRIVER_MANAGER_KIND_UNKNOWN = 0,
     DRIVER_MANAGER_KIND_PCI,
     DRIVER_MANAGER_KIND_FAT32,
+    DRIVER_MANAGER_KIND_ISO9660,
     DRIVER_MANAGER_KIND_DISPLAY,
     DRIVER_MANAGER_KIND_INPUT,
     DRIVER_MANAGER_KIND_USB,
@@ -32,6 +34,7 @@ const void *driver_manager_get_named(driver_manager_kind_t kind,
 
 const pci_driver_t *driver_manager_get_pci_driver(void);
 const fat32_driver_t *driver_manager_get_fat32_driver(void);
+const iso9660_driver_t *driver_manager_get_iso9660_driver(void);
 const driver_input_t *driver_manager_get_ps2_driver(void);
 const usb_master_vtable_t *driver_manager_get_usb_driver(void);
 const driver_display_t *driver_manager_get_display_driver(const char *module_name);

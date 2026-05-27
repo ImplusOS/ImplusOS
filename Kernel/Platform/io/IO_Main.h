@@ -44,6 +44,7 @@ static inline uint32_t inl(uint16_t port) {
 typedef enum {
     IO_PROTOCOL_TYPE_NONE,
     IO_PROTOCOL_TYPE_ATA,
+    IO_PROTOCOL_TYPE_AHCI,
     IO_PROTOCOL_TYPE_USB_MASS_STORAGE
 } io_protocol_type_t;
 

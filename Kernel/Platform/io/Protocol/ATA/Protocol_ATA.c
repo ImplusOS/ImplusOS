@@ -50,6 +50,10 @@ static uint16_t g_atapi_sector_bytes = 2048u;
 
 static uint8_t g_atapi_scratch[2048] __attribute__((aligned(2)));
 
+
+static uint32_t g_last_atapi_block = 0xFFFFFFFFu;
+static uint8_t  g_atapi_cache_buf[2048] __attribute__((aligned(2)));
+
 typedef struct {
     uint16_t cmd_io;
     uint16_t ctrl_io;
@@ -167,7 +171,6 @@ static int atapi_identify(void)
         }
     }
 
-    uint8_t fin = inb(g_ata_status);
     return -1;
 }
 
@@ -210,8 +213,16 @@ static int ata_identify(void)
     return 0;
 }
 
+
 static int atapi_read_block(uint32_t lba2048, uint8_t *buf)
 {
+    if (lba2048 == g_last_atapi_block) {
+        if (buf != g_atapi_cache_buf) {
+            memcpy(buf, g_atapi_cache_buf, g_atapi_sector_bytes);
+        }
+        return 0;
+    }
+
     uint8_t packet[12] = {0};
     packet[0] = 0xA8;
     packet[2] = (uint8_t)((lba2048 >> 24) & 0xFFu);
@@ -225,6 +236,13 @@ static int atapi_read_block(uint32_t lba2048, uint8_t *buf)
 
     outb(g_ata_hddevsel, g_ata_devsel_value);
     ata_delay(g_ata_control);
+
+    
+    uint32_t timeout_bsy = 10000000u;
+    while (inb(g_ata_status) & (ATA_SR_BSY | ATA_SR_DRQ)) {
+        if (--timeout_bsy == 0u) return -1;
+    }
+
     outb(g_ata_feature, 0);
     outb(g_ata_seccount, 0);
     outb(g_ata_lba0, 0);
@@ -245,10 +263,19 @@ static int atapi_read_block(uint32_t lba2048, uint8_t *buf)
         return -1;
     }
 
-    uint16_t *w = (uint16_t *)buf;
+    uint16_t *w = (uint16_t *)g_atapi_cache_buf;
     for (uint32_t i = 0; i < (g_atapi_sector_bytes / 2u); ++i) {
         w[i] = inw(g_ata_data);
     }
+    
+    
+    inb(g_ata_status);
+
+    if (buf != g_atapi_cache_buf) {
+        memcpy(buf, g_atapi_cache_buf, g_atapi_sector_bytes);
+    }
+    g_last_atapi_block = lba2048;
+    
     return 0;
 }
 
@@ -342,7 +369,7 @@ bool ata_init(uint64_t partition_lba) {
         ata_soft_reset(slots[i].ch->ctrl_io);
         ata_set_channel(slots[i].ch);
 
-        if (!ata_probe_device(slots[i].devsel)) {\
+        if (!ata_probe_device(slots[i].devsel)) {
             continue;
         }
 
@@ -373,17 +400,28 @@ bool ata_init(uint64_t partition_lba) {
     if (atapi_slot >= 0) {
         ata_soft_reset(slots[atapi_slot].ch->ctrl_io);
         ata_set_channel(slots[atapi_slot].ch);
-        ata_probe_device(slots[atapi_slot].devsel);
-        g_atapi = true;
-        g_disk_io_working = true;
-
-        uint8_t boot_buf[512] = {0};
-        if (ata_read(0, boot_buf, 1)) {
-            if (boot_buf[510] == 0x55 && boot_buf[511] == 0xAA) {
-                return true;
-            }
+        if (ata_probe_device(slots[atapi_slot].devsel)) {
+            g_atapi = true;
+            g_partition_start_lba = 0;
+            g_disk_io_working = true;
+            return true;
         }
-        g_disk_io_working = false;
+    }
+    
+    if (ata_slot >= 0) {
+        ata_soft_reset(slots[ata_slot].ch->ctrl_io);
+        ata_set_channel(slots[ata_slot].ch);
+        if (ata_probe_device(slots[ata_slot].devsel)) {
+            g_disk_io_working = true;
+
+            uint8_t boot_buf[512] __attribute__((aligned(2))) = {0};
+            if (ata_read(0, boot_buf, 1)) {
+                if (boot_buf[510] == 0x55 && boot_buf[511] == 0xAA) {
+                    return true;
+                }
+            }
+            g_disk_io_working = false;
+        }
     }
     
     return false;

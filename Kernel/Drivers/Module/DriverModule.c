@@ -110,6 +110,9 @@ static driver_manager_kind_t driver_module_detect_kind(const char *name)
     if (strcmp(name, "FAT32_Driver.ELF") == 0) {
         return DRIVER_MANAGER_KIND_FAT32;
     }
+    if (strcmp(name, "ISO9660_Driver.ELF") == 0) {
+        return DRIVER_MANAGER_KIND_ISO9660;
+    }
     if (strcmp(name, "VirtIO_Driver.ELF") == 0 ||
         strcmp(name, "ImplusOS_Generic_Display_Driver.ELF") == 0) {
         return DRIVER_MANAGER_KIND_DISPLAY;
@@ -307,6 +310,7 @@ static const driver_priority_t g_driver_priority[] = {
     {"USB_Driver.ELF", 30u},
     {"PS2_Driver.ELF", 40u},
     {"FAT32_Driver.ELF", 100u},
+    {"ISO9660_Driver.ELF", 100u},
 };
 
 static uint32_t get_driver_priority(const char *name)

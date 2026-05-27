@@ -10,6 +10,7 @@
 #include "Drivers/Module/DriverManager.h"
 #include "MemoryManagement/Memory_Main.h"
 #include "Core/sync/Spinlock.h"
+#include "Core/vfs/VFS.h"
 #include "Debug/printf/printf.h"
 #include "Debug/serial/Serial.h"
 
@@ -172,8 +173,8 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
         return false;
     }
 
-    FAT32_FILE file;
-    if (!driver_manager_fs_find_file(path, &file)) {
+    vfs_file_t file;
+    if (!vfs_find_file(path, &file)) {
         return false;
     }
 
@@ -186,7 +187,7 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
     }
     
     Elf64_Ehdr ehdr;
-    if (!driver_manager_fs_read_at(&file, 0u, (uint8_t *)&ehdr, sizeof(ehdr))) {
+    if (!vfs_read_at(&file, 0u, (uint8_t *)&ehdr, sizeof(ehdr))) {
         return false;
     }
 
@@ -213,7 +214,7 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
         return false;
     }
 
-    if (!driver_manager_fs_read_at(&file, (uint32_t)ehdr.e_phoff, (uint8_t *)phdrs, (uint32_t)phdr_table_bytes)) {
+    if (!vfs_read_at(&file, (uint32_t)ehdr.e_phoff, (uint8_t *)phdrs, (uint32_t)phdr_table_bytes)) {
         free(phdrs);
         return false;
     }
@@ -252,10 +253,10 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
             if (seg_buf == NULL) {
                 failed = true; break;
             }
-            if (!driver_manager_fs_read_at(&file,
-                                           (uint32_t)ph->p_offset,
-                                           seg_buf,
-                                           (uint32_t)ph->p_filesz)) {
+            if (!vfs_read_at(&file,
+                            (uint32_t)ph->p_offset,
+                            seg_buf,
+                            (uint32_t)ph->p_filesz)) {
                 free(seg_buf);
                 failed = true; break;
             }

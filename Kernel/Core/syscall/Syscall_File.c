@@ -28,7 +28,7 @@ typedef struct {
     uint8_t used;
     uint8_t writable;
     int32_t owner_pid;
-    VFS_FILE file;
+    vfs_file_t file;
     uint32_t offset;
     uint8_t cache_valid;
     uint32_t cache_offset;
@@ -138,7 +138,7 @@ void syscall_file_init(void)
 
 int32_t syscall_file_open(const char *path, uint64_t flags)
 {
-    VFS_FILE file;
+    vfs_file_t file;
     int32_t current_pid = process_get_current_pid();
 
     if (path == NULL || path[0] == '\0' || current_pid < 0) {
@@ -367,7 +367,7 @@ int32_t syscall_file_opendir(const char *path)
     return (int32_t)OS_STATUS_LIMIT_REACHED;
 }
 
-int32_t syscall_file_readdir(int32_t dir_handle, VFS_DIRENT *out_entry)
+int32_t syscall_file_readdir(int32_t dir_handle, FAT32_DIRENT *out_entry)
 {
     if (dir_handle < 0 || dir_handle >= FILE_MAX_DIR_HANDLE || out_entry == NULL ||
         g_dirs[dir_handle].used == 0) {
@@ -377,7 +377,7 @@ int32_t syscall_file_readdir(int32_t dir_handle, VFS_DIRENT *out_entry)
         return (int32_t)OS_STATUS_ACCESS_DENIED;
     }
 
-    return vfs_readdir(g_dirs[dir_handle].vfs_handle, out_entry);
+    return vfs_readdir(g_dirs[dir_handle].vfs_handle, (vfs_dirent_t *)out_entry);
 }
 
 int32_t syscall_file_closedir(int32_t dir_handle)

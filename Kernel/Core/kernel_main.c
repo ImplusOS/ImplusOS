@@ -19,6 +19,8 @@
 #include "Platform/acpi/ACPI.h"
 #include "Platform/interrupt/Interrupts.h"
 #include "Core/vfs/VFS.h"
+#include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
+#include "Drivers/Client/FileSystem/ISO9660/ISO9660_Main.h"
 #include <string.h>
 #include "IPC/IPC_Main.h"
 #include "Core/window/WindowManager_Kernel.h"
@@ -43,17 +45,19 @@ extern const arch_ops_t *arch_ops_get(void);
 #include "Debug/serial/Serial.h"
 
 bool all_fs_initialize(const BOOT_INFO *boot_info) {
-    const FAT32_BPB *initial_bpb = NULL;
-    if (boot_info != NULL && boot_info->BootPartitionBPBValid != 0) {
-        initial_bpb = &boot_info->BootPartitionBPB;
-    }
-    
-    if (!fat32_init(initial_bpb)) {
-        return false;
-    }
     if (!vfs_init()) {
         return false;
     }
+
+    if (!fat32_init(&boot_info->BootPartitionBPB)) {
+        return false;
+    }
+    
+    if (!iso9660_init()) {
+        return false;
+    }
+    vfs_set_default_fs("iso9660");
+    
     return true;
 }
 
@@ -227,6 +231,8 @@ void kernel_main(BOOT_INFO *boot_info) {
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
             while (1) { __asm__("hlt"); }
+        } else {
+            serial_write_string("Failed Register Userland");
         }
     }
 

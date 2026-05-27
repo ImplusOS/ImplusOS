@@ -871,10 +871,10 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_stat_buffer");
                 break;
             }
-            VFS_FILE vf;
+            vfs_file_t vf;
             if (vfs_find_file(path, &vf)) {
                 stat_out->size = vf.size;
-                stat_out->is_dir = (vf.attributes & 0x10) ? 1 : 0;
+                stat_out->is_dir = 0; 
                 stat_out->exists = 1;
                 set_syscall_result(saved_rsp, 0);
             } else {

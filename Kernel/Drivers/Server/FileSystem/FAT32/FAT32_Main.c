@@ -1465,6 +1465,20 @@ static void fat32_write_cluster_to_entry(uint8_t *entry, uint32_t cluster) {
 static bool _fat32_init(const FAT32_BPB *initial_bpb) {
     if (initial_bpb) {
         bpb = *initial_bpb;
+        serial_write_string("Bytes Per Sector : ");
+        serial_write_uint32(bpb.bytes_per_sector);
+        serial_write_string("Sectors Per Cluster : ");
+        serial_write_uint32(bpb.sectors_per_cluster);
+        serial_write_string("Reserved Sectors : ");
+        serial_write_uint32(bpb.reserved_sectors);
+        serial_write_string("Num Fats : ");
+        serial_write_uint32(bpb.num_fats);
+        serial_write_string("Fat Size Sectors : ");
+        serial_write_uint32(bpb.fat_size_sectors);
+        serial_write_string("Root Cluster : ");
+        serial_write_uint32(bpb.root_cluster);
+        serial_write_string("Total Sectors : ");
+        serial_write_uint32(bpb.total_sectors);
     } else {
         if (!fat32_read_boot_sector_bpb(&bpb)) {
             return false;

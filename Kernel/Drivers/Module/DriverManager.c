@@ -160,6 +160,11 @@ const fat32_driver_t *driver_manager_get_fat32_driver(void)
     return (const fat32_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_FAT32);
 }
 
+const iso9660_driver_t *driver_manager_get_iso9660_driver(void)
+{
+    return (const iso9660_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_ISO9660);
+}
+
 const driver_input_t *driver_manager_get_ps2_driver(void)
 {
     return (const driver_input_t *)driver_manager_get_named(DRIVER_MANAGER_KIND_INPUT,

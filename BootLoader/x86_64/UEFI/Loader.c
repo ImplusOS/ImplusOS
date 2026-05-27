@@ -218,13 +218,31 @@ static void DiscoverAcpiRsdp(EFI_SYSTEM_TABLE *ST, BOOTLOADER_HANDOFF *Handoff) 
 static void ParseBootSectorBPB(const UINT8 *sector, FAT32_BPB *out_bpb) {
     UINT16 total16 = ReadLe16(&sector[19]);
     UINT32 total32 = ReadLe32(&sector[32]);
-    out_bpb->bytes_per_sector = ReadLe16(&sector[11]);
+    out_bpb->bytes_per_sector    = ReadLe16(&sector[11]);
     out_bpb->sectors_per_cluster = sector[13];
-    out_bpb->reserved_sectors = ReadLe16(&sector[14]);
-    out_bpb->num_fats = sector[16];
-    out_bpb->fat_size_sectors = ReadLe32(&sector[36]);
-    out_bpb->root_cluster = ReadLe32(&sector[44]);
-    out_bpb->total_sectors = (total16 != 0) ? (UINT32)total16 : total32;
+    out_bpb->reserved_sectors    = ReadLe16(&sector[14]);
+    out_bpb->num_fats            = sector[16];
+    out_bpb->fat_size_sectors    = ReadLe32(&sector[36]);
+    out_bpb->root_cluster        = ReadLe32(&sector[44]);
+    out_bpb->total_sectors       = (total16 != 0) ? (UINT32)total16 : total32;
+}
+
+static BOOLEAN IsValidFAT32VBR(const UINT8 *block) {
+    if (block[510] != 0x55 || block[511] != 0xAA) return FALSE;
+
+    const UINT8 *fat32sig = &block[0x52];
+    if (fat32sig[0] != 'F' || fat32sig[1] != 'A' || fat32sig[2] != 'T' ||
+        fat32sig[3] != '3' || fat32sig[4] != '2' ||
+        fat32sig[5] != ' ' || fat32sig[6] != ' ' || fat32sig[7] != ' ') {
+        return FALSE;
+    }
+
+    UINT16 bps = (UINT16)block[11] | ((UINT16)block[12] << 8);
+    if (bps != 512 && bps != 1024 && bps != 2048 && bps != 4096) return FALSE;
+
+    if (block[13] == 0) return FALSE;
+
+    return TRUE;
 }
 
 static void CaptureBootPartitionBPB(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST,
@@ -234,29 +252,38 @@ static void CaptureBootPartitionBPB(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *S
         ST->BootServices->HandleProtocol, 3,
         DeviceHandle, &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
     if (EFI_ERROR(Status) || !Bio || !Bio->Media) return;
+
     UINTN block_size = Bio->Media->BlockSize;
     if (block_size < 512u || block_size > FAT32_BOOT_BLOCK_MAX) return;
+
     UINT8 *block = NULL;
-    Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, block_size, (VOID **)&block);
+    Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
+        EfiLoaderData, block_size, (VOID **)&block);
     if (EFI_ERROR(Status) || !block) return;
 
-    UINT64 lba_to_try[2] = { PartitionStartLBA, 0ULL };
-    BOOLEAN found = FALSE;
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        UINT64 lba = lba_to_try[attempt];
-        if (attempt == 1 && lba == PartitionStartLBA) break;
+    UINT64 lba_candidates[2];
+    int    candidate_count = 0;
+
+    if (PartitionStartLBA != 0) {
+        lba_candidates[candidate_count++] = PartitionStartLBA;
+    }
+    lba_candidates[candidate_count++] = 0ULL;
+
+    for (int attempt = 0; attempt < candidate_count; ++attempt) {
+        UINT64 lba = lba_candidates[attempt];
+        
+        if (attempt == 1 && lba_candidates[0] == lba_candidates[1]) break;
+
         Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
                                    lba, block_size, block);
-        if (!EFI_ERROR(Status) && block[510] == 0x55 && block[511] == 0xAA) {
-            UINT16 bps = (UINT16)block[11] | ((UINT16)block[12] << 8);
-            if (bps == 512 || bps == 1024 || bps == 2048 || bps == 4096) {
-                ParseBootSectorBPB(block, &Handoff->BootPartitionBPB);
-                Handoff->BootPartitionBPBValid = 1;
-                Handoff->PartitionStartLBA = lba;
-                found = TRUE;
-                break;
-            }
-        }
+        if (EFI_ERROR(Status)) continue;
+
+        if (!IsValidFAT32VBR(block)) continue;
+
+        ParseBootSectorBPB(block, &Handoff->BootPartitionBPB);
+        Handoff->BootPartitionBPBValid = 1;
+        Handoff->PartitionStartLBA    = lba;
+        break;
     }
 
     uefi_call_wrapper(ST->BootServices->FreePool, 1, block);
@@ -294,8 +321,11 @@ static UINT64 ParseElToritoCatalog(EFI_BLOCK_IO_PROTOCOL *Bio, EFI_SYSTEM_TABLE 
     return Result;
 }
 
-static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST, BOOTLOADER_HANDOFF *Handoff) {
+static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST,
+                                   BOOTLOADER_HANDOFF *Handoff, BOOLEAN *out_is_iso_lba) {
+    *out_is_iso_lba = FALSE;
     Handoff->BootDriveType = BOOT_DRIVE_TYPE_UNKNOWN;
+
     EFI_DEVICE_PATH_PROTOCOL *DevicePath = NULL;
     EFI_STATUS Status = uefi_call_wrapper(
         ST->BootServices->HandleProtocol, 3,
@@ -304,11 +334,14 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
         EFI_DEVICE_PATH_PROTOCOL *Node = DevicePath;
         while (!IsDevicePathEnd(Node)) {
             if (DevicePathType(Node) == 3) {
-                if (DevicePathSubType(Node) == 5) Handoff->BootDriveType = BOOT_DRIVE_TYPE_USB;
-                else if (DevicePathSubType(Node) == 1 || DevicePathSubType(Node) == 18) Handoff->BootDriveType = BOOT_DRIVE_TYPE_IDE;
+                if (DevicePathSubType(Node) == 5)
+                    Handoff->BootDriveType = BOOT_DRIVE_TYPE_USB;
+                else if (DevicePathSubType(Node) == 1 || DevicePathSubType(Node) == 18)
+                    Handoff->BootDriveType = BOOT_DRIVE_TYPE_IDE;
             }
             if (DevicePathType(Node) == 4 && DevicePathSubType(Node) == 1) {
                 HARDDRIVE_DEVICE_PATH *HD = (HARDDRIVE_DEVICE_PATH *)Node;
+                *out_is_iso_lba = FALSE;
                 return HD->PartitionStart;
             }
             Node = NextDevicePathNode(Node);
@@ -328,6 +361,7 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
             UINT64 Lba = ParseElToritoCatalog(Bio, ST);
             if (Lba) {
                 uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
+                *out_is_iso_lba = TRUE;
                 return Lba;
             }
         }
@@ -373,9 +407,7 @@ static EFI_STATUS TryStartBootManagerFromHandle(
     Status = uefi_call_wrapper(ST->BootServices->LoadImage, 6,
         FALSE, ImageHandle, BootManagerPath, NULL, 0, &BootManagerHandle);
     uefi_call_wrapper(ST->BootServices->FreePool, 1, BootManagerPath);
-    if (EFI_ERROR(Status)) {
-        return Status;
-    }
+    if (EFI_ERROR(Status)) return Status;
 
     UINTN ExitDataSize = 0;
     CHAR16 *ExitData = NULL;
@@ -422,7 +454,7 @@ static EFI_STATUS TryStartBootManagerFromISO(
     UINT8 *Buf = NULL;
     Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, 2048, (VOID **)&Buf);
     if (EFI_ERROR(Status)) return Status;
-    
+
     UINT64 Lba16 = (16ULL * 2048ULL) / (UINT64)BS;
     Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, Lba16, 2048, Buf);
     if (EFI_ERROR(Status) || Buf[1] != 'C' || Buf[2] != 'D' || Buf[3] != '0' || Buf[4] != '0' || Buf[5] != '1') {
@@ -431,18 +463,18 @@ static EFI_STATUS TryStartBootManagerFromISO(
     }
 
     ISO9660_PVD *Pvd = (ISO9660_PVD *)Buf;
-    UINT32 CurLba = Pvd->root_dir_record.extent_lba_le;
+    UINT32 CurLba  = Pvd->root_dir_record.extent_lba_le;
     UINT32 CurSize = Pvd->root_dir_record.data_length_le;
 
     const char *Path[] = { "EFI", "BOOT", "BOOTMANAGER.EFI" };
-    
+
     for (int i = 0; i < 3; i++) {
         UINT32 Sectors = (CurSize + 2047) / 2048;
         if (Sectors > 256) Sectors = 128;
 
         BOOLEAN Found = FALSE;
         for (UINT32 s = 0; s < Sectors; s++) {
-            Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, 
+            Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
                 ((UINT64)(CurLba + s) * 2048ULL) / (UINT64)BS, 2048, Buf);
             if (EFI_ERROR(Status)) break;
 
@@ -458,7 +490,7 @@ static EFI_STATUS TryStartBootManagerFromISO(
                     if (Len > 255) Len = 255;
                     efi_memcpy(EntryName, rec->name, Len);
                     EntryName[Len] = 0;
-                    
+
                     for (UINTN j = 0; j < Len; j++) {
                         if (EntryName[j] == ';') { EntryName[j] = 0; break; }
                     }
@@ -467,9 +499,9 @@ static EFI_STATUS TryStartBootManagerFromISO(
                     if (FinalLen > 0 && EntryName[FinalLen - 1] == '.') EntryName[FinalLen - 1] = 0;
 
                     if (efi_strcasecmp(EntryName, Path[i]) == 0) {
-                        CurLba = rec->extent_lba_le;
+                        CurLba  = rec->extent_lba_le;
                         CurSize = rec->data_length_le;
-                        Found = TRUE;
+                        Found   = TRUE;
                         break;
                     }
                 }
@@ -482,8 +514,8 @@ static EFI_STATUS TryStartBootManagerFromISO(
             return EFI_NOT_FOUND;
         }
     }
-    
-    Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, 
+
+    Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
         ((UINT64)CurLba * 2048ULL) / (UINT64)BS, 2048, Buf);
     if (EFI_ERROR(Status) || Buf[0] != 'M' || Buf[1] != 'Z') {
         uefi_call_wrapper(ST->BootServices->FreePool, 1, Buf);
@@ -504,12 +536,12 @@ static EFI_STATUS TryStartBootManagerFromISO(
     UINT32 L = CurLba;
     UINT8 *Dst = (UINT8 *)FileBuffer;
     while (Remaining > 0) {
-        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, 
+        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
             ((UINT64)L * 2048ULL) / (UINT64)BS, 2048, Buf);
         if (EFI_ERROR(Status)) break;
         UINT32 Copy = (Remaining < 2048) ? Remaining : 2048;
         efi_memcpy(Dst, Buf, Copy);
-        Dst += Copy;
+        Dst      += Copy;
         Remaining -= Copy;
         L++;
     }
@@ -524,17 +556,15 @@ static EFI_STATUS TryStartBootManagerFromISO(
     EFI_HANDLE BootManagerHandle = NULL;
     Status = uefi_call_wrapper(ST->BootServices->LoadImage, 6,
         FALSE, ImageHandle, NULL, FileBuffer, CurSize, &BootManagerHandle);
-    
+
     uefi_call_wrapper(ST->BootServices->FreePages, 2, FileAddr, Pages);
 
     if (EFI_ERROR(Status)) return Status;
 
     UINTN ExitDataSize = 0;
     CHAR16 *ExitData = NULL;
-    Status = uefi_call_wrapper(ST->BootServices->StartImage, 3,
+    return uefi_call_wrapper(ST->BootServices->StartImage, 3,
         BootManagerHandle, &ExitDataSize, &ExitData);
-
-    return Status;
 }
 
 static EFI_STATUS StartBootManager(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
@@ -594,15 +624,22 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     if (EFI_ERROR(Status) || !Handoff) return Status;
     memset(Handoff, 0, sizeof(*Handoff));
     Handoff->Signature = IMPLUSOS_BOOT_HANDOFF_SIGNATURE;
-    Handoff->Version = IMPLUSOS_BOOT_HANDOFF_VERSION;
+    Handoff->Version   = IMPLUSOS_BOOT_HANDOFF_VERSION;
 
     DiscoverSMBIOS(ST, Handoff);
     DiscoverAcpiRsdp(ST, Handoff);
-    Handoff->PartitionStartLBA = GetPartitionStartLBA(LoadedImage->DeviceHandle, ST, Handoff);
-    CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST, Handoff, Handoff->PartitionStartLBA);
 
+    BOOLEAN is_iso_lba = FALSE;
+    Handoff->PartitionStartLBA = GetPartitionStartLBA(
+        LoadedImage->DeviceHandle, ST, Handoff, &is_iso_lba);
+
+    if (!is_iso_lba) {
+        CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST,
+                                Handoff, Handoff->PartitionStartLBA);
+    }
     EFI_GUID handoff_guid = IMPLUSOS_BOOT_HANDOFF_GUID;
-    Status = uefi_call_wrapper(ST->BootServices->InstallConfigurationTable, 2, &handoff_guid, Handoff);
+    Status = uefi_call_wrapper(ST->BootServices->InstallConfigurationTable, 2,
+        &handoff_guid, Handoff);
     if (EFI_ERROR(Status)) return Status;
 
     Status = StartBootManager(ImageHandle, ST);
