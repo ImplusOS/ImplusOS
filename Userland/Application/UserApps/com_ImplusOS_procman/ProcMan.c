@@ -57,7 +57,6 @@ static void refresh_procs(void) {
             
             if (delta_ms > 0 && i < MAX_PROCESSES) {
                 uint64_t tick_diff = info.total_ticks - g_last_ticks[i];
-                // Just a rough estimate for display
                 g_procs[actual_count].cpu_usage = (double)tick_diff * 100.0 / (double)delta_ms;
             } else {
                 g_procs[actual_count].cpu_usage = 0;
@@ -85,20 +84,17 @@ static void draw(void) {
     window_clear(g_win);
     
     char buf[128];
-    // Header
     uint64_t used_mb = g_used_mem / (1024 * 1024);
     uint64_t total_mb = g_total_mem / (1024 * 1024);
     snprintf(buf, sizeof(buf), "System Monitor | Memory: %llu MB / %llu MB", used_mb, total_mb);
     window_draw_text(g_win, 10, 10, buf, COLOR_ACCENT, 16.0f);
-    
-    // Table Header
+
     window_draw_text(g_win, 10, 40, "PID", COLOR_TEXT, 14.0f);
     window_draw_text(g_win, 60, 40, "Name", COLOR_TEXT, 14.0f);
     window_draw_text(g_win, 220, 40, "State", COLOR_TEXT, 14.0f);
     window_draw_text(g_win, 300, 40, "CPU%", COLOR_TEXT, 14.0f);
     window_draw_text(g_win, 380, 40, "Memory", COLOR_TEXT, 14.0f);
     
-    // Rows
     for (int i = 0; i < g_proc_count; i++) {
         uint32_t text_color = (i == g_selected_idx) ? COLOR_ACCENT : COLOR_TEXT;
         int y = 70 + i * 20;
@@ -122,7 +118,6 @@ static void draw(void) {
         window_draw_text(g_win, 380, y, buf, text_color, 14.0f);
     }
     
-    // Footer
     window_draw_text(g_win, 10, 470, "[Up/Down] Select  [K] Kill  [R] Refresh", COLOR_DEAD, 12.0f);
 }
 
@@ -141,10 +136,10 @@ void procman_main(void) {
         input_keyboard_event_t ev;
         if (window_input_keyboard_poll(&ev) > 0) {
             if (ev.pressed) {
-                if (ev.keycode == 0x48) { // Up
+                if (ev.keycode == 0x48) {
                     if (g_selected_idx > 0) g_selected_idx--;
                     draw();
-                } else if (ev.keycode == 0x50) { // Down
+                } else if (ev.keycode == 0x50) {
                     if (g_selected_idx < g_proc_count - 1) g_selected_idx++;
                     draw();
                 } else if (ev.ascii == 'r' || ev.ascii == 'R') {

@@ -8,6 +8,7 @@
 #include "../../../../Userland/API/File.h"
 #include "../../../../libc/include/math.h"
 #include "../../../../libc/include/string.h"
+#include "../../../../libc/include/stdio.h"
 #include <stdlib.h>
 #include "../../../../Userland/API/XMLParser.h"
 
@@ -48,6 +49,23 @@ static void* realloc_sized(void* p, size_t oldsz, size_t newsz) {
 #define STBI_FREE(p)              free(p)
 #include "../../../../Thirdparty/stb_image.h"
 #pragma GCC diagnostic pop
+
+typedef struct {
+    const char *name;
+    const char *path;
+    const char *icon;
+} start_menu_app_t;
+
+static const start_menu_app_t g_start_apps[] = {
+    {"Terminal",       "/Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF", "💻"},
+    {"File Manager",   "/Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF", "📁"},
+    {"Editor",         "/Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF", "📝"},
+    {"Process Manager","/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF", "📊"},
+    {"Virtual Machine","/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF", "🖥️"},
+    {"Example App",    "/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF", "🚀"},
+    {"System Info",    "/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF", "ℹ️"},
+};
+#define START_APPS_COUNT (sizeof(g_start_apps) / sizeof(g_start_apps[0]))
 
 static uint32_t parse_hex_color(const char *str) {
     if (!str) return 0;
@@ -1472,41 +1490,52 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
         shadow_put_alpha(comp, r * dw + sm_x, 0x30FFFFFF, 1.0f);
         shadow_put_alpha(comp, r * dw + (sm_x + sm_w - 1), 0x30FFFFFF, 1.0f);
     }
-
     
-    shadow_fill_rounded_rect_clip(comp, sm_x + 15, sm_y + 15, sm_w - 30, 36, 8,
+    shadow_fill_rounded_rect_clip(comp, sm_x + 15, sm_y + 15, sm_w - 30, 36, 18,
         bx0, by0, bx1, by1, 0x20FFFFFF, 1.0f);
-    comp_draw_text(comp, sm_x + 25, sm_y + 25, "Type to search...", 0xFF8B9AB0, 14.0f, sm_w - 50, 1.0f);
+    comp_draw_text(comp, sm_x + 28, sm_y + 25, "🔍", 0xFF8B9AB0, 14.0f, 24, 1.0f);
+    comp_draw_text(comp, sm_x + 56, sm_y + 25, "Search apps and files", 0xFF8B9AB0, 14.0f, sm_w - 80, 1.0f);
 
-    
+    for (uint32_t i = 0; i < START_APPS_COUNT; i++) {
+        uint32_t ay = sm_y + 70 + i * 42;
+        if (bx1 > sm_x + 15 && bx0 < sm_x + sm_w - 15 && by1 > ay && by0 < ay + 36) {
+             bool hover = (st->server.cursor_x >= sm_x + 15 && st->server.cursor_x < sm_x + sm_w - 15 &&
+                           st->server.cursor_y >= ay && st->server.cursor_y < ay + 36);
+             uint32_t bg_col = hover ? 0x28FFFFFF : 0x10FFFFFF;
+             shadow_fill_rounded_rect_clip(comp, sm_x + 15, ay, sm_w - 30, 36, 6,
+                bx0, by0, bx1, by1, bg_col, 1.0f);
+             comp_draw_text(comp, sm_x + 28, ay + 10, g_start_apps[i].icon, 0xFFFFFFFF, 14.0f, 30, 1.0f);
+             comp_draw_text(comp, sm_x + 58, ay + 10, g_start_apps[i].name, 0xFFEFF3F8, 14.0f, sm_w - 88, 1.0f);
+        }
+    }
+
+    uint32_t stats_y = sm_y + sm_h - 75;
+    uint64_t mem_used = get_used_memory() / (1024 * 1024);
+    uint64_t mem_total = get_total_memory() / (1024 * 1024);
+    char mem_text[64];
+    snprintf(mem_text, sizeof(mem_text), "Memory Usage: %llu / %llu MB", mem_used, mem_total);
+    comp_draw_text(comp, sm_x + 15, stats_y, mem_text, 0xFF8B9AB0, 11.0f, sm_w - 30, 1.0f);
+
     uint32_t up_y = sm_y + sm_h - 50;
     shadow_fill_rounded_rect_clip(comp, sm_x, up_y, sm_w, 50, 0,
         bx0, by0, bx1, by1, 0x10FFFFFF, 1.0f);
-    comp_draw_text(comp, sm_x + 15, up_y + 15, "ImplusOS User", 0xFFFFFFFF, 14.0f, sm_w - 30, 1.0f);
+    comp_draw_text(comp, sm_x + 40, up_y + 15, "ImplusOS User", 0xFFFFFFFF, 14.0f, sm_w - 60, 1.0f);
+    comp_draw_text(comp, sm_x + 15, up_y + 15, "👤", 0xFFFFFFFF, 14.0f, 20, 1.0f);
 
-    
+    // Power buttons
     uint32_t pwr_x = sm_x + sm_w - 40;
-    
+    bool hover_pwr = (st->server.cursor_x >= pwr_x && st->server.cursor_x < pwr_x + 30 &&
+                      st->server.cursor_y >= up_y + 10 && st->server.cursor_y < up_y + 40);
     shadow_fill_rounded_rect_clip(comp, pwr_x, up_y + 10, 30, 30, 6,
-        bx0, by0, bx1, by1, 0x20FFFFFF, 1.0f);
+        bx0, by0, bx1, by1, hover_pwr ? 0x40FFFFFF : 0x20FFFFFF, 1.0f);
     comp_draw_text(comp, pwr_x + 8, up_y + 16, "⏻", 0xFFC42B1C, 14.0f, 20, 1.0f);
 
-    
     pwr_x -= 40;
+    bool hover_rb = (st->server.cursor_x >= pwr_x && st->server.cursor_x < pwr_x + 30 &&
+                     st->server.cursor_y >= up_y + 10 && st->server.cursor_y < up_y + 40);
     shadow_fill_rounded_rect_clip(comp, pwr_x, up_y + 10, 30, 30, 6,
-        bx0, by0, bx1, by1, 0x20FFFFFF, 1.0f);
+        bx0, by0, bx1, by1, hover_rb ? 0x40FFFFFF : 0x20FFFFFF, 1.0f);
     comp_draw_text(comp, pwr_x + 8, up_y + 16, "⟳", 0xFF0078D4, 14.0f, 20, 1.0f);
-
-    
-    const char *apps[] = { "📁 File Manager", "💻 Terminal", "🌐 Browser", "⚙️ Settings", "🎨 Calculator" };
-    for (int i = 0; i < 5; i++) {
-        uint32_t ay = sm_y + 70 + (uint32_t)i * 42;
-        if (bx1 > sm_x + 15 && bx0 < sm_x + sm_w - 15 && by1 > ay && by0 < ay + 36) {
-             shadow_fill_rounded_rect_clip(comp, sm_x + 15, ay, sm_w - 30, 36, 6,
-                bx0, by0, bx1, by1, 0x10FFFFFF, 1.0f);
-             comp_draw_text(comp, sm_x + 30, ay + 10, apps[i], 0xFFEFF3F8, 14.0f, sm_w - 60, 1.0f);
-        }
-    }
 }
 
 
@@ -1957,6 +1986,15 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         wm_server_update_cursor(srv, mx, my);
         st->prev_mouse_buttons = btns;
 
+        // Mark start menu dirty if hover changes
+        if (st->start_menu_open) {
+            uint32_t sm_w = 360, sm_h = 480, sm_x = 8;
+            uint32_t sm_y = st->compositor.fb_height - WM_TASKBAR_HEIGHT - sm_h - 8;
+            if (mx >= sm_x && mx < sm_x + sm_w && my >= sm_y && my < sm_y + sm_h) {
+                wm_compositor_mark_dirty(&st->compositor, sm_x, sm_y, sm_w, sm_h);
+            }
+        }
+
         
         bool changed_hover = false;
         wm_window_t *top = srv->z_top;
@@ -2082,6 +2120,18 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
                             system_shutdown();
                         } else if (mx >= pwr_x_rb && mx < pwr_x_rb + 30) {
                             system_reboot();
+                        }
+                    }
+
+                    // Launch apps
+                    for (uint32_t i = 0; i < START_APPS_COUNT; i++) {
+                        uint32_t ay = sm_y + 70 + i * 42;
+                        if (mx >= sm_x + 15 && mx < sm_x + sm_w - 15 && my >= ay && my < ay + 36) {
+                            process_spawn(g_start_apps[i].path);
+                            st->start_menu_open = false;
+                            wm_compositor_mark_dirty(&st->compositor, 0, 0, 
+                                st->compositor.fb_width, st->compositor.fb_height);
+                            break;
                         }
                     }
                 }
