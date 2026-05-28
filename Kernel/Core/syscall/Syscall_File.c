@@ -342,8 +342,8 @@ int32_t syscall_file_opendir(const char *path)
         return (int32_t)OS_STATUS_INVALID_ARG;
     }
 
-    int32_t fat_handle = vfs_opendir(path);
-    if (fat_handle < 0) {
+    int32_t vfs_handle = vfs_opendir(path);
+    if (vfs_handle < 0) {
         return (int32_t)OS_STATUS_NOT_FOUND;
     }
 
@@ -354,7 +354,7 @@ int32_t syscall_file_opendir(const char *path)
         if (g_dirs[i].used == 0) {
             g_dirs[i].used = 1;
             g_dirs[i].owner_pid = current_pid;
-            g_dirs[i].vfs_handle = fat_handle;
+            g_dirs[i].vfs_handle = vfs_handle;
             spinlock_unlock(&g_dir_table_lock);
             irq_restore(irq_flags);
             return i;
@@ -363,7 +363,7 @@ int32_t syscall_file_opendir(const char *path)
     spinlock_unlock(&g_dir_table_lock);
     irq_restore(irq_flags);
 
-    (void)vfs_closedir(fat_handle);
+    (void)vfs_closedir(vfs_handle);
     return (int32_t)OS_STATUS_LIMIT_REACHED;
 }
 

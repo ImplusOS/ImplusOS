@@ -1522,7 +1522,6 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
     comp_draw_text(comp, sm_x + 40, up_y + 15, "ImplusOS User", 0xFFFFFFFF, 14.0f, sm_w - 60, 1.0f);
     comp_draw_text(comp, sm_x + 15, up_y + 15, "👤", 0xFFFFFFFF, 14.0f, 20, 1.0f);
 
-    // Power buttons
     uint32_t pwr_x = sm_x + sm_w - 40;
     bool hover_pwr = (st->server.cursor_x >= pwr_x && st->server.cursor_x < pwr_x + 30 &&
                       st->server.cursor_y >= up_y + 10 && st->server.cursor_y < up_y + 40);
@@ -1986,7 +1985,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         wm_server_update_cursor(srv, mx, my);
         st->prev_mouse_buttons = btns;
 
-        // Mark start menu dirty if hover changes
         if (st->start_menu_open) {
             uint32_t sm_w = 360, sm_h = 480, sm_x = 8;
             uint32_t sm_y = st->compositor.fb_height - WM_TASKBAR_HEIGHT - sm_h - 8;
@@ -2122,8 +2120,7 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
                             system_reboot();
                         }
                     }
-
-                    // Launch apps
+                    
                     for (uint32_t i = 0; i < START_APPS_COUNT; i++) {
                         uint32_t ay = sm_y + 70 + i * 42;
                         if (mx >= sm_x + 15 && mx < sm_x + sm_w - 15 && my >= ay && my < ay + 36) {
