@@ -144,6 +144,7 @@ app_build: $(USERLAND_INIT_OBJS)
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_NetworkTest
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_editor
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_filemanager
+	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_procman
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_vm
 
 driver_build:

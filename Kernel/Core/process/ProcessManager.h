@@ -78,3 +78,5 @@ void process_on_timer_tick(void);
 int  process_timeslice_expired(void);
 int32_t current_pid_get(void);
 int process_is_alive(int32_t pid);
+int32_t process_terminate(int32_t pid);
+int32_t process_get_full_info(int32_t pid, void *info_out);

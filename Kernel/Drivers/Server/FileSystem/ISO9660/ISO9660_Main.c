@@ -785,7 +785,7 @@ const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
         !api->memset || !api->memcpy || !api->serial_write_string)
         return NULL;
     g_driver_api = api;
-    g_iso_partition_lba = 0;
+    g_iso_partition_lba = api->disk_get_partition_lba();
     spinlock_init(&g_iso_lock);
     return &g_iso9660_module;
 }

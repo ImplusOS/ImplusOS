@@ -19,12 +19,13 @@ sudo apt install -y build-essential nasm binutils gnu-efi \
 # Full build
 make
 
-# Create bootable ISO
+# Create bootable hybrid ISO (UEFI + BIOS)
 make image_esp
 
 # Run in QEMU
-make run_usb   # USB XHCI boot
-make run_ide   # IDE boot
+make run_uefi_usb   # UEFI USB boot
+make run_uefi_cdrom # UEFI CD-ROM boot
+make run_bios_usb   # BIOS USB boot
 
 # Clean
 make clean
@@ -48,16 +49,17 @@ make clean
 
 ```
 ImplusOS/
-├── BootLoader/           # UEFI bootloader (gnu-efi)
+├── BootLoader/           # UEFI/BIOS entry points (x86_64/UEFI/, x86_64/BIOS/)
+├── BootManager/          # Secondary boot stage (UEFI/BIOS)
 ├── Kernel/               # Kernel source
-│   ├── Arch/x86_64/      # GDT, IDT, paging, SMP, VMX
-│   ├── Core/             # kernel_main, process, syscall, VFS, IPC, timer, WM
+│   ├── Arch/x86_64/      # GDT, IDT, mmu/paging, SMP, virt/VMX
+│   ├── Core/             # kernel_main, process, syscall, VFS, IPC, timer, window, sync, elf
 │   ├── Debug/            # Serial, printf, panic
 │   ├── Drivers/          # Driver framework (Client/Server/Module)
 │   ├── IPC/              # Message-passing IPC
 │   ├── MemoryManagement/ # PMM (bitmap), heap, DMA
 │   ├── Network/          # IPv4/ARP/DHCP/UDP/TCP/ICMP/Ethernet
-│   ├── Platform/         # ACPI, APIC, I/O protocols
+│   ├── Platform/         # ACPI, IOAPIC, LAPIC, I/O protocols
 │   ├── config/           # arch.mk
 │   └── include/          # Shared headers (status.h, config.h, interfaces/)
 ├── Userland/             # User-space
@@ -77,10 +79,11 @@ ImplusOS/
 
 ### Boot Flow
 
-1. UEFI firmware loads `BOOTX64.EFI` (from `BootLoader/Loader.c`)
-2. Loader sets up GOP framebuffer, loads kernel ELF + driver ELFs + font data
+1. UEFI firmware loads `BOOTX64.EFI` (shim) → `BOOTMANAGER.EFI` (main manager)
+   OR BIOS firmware loads `stage1.bin` → `stage2.bin` → `BootManager_BIOS.BIN`
+2. BootManager sets up GOP framebuffer (UEFI) or VESA (BIOS), loads kernel ELF + driver ELFs + font data
 3. Discovers ACPI RSDP, partition BPB, boot drive type
-4. Exits UEFI Boot Services, jumps to `kernel_main()`
+4. Exits Boot Services (UEFI), jumps to `kernel_main()`
 
 ### Kernel Initialization (in order)
 

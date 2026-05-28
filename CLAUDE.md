@@ -11,12 +11,13 @@ via the AMD64 `SYSCALL`/`SYSRET` ABI.
 
 ```
 ImplusOS/
-├── BootLoader/           UEFI bootloader (gnu-efi, Loader.c)
+├── BootLoader/           UEFI and BIOS bootloader entry points (x86_64/UEFI/, x86_64/BIOS/)
+├── BootManager/          Secondary boot stage logic (UEFI and BIOS)
 ├── Kernel/               Kernel source (all subsystems)
-│   ├── Arch/x86_64/      Architecture-specific (GDT, IDT, paging, SMP, VMX)
+│   ├── Arch/x86_64/      Architecture-specific (GDT, IDT, mmu/paging, SMP, virt/VMX)
 │   ├── Arch/arm64/       ARM64 stubs (placeholder)
 │   ├── Boot/             Boot-time progress bar
-│   ├── Core/             kernel_main, process manager, syscall, VFS, IPC, timer, window manager
+│   ├── Core/             kernel_main and core subsystems (process, syscall, vfs, window, timer, sync, elf)
 │   ├── Debug/            Serial output, printf, panic handler
 │   ├── Drivers/          Driver module framework (Client/Server/Module)
 │   ├── FileSystem/       FAT32 BPB definitions
@@ -61,20 +62,23 @@ sudo apt install -y build-essential nasm binutils gnu-efi \
 | `make app_build` | Build all userland applications |
 | `make driver_build` | Build all driver modules |
 | `make driver_stage` | Build drivers + copy ELFs to staging directory |
-| `make image_esp` | Build full ISO image (`Image/ImplusOS.iso`) |
-| `make run_usb` | Launch QEMU with USB boot |
-| `make run_ide` | Launch QEMU with IDE boot |
+| `make image_esp` | Build full hybrid ISO image (`Image/ImplusOS.iso`) |
+| `make run_uefi_usb` | Launch QEMU with UEFI USB boot |
+| `make run_uefi_cdrom`| Launch QEMU with UEFI CD-ROM boot |
+| `make run_bios_usb` | Launch QEMU with BIOS USB boot |
 | `make clean` | Remove all build artifacts |
 
 ### Build Artifacts
 
-- `Build/Loader/BOOTX64.EFI` — UEFI bootloader
+- `Build/Loader/BOOTX64.EFI` — UEFI loader shim
+- `Build/BootManager/BOOTMANAGER.EFI` — Main UEFI boot manager
+- `Build/BootManager/BootManager_BIOS.BIN` — BIOS boot manager
 - `Build/Kernel/Kernel_Main.ELF` — Kernel binary
 - `Build/Userland/Userland.ELF` — Init process
 - `Build/Modules/<name>/<name>.ELF` — Driver modules
 - `Build/Userland/SystemApps/<name>/<name>.ELF` — System applications
 - `Build/Userland/UserApps/<name>/<name>.ELF` — User applications
-- `Image/ImplusOS.iso` — Final bootable ISO
+- `Image/ImplusOS.iso` — Final bootable hybrid ISO
 
 ### Cross-Compiler
 

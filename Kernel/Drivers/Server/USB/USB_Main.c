@@ -304,7 +304,7 @@ bool usb_submit_interrupt_in_async(uint8_t addr, uint8_t ep_num,
     usb_hc_type_t hc = g_dev_hc[addr];
     if (hc == USB_HC_NONE) hc = g_hc_type;
     if (hc == USB_HC_XHCI)
-        return xhci_submit_interrupt_in_async(addr, ep_num, max_packet_size, dma_buf, dma_phys, length);
+        return xhci_submit_interrupt_in(addr, ep_num, max_packet_size, dma_buf, dma_phys, length);
     return false;
 }
 
@@ -330,7 +330,7 @@ bool usb_submit_interrupt_in_sync(uint8_t addr, uint8_t endpoint,
     else if (hc == USB_HC_UHCI)
         return uhci_submit_interrupt_in(addr, endpoint, max_packet_size, data, length);
     else if (hc == USB_HC_XHCI) {
-        return xhci_submit_interrupt_in_async(addr, endpoint, max_packet_size, data, 0, length);
+        return xhci_submit_interrupt_in(addr, endpoint, max_packet_size, data, 0, length);
     }
     return false;
 }

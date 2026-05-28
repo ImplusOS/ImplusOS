@@ -164,7 +164,7 @@ bool     xhci_port_connected(uint32_t port);
 bool     xhci_port_valid(uint32_t port);
 bool     xhci_evaluate_ep0_mps(uint8_t addr, uint16_t new_mps);
 
-bool xhci_submit_interrupt_in_async(uint8_t addr, uint8_t ep_num,
+bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
                                      uint16_t max_packet_size,
                                      void *dma_buf, uint64_t dma_phys,
                                      uint16_t length);

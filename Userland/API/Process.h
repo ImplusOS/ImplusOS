@@ -21,8 +21,14 @@ typedef struct {
     int32_t pid;
     int32_t parent_pid;
     uint8_t state;
-    uint8_t reserved[3];
+    uint8_t reserved[7];
+    char    name[64];
+    uint64_t total_ticks;
+    uint64_t memory_usage;
 } process_info_t;
 
 int32_t get_process_count(void);
 int32_t get_process_info(int32_t pid, process_info_t *info_out);
+int32_t process_kill(int32_t pid);
+uint64_t get_total_memory(void);
+uint64_t get_used_memory(void);

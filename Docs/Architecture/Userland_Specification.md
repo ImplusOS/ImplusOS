@@ -12,17 +12,13 @@ The init process is the first user-space process loaded by the kernel.
 
 ### Boot Sequence
 
-1. Clear the display (black fill)
-2. Spawn system apps in order:
+1. Clear the display (gradient fill)
+2. Load system font
+3. Display welcome message and boot count
+4. Spawn system apps:
    - `com_ImplusOS_windowmanager` — Window manager
-   - `com_ImplusOS_shell` — Terminal shell
    - `com_ImplusOS_version` — Version display
-3. Spawn user apps:
-   - `com_ImplusOS_editor` — Text editor
-   - `com_ImplusOS_exampleApp` — Demo application
-   - `com_ImplusOS_filemanager` — File manager
-   - `com_ImplusOS_vm` — Virtual machine app
-4. Enter idle loop (`process_yield()` forever)
+5. Enter idle loop (`process_yield()` forever)
 
 Each spawn is followed by yield loops to give the spawned process time to initialize.
 
@@ -188,7 +184,6 @@ include ../../AppCommon.mk
 
 | Application | Description |
 |---|---|
-| `com_ImplusOS_clock` | Clock display (RTC time) |
 | `com_ImplusOS_editor` | Text editor |
 | `com_ImplusOS_exampleApp` | Demo app (XML layout, resource loading) |
 | `com_ImplusOS_filemanager` | File manager (directory listing, file ops) |

@@ -436,15 +436,17 @@ void _start(void)
 
     fade_in(1200, 32);
 
-    static const char *const com_ImplusOS_version[] = {
-        "Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF",
+    static const char *const com_ImplusOS_windowmanager[] = {
+        "/Userland/SystemApps/com_ImplusOS_windowmanager/com_ImplusOS_windowmanager.ELF",
     };
 
-    static const char *const com_ImplusOS_windowmanager[] = {
-        "Userland/SystemApps/com_ImplusOS_windowmanager/com_ImplusOS_windowmanager.ELF",
+    static const char *const com_ImplusOS_procman[] = {
+        "/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF",
     };
 
     spawn_with_fallbacks(com_ImplusOS_windowmanager, sizeof(com_ImplusOS_windowmanager) / sizeof(com_ImplusOS_windowmanager[0]));
+    process_yield();
+    spawn_with_fallbacks(com_ImplusOS_procman, sizeof(com_ImplusOS_procman) / sizeof(com_ImplusOS_procman[0]));
     process_yield();
     
     
@@ -459,9 +461,6 @@ void _start(void)
         sleep_ms(500); 
         window_show_notification("System", "Welcome to ImplusOS!");
     }
-    
-    spawn_with_fallbacks(com_ImplusOS_version, sizeof(com_ImplusOS_version) / sizeof(com_ImplusOS_version[0]));
-    process_yield();
 
     while (1) {
         process_yield();

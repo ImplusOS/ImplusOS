@@ -1052,6 +1052,24 @@ int32_t tcp_get_state(int32_t conn_id)
 #define SYSCALL_GET_PROC_COUNT_NUM 121ULL
 #define SYSCALL_GET_PROC_INFO_NUM  122ULL
 #define SYSCALL_GET_RTC_TIME       140ULL
+#define SYSCALL_GET_TOTAL_MEMORY_NUM 253ULL
+#define SYSCALL_GET_USED_MEMORY_NUM  254ULL
+#define SYSCALL_TKILL_NUM            186ULL
+
+int32_t process_kill(int32_t pid)
+{
+    return (int32_t)syscall1(SYSCALL_TKILL_NUM, (uint64_t)(int64_t)pid);
+}
+
+uint64_t get_total_memory(void)
+{
+    return syscall0(SYSCALL_GET_TOTAL_MEMORY_NUM);
+}
+
+uint64_t get_used_memory(void)
+{
+    return syscall0(SYSCALL_GET_USED_MEMORY_NUM);
+}
 
 int32_t sys_get_rtc_time(rtc_time_t *time)
 {

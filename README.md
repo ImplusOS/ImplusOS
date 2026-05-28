@@ -62,7 +62,6 @@ sudo apt install -y gcc-multilib g++-multilib
 sudo apt install -y nasm
 sudo apt install -y binutils
 sudo apt install -y gnu-efi
-sudo apt install -y gnu-efi
 sudo apt install -y parted
 sudo apt install -y qemu-system-x86
 sudo apt install -y gdb
@@ -70,16 +69,16 @@ sudo apt install -y dosfstools
 sudo apt install -y xorriso
 sudo apt install -y mtools
 sudo apt install -y util-linux
+# For macOS (Homebrew)
 brew install x86_64-elf-binutils
 brew install x86_64-elf-gcc
 ```
 2. Build and run:
 ```bash
 make
-make run_uefi_usb (UEFI with USB XHCI BOOT Support)
-make run_uefi_ide (UEFI with IDE BOOT Support)
-make run_bios_usb (Legacy BIOS / CSM with USB XHCI BOOT Support)
-make run_bios_ide (Legacy BIOS / CSM with IDE BOOT Support)
+make run_uefi_usb   # UEFI USB boot
+make run_uefi_cdrom # UEFI CD-ROM boot
+make run_bios_usb   # BIOS USB boot
 ```
 
 ## Notes
@@ -87,7 +86,7 @@ make run_bios_ide (Legacy BIOS / CSM with IDE BOOT Support)
 * You may not be able to build successfully in non-interactive environments (CI/CD, restricted container environments, etc.).
 
 ## Current Feature Set
-- UEFI bootloader path.
+- UEFI and BIOS boot paths.
 - Process manager and syscall dispatch.
 - FAT32 file I/O syscall backend.
 - PS/2 keyboard and mouse input path.
@@ -103,55 +102,44 @@ make run_bios_ide (Legacy BIOS / CSM with IDE BOOT Support)
 - NX (No-Execute) bit paging support for enhanced security.
 - Berkeley-style Socket API support in userland.
 - XML Parser utility library in userland.
-- Preliminary Wayland compositor port and dependencies.
 
 ## Current Constraints
-- Verified operation is QEMU + OVMF centric.
+- Verified operation is QEMU + OVMF centric (for UEFI).
 - Physical hardware operation is not guaranteed.
 - Audio drivers are not yet integrated.
 
 ## Error and Status Contract
-- Kernel subsystems return `os_status_t` (`Kernel/Common/Status.h`).
+- Kernel subsystems return `os_status_t` (`Kernel/include/kernel/status.h`).
 - Negative status values are errors.
 - Userland wrappers expose `os_errno` with status-to-errno conversion.
-- Mapping table: `Docs/Architecture/Status_Codes.md`.
 
 ## Documentation
-- User guidance:
-  - `Docs/ForUsers/ForUsers_English.md`
-  - `Docs/ForUsers/ForUsers_Japanese.md`
 - Architecture references:
   - `Docs/Architecture/Kernel_Architecture.md` — Full kernel architecture overview
-  - `Docs/Architecture/Boot_Sequence.md` — Detailed boot flow reference
-  - `Docs/Architecture/Syscall_Reference.md` — System call numbers, arguments, return values
   - `Docs/Architecture/Driver_Module_Guide.md` — How to create driver modules
-  - `Docs/Architecture/Kernel_Config_Guide.md` — Compile-time configuration options
-  - `Docs/Architecture/Status_Codes.md` — Error code reference and errno mapping
-  - `Docs/Architecture/Repository_Structure.md` — Directory layout reference
+  - `Docs/Architecture/Userland_Specification.md` — Userland app development guide
 - API docs generation:
   - `doxygen Doxyfile`
 
 ## Repository Structure
 ```
 ImplusOS/
-├── BootLoader/        UEFI bootloader (Loader.c + boot logo)
+├── BootLoader/        UEFI/BIOS entry points (x86_64/UEFI/, x86_64/BIOS/)
+├── BootManager/       Secondary boot stage logic (UEFI/BIOS)
 ├── Kernel/            Kernel source (all subsystems)
-│   ├── Drivers/       Loadable driver modules (PCI, FAT32, PS2, USB, Display)
-│   ├── Syscall/       System call dispatch
-│   ├── ProcessManager/  Process lifecycle and scheduling
-│   ├── Memory/        Physical + virtual memory management
-│   ├── Paging/        4-level page table management
-│   ├── VFS/           Virtual File System
+│   ├── Arch/          Architecture-specific (GDT, IDT, mmu, SMP, virt)
+│   ├── Core/          Core subsystems (process, syscall, vfs, window, timer, sync)
+│   ├── Debug/         Serial, printf, panic
+│   ├── Drivers/       Loadable driver modules (PCI, FAT32, PS2, USB, Display, NIC)
+│   ├── MemoryManagement/ Physical + virtual memory management (PMM, heap)
 │   ├── IPC/           Inter-process communication
-│   ├── WindowManager/ Window manager kernel side
-│   ├── Network/       IPv4/UDP/TCP/ICMP network stack
-│   └── ...            GDT, IDT, SMP, ACPI, Timer, etc.
+│   ├── Network/       IPv4/UDP/TCP/ICMP/DHCP network stack
+│   └── Platform/      ACPI, IOAPIC, LAPIC, I/O protocols
 ├── Userland/          User-space init + applications
 │   ├── API/           Userland syscall wrapper headers
 │   └── Application/   System and user applications
 ├── libc/              Minimal C library (string, stdlib, stdio, math)
-├── WaylandPort/       Wayland compositor port and dependencies
-├── Docs/              Documentation (architecture, user guides)
+├── Docs/              Documentation (architecture, images)
 ├── Makefile           Top-level build system
 └── Doxyfile           Doxygen configuration
 ```

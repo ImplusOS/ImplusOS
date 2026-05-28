@@ -77,6 +77,8 @@ typedef struct __attribute__((aligned(16))) {
     uint64_t user_stack_top;
     uint64_t user_stack_guard_page;
     uint32_t timeslice;
+    uint64_t total_ticks;
+    char     name[64];
     int32_t parent_pid;
     int32_t exit_status;
     user_alloc_t user_allocs[PROCESS_USER_ALLOC_MAX];
@@ -242,6 +244,8 @@ static void reset_process_slot(process_t *proc)
     proc->user_stack_top = 0;
     proc->user_stack_guard_page = 0;
     proc->timeslice = 0;
+    proc->total_ticks = 0;
+    memset(proc->name, 0, sizeof(proc->name));
     proc->parent_pid = -1;
     proc->exit_status = 0;
     for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
@@ -763,6 +767,13 @@ int32_t process_spawn_user_elf(const char *path)
 
     process_t *proc = &g_processes[pid];
 
+    const char *name_ptr = path;
+    for (const char *p = path; *p; ++p) {
+        if (*p == '/' && *(p+1) != '\0') name_ptr = p + 1;
+    }
+    strncpy(proc->name, name_ptr, sizeof(proc->name) - 1);
+    proc->name[sizeof(proc->name) - 1] = '\0';
+
     elf_load_policy_t policy = {
         .max_file_size = PROCESS_ELF_MAX_SIZE,
         .min_vaddr = USER_CODE_BASE,
@@ -1050,6 +1061,7 @@ void process_on_timer_tick(void)
     if (is_valid_pid(current_pid_get())) {
         process_t *proc = &g_processes[current_pid_get()];
         if (proc->state == PROCESS_STATE_RUNNING) {
+            proc->total_ticks++;
             if (proc->timeslice == 0) {
                 proc->timeslice = g_timeslice_ticks;
             }
@@ -1525,4 +1537,71 @@ int32_t process_get_parent_pid(int32_t pid)
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return ppid;
+}
+int32_t process_terminate(int32_t pid)
+{
+    if (pid < 0 || pid >= g_process_capacity) return -1;
+    if (pid == current_pid_get()) {
+        process_exit_current();
+        return 0;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    process_t *proc = &g_processes[pid];
+    if (proc->state == PROCESS_STATE_UNUSED || proc->state == PROCESS_STATE_DEAD) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    proc->state = PROCESS_STATE_DEAD;
+    release_process_resources(proc);
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+int32_t process_get_full_info(int32_t pid, void *info_out)
+{
+    if (pid < 0 || pid >= g_process_capacity) return -1;
+    
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    process_t *proc = &g_processes[pid];
+    if (proc->state == PROCESS_STATE_UNUSED) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    struct full_info {
+        int32_t pid;
+        int32_t parent_pid;
+        uint8_t state;
+        uint8_t reserved[7];
+        char    name[64];
+        uint64_t total_ticks;
+        uint64_t memory_usage;
+    } *info = info_out;
+
+    info->pid = pid;
+    info->parent_pid = proc->parent_pid;
+    info->state = proc->state;
+    for (int i = 0; i < 64; i++) info->name[i] = proc->name[i];
+    info->total_ticks = proc->total_ticks;
+    
+    uint64_t usage = 0;
+    if (proc->user_heap_cursor > proc->user_heap_base) {
+        usage += (proc->user_heap_cursor - proc->user_heap_base);
+    }
+    if (proc->user_stack_top > proc->user_stack_base) {
+        usage += (proc->user_stack_top - proc->user_stack_base);
+    }
+    info->memory_usage = usage;
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
 }

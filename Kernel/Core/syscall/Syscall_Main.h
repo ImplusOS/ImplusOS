@@ -10,7 +10,7 @@
 #define SYSCALL_PROCESS_YIELD     7
 #define SYSCALL_PROCESS_EXIT      8
 #define SYSCALL_THREAD_CREATE     9
-#define SYSCALL_FILE_OPEN          61
+#define SYSCALL_FILE_OPEN          23
 #define SYSCALL_FILE_READ         24
 #define SYSCALL_FILE_WRITE        25
 #define SYSCALL_FILE_CLOSE        26
@@ -69,6 +69,9 @@
 #define SYSCALL_GET_PROC_COUNT    121
 #define SYSCALL_GET_PROC_INFO     122
 #define SYSCALL_GET_RTC_TIME      140
+
+#define SYSCALL_GET_TOTAL_MEMORY  253
+#define SYSCALL_GET_USED_MEMORY   254
 
 #define SYSCALL_MPROTECT          150
 #define SYSCALL_MUNMAP            151

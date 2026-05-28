@@ -887,28 +887,25 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
 
         case SYSCALL_GET_PROC_INFO: {
             int32_t query_pid = (int32_t)arg1;
-            struct { int32_t pid; int32_t parent_pid; uint8_t state; uint8_t reserved[3]; } *info_out =
-                (void *)(uintptr_t)arg2;
-            if (!user_buffer_ok(info_out, 12)) {
+            void *info_out = (void *)(uintptr_t)arg2;
+            if (!user_buffer_ok(info_out, 128)) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_info_buffer");
                 break;
             }
-            if (query_pid < 0 || query_pid >= (int32_t)OS_CONFIG_PROCESS_MAX_COUNT) {
-                set_syscall_result(saved_rsp, (uint64_t)(int64_t)OS_STATUS_NOT_FOUND);
-                break;
-            }
-            int alive = process_is_alive(query_pid);
-            if (!alive) {
-                info_out->pid = query_pid;
-                info_out->parent_pid = -1;
-                info_out->state = 0;
-                set_syscall_result(saved_rsp, (uint64_t)(int64_t)OS_STATUS_NOT_FOUND);
-            } else {
-                info_out->pid = query_pid;
-                info_out->parent_pid = process_get_parent_pid(query_pid);
-                info_out->state = 1;
-                set_syscall_result(saved_rsp, 0);
-            }
+            int32_t rc = process_get_full_info(query_pid, info_out);
+            set_syscall_i32(saved_rsp, rc);
+            break;
+        }
+
+        case SYSCALL_GET_TOTAL_MEMORY: {
+            extern uint64_t get_total_memory_pages(void);
+            set_syscall_result(saved_rsp, get_total_memory_pages() * 4096);
+            break;
+        }
+
+        case SYSCALL_GET_USED_MEMORY: {
+            extern uint64_t get_used_memory(void);
+            set_syscall_result(saved_rsp, get_used_memory());
             break;
         }
 
@@ -1148,7 +1145,9 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
         case SYSCALL_TKILL: {
-            set_syscall_result(saved_rsp, 0);
+            int32_t target_pid = (int32_t)arg1;
+            int32_t rc = process_terminate(target_pid);
+            set_syscall_i32(saved_rsp, rc);
             break;
         }
         

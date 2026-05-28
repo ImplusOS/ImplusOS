@@ -16,13 +16,14 @@
 
 | Directory | Purpose |
 |---|---|
-| `BootLoader/` | UEFI bootloader (`Loader.c`, gnu-efi based) |
+| `BootLoader/` | UEFI and BIOS bootloader entry points (`x86_64/UEFI/`, `x86_64/BIOS/`) |
+| `BootManager/` | Secondary boot stage logic (UEFI and BIOS) |
 | `Kernel/` | All kernel subsystems |
-| `Kernel/Arch/x86_64/` | GDT, IDT, paging (4-level), SMP, VMX (Intel VT-x) |
-| `Kernel/Core/` | kernel_main, process manager, syscall dispatch, VFS, IPC, timer, window manager |
+| `Kernel/Arch/x86_64/` | GDT, IDT, paging (mmu), SMP, VMX (virt) |
+| `Kernel/Core/` | kernel_main and core subsystems (process, syscall, vfs, window, timer, sync, elf) |
 | `Kernel/Debug/` | Serial (COM1), printf, panic handler |
 | `Kernel/Drivers/` | Driver framework: Module (loader), Client (kernel-side API), Server (driver implementations) |
-| `Kernel/MemoryManagement/` | Bitmap PMM, kernel heap (malloc/free), DMA allocator |
+| `Kernel/MemoryManagement/` | Bitmap PMM (Memory_Main), DMA allocator |
 | `Kernel/Network/` | Full network stack: Ethernet, ARP, IPv4, UDP, TCP, ICMP, DHCP |
 | `Kernel/Platform/` | ACPI, IOAPIC, LAPIC, I/O (ATA, USB Mass Storage protocols) |
 | `Kernel/include/` | Shared interfaces: `arch_ops.h`, `driver_api.h`, `status.h`, `config.h` |
@@ -47,9 +48,10 @@ sudo apt install -y build-essential nasm binutils gnu-efi \
 
 ```bash
 make                # Build everything
-make image_esp      # Create bootable ISO
-make run_usb        # Run in QEMU (USB boot)
-make run_ide        # Run in QEMU (IDE boot)
+make image_esp      # Create bootable ISO (Hybrid BIOS/UEFI)
+make run_uefi_usb   # Run in QEMU (UEFI USB boot)
+make run_uefi_cdrom # Run in QEMU (UEFI CD-ROM boot)
+make run_bios_usb   # Run in QEMU (BIOS USB boot)
 make clean          # Remove build artifacts
 ```
 
@@ -62,7 +64,7 @@ All code is compiled with `x86_64-elf-gcc` (freestanding, no stdlib).
 ### Boot Sequence
 
 ```
-UEFI → BOOTX64.EFI → Load kernel ELF + drivers → Exit Boot Services → kernel_main()
+UEFI/BIOS → Loader → BootManager → Load kernel ELF + drivers → kernel_main()
 ↓
 serial → GDT → IDT → PMM → paging → heap → ACPI → interrupts → syscall →
 SMP → VMX → timer → drivers → FS → display → WM → processes → IPC → network →
