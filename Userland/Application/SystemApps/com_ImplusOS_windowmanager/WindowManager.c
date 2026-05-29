@@ -106,7 +106,7 @@ static const char k_cursor_map[WM_CURSOR_H][WM_CURSOR_W + 1] = {
     "..............",
 };
 
-static const uint8_t k_corner_skip[WM_CORNER_RADIUS] = {3, 1, 1, 0, 0, 0, 0, 0};
+static const uint8_t k_corner_skip[WM_CORNER_RADIUS] = {4, 2, 1, 0, 0, 0, 0, 0};
 
 static wm_state_t g_state;
 static stbtt_fontinfo g_font_info;
@@ -1351,20 +1351,10 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
         }
     }
 
-    
     uint32_t sb_w = 44;
     uint32_t sb_h = tb_h - 12;
-    uint32_t sb_x = tb_x + 6;
     uint32_t sb_y = tb_y + (tb_h - sb_h) / 2;
-    shadow_fill_rounded_rect_clip(comp, sb_x, sb_y, sb_w, sb_h, 6,
-        bx0, by0, bx1, by1, COLOR_START_BTN, 1.0f);
-    
-    uint32_t logo_sz = 16;
-    uint32_t logo_x  = sb_x + (sb_w - logo_sz) / 2;
-    uint32_t logo_y  = sb_y + (sb_h - logo_sz) / 2;
-    comp_draw_win_logo(comp, logo_x, logo_y, logo_sz, bx0, by0, bx1, by1);
 
-    
     uint32_t btn_w   = WM_TASKBAR_BTN_W;
     uint32_t btn_h   = WM_TASKBAR_BTN_H;
     uint32_t btn_gap = WM_TASKBAR_BTN_GAP;
@@ -1374,18 +1364,28 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
                 && !srv->windows[i]->is_system && !srv->windows[i]->is_closing)
             vis_count++;
 
-    if (vis_count > 0) {
-        uint32_t min_x_for_buttons = sb_x + sb_w + 8;
-
-#if WM_TASKBAR_ALIGNMENT == WM_TASKBAR_ALIGN_LEFT
-        uint32_t start_x = min_x_for_buttons;
-#else
-        
-        uint32_t total_w  = vis_count * btn_w + (vis_count - 1) * btn_gap;
-        uint32_t start_x  = (dw > total_w) ? (dw - total_w) / 2 : min_x_for_buttons;
-        if (start_x < min_x_for_buttons) start_x = min_x_for_buttons;
+    uint32_t sb_x = tb_x + 6;
+#if WM_TASKBAR_ALIGNMENT == WM_TASKBAR_ALIGN_CENTER
+    uint32_t total_w = sb_w + (vis_count > 0 ? (8 + vis_count * btn_w + (vis_count - 1) * btn_gap) : 0);
+    sb_x = (dw - total_w) / 2;
 #endif
 
+    bool hover_sb = (srv->cursor_x >= sb_x && srv->cursor_x < sb_x + sb_w &&
+                     srv->cursor_y >= sb_y && srv->cursor_y < sb_y + sb_h);
+    uint32_t sb_color = g_state.start_menu_open ? COLOR_TASKBAR_BTN_ACT
+                      : hover_sb                 ? 0x25FFFFFF
+                                                 : COLOR_START_BTN;
+
+    shadow_fill_rounded_rect_clip(comp, sb_x, sb_y, sb_w, sb_h, 6,
+        bx0, by0, bx1, by1, sb_color, 1.0f);
+    
+    uint32_t logo_sz = 16;
+    uint32_t logo_x  = sb_x + (sb_w - logo_sz) / 2;
+    uint32_t logo_y  = sb_y + (sb_h - logo_sz) / 2;
+    comp_draw_win_logo(comp, logo_x, logo_y, logo_sz, bx0, by0, bx1, by1);
+
+    if (vis_count > 0) {
+        uint32_t start_x = sb_x + sb_w + 8;
         uint32_t btn_y = tb_y + (WM_TASKBAR_HEIGHT - btn_h) / 2;
         uint32_t bx    = start_x;
 
@@ -1399,7 +1399,6 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
             shadow_fill_rounded_rect_clip(comp, bx, btn_y, btn_w, btn_h, 4,
                 bx0, by0, bx1, by1, btn_color, 1.0f);
 
-            
             uint32_t pill_w  = w->has_focus ? 18 : (w->minimized ? 4 : 0);
             if (pill_w > 0) {
                 uint32_t ind_y   = btn_y + btn_h - 3;
@@ -1411,7 +1410,6 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
                     shadow_put_clip(comp, c, ind_y + 1, bx0, by0, bx1, by1, ind_col);
             }
 
-            
             const char *label = w->title[0] ? w->title : "App";
             uint32_t    tx    = bx + 10;
             uint32_t    ty    = btn_y + (btn_h - 16) / 2;
@@ -1422,7 +1420,6 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
         }
     }
 
-    
     uint32_t clock_area_w = 100;
     uint32_t clock_x      = tb_x + tb_w - clock_area_w - 8;
     if (g_clock_str[0]) {
@@ -1471,24 +1468,33 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
     uint32_t sm_w = 360;
     uint32_t sm_h = 480;
     uint32_t sm_x = 8;
+#if WM_TASKBAR_ALIGNMENT == WM_TASKBAR_ALIGN_CENTER
+    sm_x = (dw - sm_w) / 2;
+#endif
     uint32_t sm_y = dh - WM_TASKBAR_HEIGHT - sm_h - 8;
 
+    uint32_t sm_bx0 = (bx0 > sm_x) ? bx0 : sm_x;
+    uint32_t sm_bx1 = (bx1 < sm_x + sm_w) ? bx1 : sm_x + sm_w;
+    uint32_t sm_by0 = (by0 > sm_y) ? by0 : sm_y;
+    uint32_t sm_by1 = (by1 < sm_y + sm_h) ? by1 : sm_y + sm_h;
+
+    if (sm_bx1 > sm_bx0 && sm_by1 > sm_by0) {
+        comp_apply_blur_rect(comp, sm_bx0, sm_by0, sm_bx1, sm_by1, 8);
+    }
     
     shadow_fill_rounded_rect_clip(comp, sm_x - 1, sm_y - 1, sm_w + 2, sm_h + 2, 14,
         bx0, by0, bx1, by1, 0x40000000, 1.0f);
 
-    
     shadow_fill_rounded_rect_clip(comp, sm_x, sm_y, sm_w, sm_h, 12,
-        bx0, by0, bx1, by1, 0xE01C2433, 1.0f);
+        bx0, by0, bx1, by1, 0xC018202F, 1.0f);
 
-    
     for (uint32_t c = sm_x; c < sm_x + sm_w; ++c) {
-        shadow_put_alpha(comp, sm_y * dw + c, 0x30FFFFFF, 1.0f);
+        shadow_put_alpha(comp, sm_y * dw + c, 0x25FFFFFF, 1.0f);
         shadow_put_alpha(comp, (sm_y + sm_h - 1) * dw + c, 0x10FFFFFF, 1.0f);
     }
     for (uint32_t r = sm_y; r < sm_y + sm_h; ++r) {
-        shadow_put_alpha(comp, r * dw + sm_x, 0x30FFFFFF, 1.0f);
-        shadow_put_alpha(comp, r * dw + (sm_x + sm_w - 1), 0x30FFFFFF, 1.0f);
+        shadow_put_alpha(comp, r * dw + sm_x, 0x25FFFFFF, 1.0f);
+        shadow_put_alpha(comp, r * dw + (sm_x + sm_w - 1), 0x25FFFFFF, 1.0f);
     }
     
     shadow_fill_rounded_rect_clip(comp, sm_x + 15, sm_y + 15, sm_w - 30, 36, 18,
@@ -1501,7 +1507,7 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
         if (bx1 > sm_x + 15 && bx0 < sm_x + sm_w - 15 && by1 > ay && by0 < ay + 36) {
              bool hover = (st->server.cursor_x >= sm_x + 15 && st->server.cursor_x < sm_x + sm_w - 15 &&
                            st->server.cursor_y >= ay && st->server.cursor_y < ay + 36);
-             uint32_t bg_col = hover ? 0x28FFFFFF : 0x10FFFFFF;
+             uint32_t bg_col = hover ? 0x25FFFFFF : 0x00FFFFFF;
              shadow_fill_rounded_rect_clip(comp, sm_x + 15, ay, sm_w - 30, 36, 6,
                 bx0, by0, bx1, by1, bg_col, 1.0f);
              comp_draw_text(comp, sm_x + 28, ay + 10, g_start_apps[i].icon, 0xFFFFFFFF, 14.0f, 30, 1.0f);
@@ -1517,8 +1523,11 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
     comp_draw_text(comp, sm_x + 15, stats_y, mem_text, 0xFF8B9AB0, 11.0f, sm_w - 30, 1.0f);
 
     uint32_t up_y = sm_y + sm_h - 50;
-    shadow_fill_rounded_rect_clip(comp, sm_x, up_y, sm_w, 50, 0,
-        bx0, by0, bx1, by1, 0x10FFFFFF, 1.0f);
+    shadow_fill_rounded_rect_clip(comp, sm_x, up_y, sm_w, 50, 12,
+        bx0, by0, bx1, by1, 0x08FFFFFF, 1.0f);
+    shadow_fill_rounded_rect_clip(comp, sm_x, up_y, sm_w, 1, 0,
+        bx0, by0, bx1, by1, 0x15FFFFFF, 1.0f);
+        
     comp_draw_text(comp, sm_x + 40, up_y + 15, "ImplusOS User", 0xFFFFFFFF, 14.0f, sm_w - 60, 1.0f);
     comp_draw_text(comp, sm_x + 15, up_y + 15, "👤", 0xFFFFFFFF, 14.0f, 20, 1.0f);
 
@@ -1534,7 +1543,7 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
                      st->server.cursor_y >= up_y + 10 && st->server.cursor_y < up_y + 40);
     shadow_fill_rounded_rect_clip(comp, pwr_x, up_y + 10, 30, 30, 6,
         bx0, by0, bx1, by1, hover_rb ? 0x40FFFFFF : 0x20FFFFFF, 1.0f);
-    comp_draw_text(comp, pwr_x + 8, up_y + 16, "⟳", 0xFF0078D4, 14.0f, 20, 1.0f);
+    comp_draw_text(comp, pwr_x + 8, up_y + 16, "⟳", 0xFF3B82F6, 14.0f, 20, 1.0f);
 }
 
 
@@ -1986,7 +1995,11 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         st->prev_mouse_buttons = btns;
 
         if (st->start_menu_open) {
-            uint32_t sm_w = 360, sm_h = 480, sm_x = 8;
+            uint32_t sm_w = 360, sm_h = 480;
+            uint32_t sm_x = 8;
+#if WM_TASKBAR_ALIGNMENT == WM_TASKBAR_ALIGN_CENTER
+            sm_x = (st->compositor.fb_width - sm_w) / 2;
+#endif
             uint32_t sm_y = st->compositor.fb_height - WM_TASKBAR_HEIGHT - sm_h - 8;
             if (mx >= sm_x && mx < sm_x + sm_w && my >= sm_y && my < sm_y + sm_h) {
                 wm_compositor_mark_dirty(&st->compositor, sm_x, sm_y, sm_w, sm_h);
@@ -2048,12 +2061,8 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
 
             if (my >= tb_y && my < tb_y + tb_h && mx >= tb_x0 && mx < tb_x1) {
                 
-                if (mx >= 6 && mx < 50) {
-                    st->start_menu_open = !st->start_menu_open;
-                    wm_compositor_mark_dirty(&st->compositor, 0, 0, 
-                        st->compositor.fb_width, st->compositor.fb_height);
-                    break;
-                }
+                uint32_t sb_w = 44;
+                uint32_t sb_x = 6;
 
                 uint32_t btn_w   = WM_TASKBAR_BTN_W;
                 uint32_t btn_gap = WM_TASKBAR_BTN_GAP;
@@ -2063,15 +2072,20 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
                             && !srv->windows[i]->is_system && !srv->windows[i]->is_closing)
                         vis_count++;
 
-                if (vis_count > 0) {
-                    uint32_t start_btn_x = 6 + 44 + 8;  
 #if WM_TASKBAR_ALIGNMENT == WM_TASKBAR_ALIGN_CENTER
-                    uint32_t total_w = vis_count * btn_w + (vis_count - 1) * btn_gap;
-                    if (st->compositor.fb_width > total_w) {
-                        uint32_t cx = (st->compositor.fb_width - total_w) / 2;
-                        if (cx > start_btn_x) start_btn_x = cx;
-                    }
+                uint32_t total_w = sb_w + (vis_count > 0 ? (8 + vis_count * btn_w + (vis_count - 1) * btn_gap) : 0);
+                sb_x = (st->compositor.fb_width - total_w) / 2;
 #endif
+
+                if (mx >= sb_x && mx < sb_x + sb_w) {
+                    st->start_menu_open = !st->start_menu_open;
+                    wm_compositor_mark_dirty(&st->compositor, 0, 0, 
+                        st->compositor.fb_width, st->compositor.fb_height);
+                    break;
+                }
+
+                if (vis_count > 0) {
+                    uint32_t start_btn_x = sb_x + sb_w + 8;  
                     uint32_t bx = start_btn_x;
                     for (uint32_t i = srv->window_count; i > 0; --i) {
                         wm_window_t *w = srv->windows[i - 1];
@@ -2096,20 +2110,23 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
                 break;
             }
 
-            
+
             uint32_t hit_id = wm_server_hit_test(srv, mx, my);
-            
-            
+
             if (st->start_menu_open) {
-                uint32_t sm_w = 360, sm_h = 480, sm_x = 8;
+                uint32_t sm_w = 360, sm_h = 480;
+                uint32_t sm_x = 8;
+#if WM_TASKBAR_ALIGNMENT == WM_TASKBAR_ALIGN_CENTER
+                sm_x = (st->compositor.fb_width - sm_w) / 2;
+#endif
                 uint32_t sm_y = st->compositor.fb_height - WM_TASKBAR_HEIGHT - sm_h - 8;
+
                 if (!(mx >= sm_x && mx < sm_x + sm_w && my >= sm_y && my < sm_y + sm_h)) {
                     st->start_menu_open = false;
-                    wm_compositor_mark_dirty(&st->compositor, 0, 0, 
+                    wm_compositor_mark_dirty(&st->compositor, 0, 0,
                         st->compositor.fb_width, st->compositor.fb_height);
                 } else {
-                    
-                    uint32_t up_y = sm_y + sm_h - 50;
+                    uint32_t up_y    = sm_y + sm_h - 50;
                     uint32_t pwr_x_sd = sm_x + sm_w - 40;
                     uint32_t pwr_x_rb = pwr_x_sd - 40;
 
@@ -2123,16 +2140,18 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
                     
                     for (uint32_t i = 0; i < START_APPS_COUNT; i++) {
                         uint32_t ay = sm_y + 70 + i * 42;
-                        if (mx >= sm_x + 15 && mx < sm_x + sm_w - 15 && my >= ay && my < ay + 36) {
+                        if (mx >= sm_x + 15 && mx < sm_x + sm_w - 15 &&
+                            my >= ay && my < ay + 36) {
                             process_spawn(g_start_apps[i].path);
                             st->start_menu_open = false;
-                            wm_compositor_mark_dirty(&st->compositor, 0, 0, 
+                            wm_compositor_mark_dirty(&st->compositor, 0, 0,
                                 st->compositor.fb_width, st->compositor.fb_height);
                             break;
                         }
                     }
                 }
             }
+
 
             if (hit_id != 0) {
                 wm_window_t *hit_w = slot_find_by_id(srv, hit_id);

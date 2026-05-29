@@ -4,7 +4,7 @@ SHELL := /bin/bash
 export MTOOLSRC := /dev/null
 
 .PHONY: all kernel run_uefi_usb run_uefi_cdrom run_bios_usb clean image app_build \
-        driver_build driver_stage copy_resources
+        driver_build driver_stage
 
 ARCH := x86_64
 CC   = $(ARCH)-elf-gcc
@@ -14,7 +14,7 @@ NASM = nasm
 
 BUILD_DIR := Build
 IMAGE_DIR := Image
-IMAGE     := $(IMAGE_DIR)/ImplusOS.img
+IMAGE     := $(IMAGE_DIR)/ImplusOS.iso
 
 OVMF_CODE := ./OVMF_CODE_4M.fd
 
@@ -299,81 +299,40 @@ $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 
 BOOT_RESOURCE_DIR := BootManager/Resource
 
-IMAGE_SIZE_MB  := 256
-PART_START_LBA := 2048
-IMAGE_SIZE_SEC := $(shell echo "$$(( $(IMAGE_SIZE_MB) * 1024 * 1024 / 512 ))")
-PART_END_LBA   := $(shell echo "$$(( $(IMAGE_SIZE_SEC) - 34 - 1 ))")
-
 image: all
 	@mkdir -p $(IMAGE_DIR)
-
 	@rm -f $(IMAGE)
-	@truncate -s $(IMAGE_SIZE_MB)M $(IMAGE)
 
-	@sgdisk \
-		--clear \
-		--new=1:$(PART_START_LBA):$(PART_END_LBA) \
-		--typecode=1:EF00 \
-		--change-name=1:ImplusOS \
-		$(IMAGE)
+	@dd if=/dev/zero of=$(IMAGE) bs=1M count=128 status=none
+	@mformat -i $(IMAGE) -F -v "IMPLUSOS" ::
 
-	@DEVICE=$$(hdiutil attach -imagekey diskimage-class=CRawDiskImage \
-		-nomount $(IMAGE) | awk '/GUID_partition_scheme/ {print $$1}'); \
+	@PART_IMG=$(IMAGE); \
+	mmd -i $$PART_IMG ::/EFI; \
+	mmd -i $$PART_IMG ::/EFI/BOOT; \
+	mmd -i $$PART_IMG ::/Kernel; \
+	mmd -i $$PART_IMG ::/Kernel/Driver; \
+	mmd -i $$PART_IMG ::/Userland; \
+	mmd -i $$PART_IMG ::/Userland/SystemApps; \
+	mmd -i $$PART_IMG ::/Userland/UserApps; \
+	mmd -i $$PART_IMG ::/BootManager; \
+	mmd -i $$PART_IMG ::/BootManager/Resource; \
 	\
-	PARTITION=$${DEVICE}s1; \
+	mcopy -o -i $$PART_IMG $(BOOTX64_EFI)          ::/EFI/BOOT/BOOTX64.EFI; \
+	mcopy -o -i $$PART_IMG $(BOOTMANAGER_EFI)      ::/EFI/BOOT/BOOTMANAGER.EFI; \
+	mcopy -o -i $$PART_IMG $(BIOS_BOOTMANAGER_BIN) ::/BootManager/BootManager_BIOS.BIN; \
+	mcopy -o -i $$PART_IMG $(KERNEL_ELF)           ::/Kernel/Kernel_Main.ELF; \
+	mcopy -o -i $$PART_IMG $(USERLAND_INIT_ELF)    ::/Userland/Userland.ELF; \
 	\
-	echo "Device: $$DEVICE"; \
-	echo "Partition: $$PARTITION"; \
+	mcopy -s -i $$PART_IMG $(BUILD_DIR)/Userland/SystemApps ::/Userland; \
 	\
-	sudo newfs_msdos -F 32 -v IMPLUSOS $$PARTITION; \
+	mcopy -s -i $$PART_IMG $(BUILD_DIR)/Userland/UserApps ::/Userland; \
 	\
-	MNT_DIR=$$(mktemp -d); \
-	sudo mount -t msdos $$PARTITION $$MNT_DIR; \
+	mcopy -s -i $$PART_IMG $(BOOT_RESOURCE_DIR) ::/BootManager; \
 	\
-	sudo mkdir -p $$MNT_DIR/EFI/BOOT; \
-	sudo mkdir -p $$MNT_DIR/Kernel/Driver; \
-	sudo mkdir -p $$MNT_DIR/Userland/SystemApps; \
-	sudo mkdir -p $$MNT_DIR/Userland/UserApps; \
-	sudo mkdir -p $$MNT_DIR/BootManager/Resource; \
-	\
-	sudo cp $(BOOTX64_EFI)          $$MNT_DIR/EFI/BOOT/BOOTX64.EFI; \
-	sudo cp $(BOOTMANAGER_EFI)      $$MNT_DIR/EFI/BOOT/BOOTMANAGER.EFI; \
-	sudo cp $(BIOS_BOOTMANAGER_BIN) $$MNT_DIR/BootManager/BootManager_BIOS.BIN; \
-	sudo cp $(KERNEL_ELF)           $$MNT_DIR/Kernel/Kernel_Main.ELF; \
-	sudo cp $(USERLAND_INIT_ELF)    $$MNT_DIR/Userland/Userland.ELF; \
-	\
-	if [ -d $(DRIVER_STAGE_DIR) ]; then \
-		sudo find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' \
-			-exec cp {} $$MNT_DIR/Kernel/Driver/ \; ; \
-	fi; \
-	\
-	if [ -d $(BOOT_RESOURCE_DIR) ]; then \
-		sudo cp -R $(BOOT_RESOURCE_DIR)/* \
-			$$MNT_DIR/BootManager/Resource/ 2>/dev/null || true; \
-	fi; \
-	\
-	if [ -d $(BUILD_DIR)/Userland/SystemApps ]; then \
-		sudo cp -R $(BUILD_DIR)/Userland/SystemApps/* \
-			$$MNT_DIR/Userland/SystemApps/ 2>/dev/null || true; \
-	fi; \
-	\
-	if [ -d $(BUILD_DIR)/Userland/UserApps ]; then \
-		sudo cp -R $(BUILD_DIR)/Userland/UserApps/* \
-			$$MNT_DIR/Userland/UserApps/ 2>/dev/null || true; \
-	fi; \
-	\
-	sync; \
-	sudo umount $$MNT_DIR; \
-	rmdir $$MNT_DIR; \
-	hdiutil detach $$DEVICE
-
-	@dd if=$(BIOS_STAGE1_BIN) of=$(IMAGE) bs=446 count=1 conv=notrunc 2>/dev/null
-
-	@STAGE12=$$(mktemp); \
-	cat $(BIOS_STAGE1_BIN) $(BIOS_STAGE2_BIN) > $$STAGE12; \
-	dd if=$$STAGE12 of=$(IMAGE) bs=512 skip=1 seek=1 \
-		count=$(BIOS_STAGE2_SECTORS) conv=notrunc 2>/dev/null; \
-	rm -f $$STAGE12
+	for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
+		[ -e "$$f" ] || continue; \
+		mcopy -o -i $$PART_IMG "$$f" ::/Kernel/Driver/; \
+	done
 
 QEMU_COMMON = \
 	-machine q35,accel=tcg \

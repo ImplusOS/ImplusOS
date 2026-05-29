@@ -13,7 +13,6 @@
 #include "API/File.h"
 #include "API/Window.h"
 #include "API/Input.h"
-#include "API/Serial.h"
 #include "Unicode/UTF8/UTF8.h"
 #include "Crypto/Crypto.h"
 
@@ -24,23 +23,46 @@
 #define STBTT_fmod(x,y)    fmod(x,y)
 #include "stb_truetype.h"
 
+static void* ul_realloc_sized(void* p, size_t oldsz, size_t newsz) {
+    if (newsz == 0) { if (p) free(p); return NULL; }
+    void* q = malloc(newsz);
+    if (q && p) { memcpy(q, p, oldsz < newsz ? oldsz : newsz); free(p); }
+    return q;
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wtype-limits"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wshadow"
+#pragma GCC diagnostic ignored "-Wextra"
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
+#define STBI_NO_STDIO
+#define STBI_NO_SIMD
+#define STBI_NO_THREAD_LOCALS
+#define STBI_ONLY_PNG
+#define STBI_MALLOC(sz)              malloc(sz)
+#define STBI_REALLOC(p,newsz)        ul_realloc_sized(p, 0, newsz)
+#define STBI_REALLOC_SIZED(p,os,ns)  ul_realloc_sized(p, os, ns)
+#define STBI_FREE(p)                 free(p)
+#include "stb_image.h"
+#pragma GCC diagnostic pop
+
 static uint32_t *g_fb_snapshot = NULL;
 static uint32_t g_fb_snapshot_pixels = 0;
+static uint32_t *g_bg_cache = NULL;
+static int g_bg_cache_width = 0;
+static int g_bg_cache_height = 0;
 
 static int32_t spawn_with_fallbacks(const char *const *paths, uint32_t path_count) {
-    if (paths == 0 || path_count == 0) {
-        return -1;
-    }
-
+    if (!paths || path_count == 0) return -1;
     for (uint32_t i = 0; i < path_count; ++i) {
         const char *path = paths[i];
-        if (path == 0 || path[0] == '\0') {
-            continue;
-        }
-
-        int32_t pid = process_spawn(path);
-        if (pid >= 0) {
-            return pid;
+        if (path && path[0] != '\0') {
+            int32_t pid = process_spawn(path);
+            if (pid >= 0) return pid;
         }
     }
     return -1;
@@ -50,181 +72,371 @@ static uint8_t g_font_buffer[6 * 1024 * 1024];
 static stbtt_fontinfo g_font;
 static int g_font_loaded = 0;
 
-static int load_font(const char *path)
-{
+static int load_font(const char *path) {
     int32_t fd = file_open(path, 0);
-    if (fd < 0) {
-        return -1;
-    }
-
+    if (fd < 0) return -1;
     int64_t size = file_read(fd, g_font_buffer, sizeof(g_font_buffer));
     file_close(fd);
-
-    if (size <= 0) {
-        return -1;
-    }
-
+    if (size <= 0) return -1;
     int offset = stbtt_GetFontOffsetForIndex(g_font_buffer, 0);
-
-    if (offset < 0) {
-        return -1;
-    }
-
-    if (!stbtt_InitFont(&g_font, g_font_buffer, offset)) {
-        return -1;
-    }
-
+    if (offset < 0) return -1;
+    if (!stbtt_InitFont(&g_font, g_font_buffer, offset)) return -1;
     g_font_loaded = 1;
     return 0;
 }
 
-static void draw_gradient_background(
-    uint32_t top_color,
-    uint32_t bottom_color
-)
-{
-    int width = get_display_width();
-    int height = get_display_height();
+#define WP_PATH "/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Background.png"
 
-    uint8_t top_r = (top_color >> 16) & 0xFF;
-    uint8_t top_g = (top_color >> 8) & 0xFF;
-    uint8_t top_b = top_color & 0xFF;
+static void draw_background(void) {
+    uint32_t *fb = (uint32_t *)sys_get_display_framebuffer();
+    int width  = (int)get_display_width();
+    int height = (int)get_display_height();
+    if (!fb || width <= 0 || height <= 0) return;
 
-    uint8_t bottom_r = (bottom_color >> 16) & 0xFF;
-    uint8_t bottom_g = (bottom_color >> 8) & 0xFF;
-    uint8_t bottom_b = bottom_color & 0xFF;
+    if (g_bg_cache && g_bg_cache_width == width && g_bg_cache_height == height) {
+        memcpy(fb, g_bg_cache, (size_t)width * (size_t)height * sizeof(uint32_t));
+        return;
+    }
 
     for (int y = 0; y < height; ++y) {
-        float t = (float)y / (float)(height - 1);
+        uint32_t *row = &fb[y * width];
+        float ty = (float)y / (float)height;
+        for (int x = 0; x < width; ++x) {
+            float tx = (float)x / (float)width;
+            float t  = (tx + ty) * 0.5f;
+            uint8_t r = (uint8_t)(20.0f + (6.0f  - 20.0f) * t);
+            uint8_t g = (uint8_t)(16.0f + (24.0f - 16.0f) * t);
+            uint8_t b = (uint8_t)(44.0f + (36.0f - 44.0f) * t);
+            float dx = tx - 0.5f, dy = ty - 0.5f;
+            float glow = 1.0f - (dx*dx + dy*dy) * 2.0f;
+            if (glow > 0.0f) {
+                r = (uint8_t)(r + (30.0f  - r) * glow * 0.4f);
+                g = (uint8_t)(g + (80.0f  - g) * glow * 0.4f);
+                b = (uint8_t)(b + (180.0f - b) * glow * 0.4f);
+            }
+            row[x] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+        }
+    }
 
-        uint8_t r = (uint8_t)(top_r + (bottom_r - top_r) * t);
-        uint8_t g = (uint8_t)(top_g + (bottom_g - top_g) * t);
-        uint8_t b = (uint8_t)(top_b + (bottom_b - top_b) * t);
+    bool loaded_img = false;
+    int32_t fd = file_open(WP_PATH, 0);
+    if (fd >= 0) {
+        file_stat_t st;
+        if (file_stat(WP_PATH, &st) >= 0 && st.size > 0) {
+            uint8_t *file_buf = (uint8_t *)malloc((size_t)st.size);
+            if (file_buf) {
+                int64_t total = 0;
+                while (total < st.size) {
+                    int64_t n = file_read(fd, file_buf + total, st.size - total);
+                    if (n <= 0) break;
+                    total += n;
+                }
+                if (total == st.size) {
+                    int iw = 0, ih = 0, ic = 0;
+                    uint8_t *img = stbi_load_from_memory(file_buf, (int)total, &iw, &ih, &ic, 4);
+                    if (img && iw > 0 && ih > 0) {
+                        uint32_t snum, sden;
+                        if ((uint64_t)width * ih > (uint64_t)height * iw) {
+                            snum = (uint32_t)width;  sden = (uint32_t)iw;
+                        } else {
+                            snum = (uint32_t)height; sden = (uint32_t)ih;
+                        }
+                        uint32_t sw = (uint32_t)iw * snum / sden;
+                        uint32_t sh = (uint32_t)ih * snum / sden;
+                        int32_t ox = (int32_t)((sw > (uint32_t)width)  ? (sw - (uint32_t)width)  / 2 : 0);
+                        int32_t oy = (int32_t)((sh > (uint32_t)height) ? (sh - (uint32_t)height) / 2 : 0);
 
-        uint32_t color = (r << 16) | (g << 8) | b;
+                        for (int y = 0; y < height; ++y) {
+                            uint32_t *row = &fb[y * width];
+                            uint32_t sy = (uint32_t)(((int32_t)y + oy) * (int32_t)sden / (int32_t)snum);
+                            if (sy >= (uint32_t)ih) sy = (uint32_t)ih - 1;
+                            const uint8_t *src_row = img + sy * (uint32_t)iw * 4;
+                            for (int x = 0; x < width; ++x) {
+                                uint32_t sx = (uint32_t)(((int32_t)x + ox) * (int32_t)sden / (int32_t)snum);
+                                if (sx >= (uint32_t)iw) sx = (uint32_t)iw - 1;
+                                const uint8_t *p = src_row + sx * 4;
+                                uint8_t r = (uint8_t)((uint32_t)p[0] * 45u / 100u);
+                                uint8_t g = (uint8_t)((uint32_t)p[1] * 45u / 100u);
+                                uint8_t b = (uint8_t)((uint32_t)p[2] * 45u / 100u);
+                                row[x] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+                            }
+                        }
+                        STBI_FREE(img);
+                        loaded_img = true;
+                    }
+                }
+                free(file_buf);
+            }
+        }
+        file_close(fd);
+    }
 
-        draw_fill_rect(0, y, width, 1, color);
+    if (loaded_img) {
+        uint32_t *tmp = (uint32_t *)malloc((size_t)width * sizeof(uint32_t));
+        if (tmp) {
+            int rad = 6;
+            for (int y = 0; y < height; ++y) {
+                uint32_t *row = &fb[y * width];
+                uint32_t sr = 0, sg = 0, sb2 = 0, cnt = 0;
+                int rs = 0, re = rad < (width - 1) ? rad : (width - 1);
+                for (int i = rs; i <= re; ++i) {
+                    sr += (row[i]>>16)&0xFF; sg += (row[i]>>8)&0xFF; sb2 += row[i]&0xFF; cnt++;
+                }
+                for (int x = 0; x < width; ++x) {
+                    tmp[x] = 0xFF000000u|((sr/cnt)<<16)|((sg/cnt)<<8)|(sb2/cnt);
+                    int add = x + 1 + rad, sub = x - rad;
+                    if (add < width)  { sr += (row[add]>>16)&0xFF; sg += (row[add]>>8)&0xFF; sb2 += row[add]&0xFF; cnt++; }
+                    if (sub >= 0)     { sr -= (row[sub]>>16)&0xFF; sg -= (row[sub]>>8)&0xFF; sb2 -= row[sub]&0xFF; cnt--; }
+                }
+                memcpy(row, tmp, (size_t)width * sizeof(uint32_t));
+            }
+            for (int x = 0; x < width; ++x) {
+                uint32_t sr2 = 0, sg2 = 0, sb3 = 0, cnt2 = 0;
+                int rs = 0, re = rad < (height - 1) ? rad : (height - 1);
+                for (int i = rs; i <= re; ++i) {
+                    uint32_t c = fb[i * width + x];
+                    sr2 += (c>>16)&0xFF; sg2 += (c>>8)&0xFF; sb3 += c&0xFF; cnt2++;
+                }
+                for (int y = 0; y < height; ++y) {
+                    tmp[y] = 0xFF000000u|((sr2/cnt2)<<16)|((sg2/cnt2)<<8)|(sb3/cnt2);
+                    int add = y + 1 + rad, sub = y - rad;
+                    if (add < height) { uint32_t c = fb[add*width+x]; sr2+=(c>>16)&0xFF; sg2+=(c>>8)&0xFF; sb3+=c&0xFF; cnt2++; }
+                    if (sub >= 0)     { uint32_t c = fb[sub*width+x]; sr2-=(c>>16)&0xFF; sg2-=(c>>8)&0xFF; sb3-=c&0xFF; cnt2--; }
+                }
+                for (int y = 0; y < height; ++y) fb[y * width + x] = tmp[y];
+            }
+            free(tmp);
+        }
+    }
+
+    if (g_bg_cache) {
+        free(g_bg_cache);
+    }
+    g_bg_cache = (uint32_t *)malloc((size_t)width * (size_t)height * sizeof(uint32_t));
+    if (g_bg_cache) {
+        g_bg_cache_width = width;
+        g_bg_cache_height = height;
+        memcpy(g_bg_cache, fb, (size_t)width * (size_t)height * sizeof(uint32_t));
     }
 }
 
-static uint32_t blend(uint32_t src, uint32_t dst, uint8_t alpha)
-{
-    uint8_t sr = (src >> 16) & 0xFF;
-    uint8_t sg = (src >> 8) & 0xFF;
-    uint8_t sb = src & 0xFF;
+static void draw_gradient_background(uint32_t top_color, uint32_t bottom_color) {
+    (void)top_color;
+    (void)bottom_color;
+    draw_background();
+}
 
-    uint8_t dr = (dst >> 16) & 0xFF;
-    uint8_t dg = (dst >> 8) & 0xFF;
-    uint8_t db = dst & 0xFF;
+static void draw_translucent_card(uint32_t *fb, int width, int height, int cx, int cy, int cw, int ch, uint32_t bg_color, uint8_t bg_alpha, uint32_t border_color, int radius) {
+    uint8_t bg_r = (bg_color >> 16) & 0xFF, bg_g = (bg_color >> 8) & 0xFF, bg_b = bg_color & 0xFF;
+    uint8_t b_r = (border_color >> 16) & 0xFF, b_g = (border_color >> 8) & 0xFF, b_b = border_color & 0xFF;
+    uint8_t b_a = (border_color >> 24) & 0xFF;
+    if (b_a == 0) b_a = 255;
 
-    uint8_t r = (sr * alpha + dr * (255 - alpha)) / 255;
-    uint8_t g = (sg * alpha + dg * (255 - alpha)) / 255;
-    uint8_t b = (sb * alpha + db * (255 - alpha)) / 255;
+    int rad_sq = radius * radius;
+    int inner_rad_sq = (radius - 1) * (radius - 1);
 
+    for (int y = cy; y < cy + ch; ++y) {
+        if (y < 0 || y >= height) continue;
+        uint32_t *row = &fb[y * width];
+        int dy = y - cy, br_y = cy + ch - 1 - y;
+        for (int x = cx; x < cx + cw; ++x) {
+            if (x < 0 || x >= width) continue;
+            int dx = x - cx, br_x = cx + cw - 1 - x;
+            bool is_corner = false;
+            if (dx < radius && dy < radius) {
+                int rx = radius - 1 - dx;
+                int ry = radius - 1 - dy;
+                int dist_sq = rx * rx + ry * ry;
+                if (dist_sq > rad_sq) continue;
+                is_corner = (dist_sq > inner_rad_sq);
+            } else if (br_x < radius && dy < radius) {
+                int rx = radius - 1 - br_x;
+                int ry = radius - 1 - dy;
+                int dist_sq = rx * rx + ry * ry;
+                if (dist_sq > rad_sq) continue;
+                is_corner = (dist_sq > inner_rad_sq);
+            } else if (dx < radius && br_y < radius) {
+                int rx = radius - 1 - dx;
+                int ry = radius - 1 - br_y;
+                int dist_sq = rx * rx + ry * ry;
+                if (dist_sq > rad_sq) continue;
+                is_corner = (dist_sq > inner_rad_sq);
+            } else if (br_x < radius && br_y < radius) {
+                int rx = radius - 1 - br_x;
+                int ry = radius - 1 - br_y;
+                int dist_sq = rx * rx + ry * ry;
+                if (dist_sq > rad_sq) continue;
+                is_corner = (dist_sq > inner_rad_sq);
+            }
+
+            bool is_edge = (dx == 0 || dy == 0 || br_x == 0 || br_y == 0);
+            bool border = is_corner || (is_edge && dx >= radius && br_x >= radius && dy >= radius && br_y >= radius);
+            uint32_t src = row[x];
+            uint8_t src_r = (src >> 16) & 0xFF, src_g = (src >> 8) & 0xFF, src_b = src & 0xFF;
+
+            if (border) {
+                uint8_t r = (uint8_t)((b_r * b_a + src_r * (255 - b_a)) >> 8);
+                uint8_t g = (uint8_t)((b_g * b_a + src_g * (255 - b_a)) >> 8);
+                uint8_t b = (uint8_t)((b_b * b_a + src_b * (255 - b_a)) >> 8);
+                row[x] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+            } else {
+                uint8_t r = (uint8_t)((bg_r * bg_alpha + src_r * (255 - bg_alpha)) >> 8);
+                uint8_t g = (uint8_t)((bg_g * bg_alpha + src_g * (255 - bg_alpha)) >> 8);
+                uint8_t b = (uint8_t)((bg_b * bg_alpha + src_b * (255 - bg_alpha)) >> 8);
+                row[x] = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+            }
+        }
+    }
+}
+
+static void draw_avatar_icon(uint32_t *fb, int width, int height, int cx, int cy) {
+    int r = 30;
+    int r_sq = r * r;
+    int edge_r_sq = (r - 1) * (r - 1);
+    for (int y = cy - r; y <= cy + r; ++y) {
+        if (y < 0 || y >= height) continue;
+        uint32_t *row = &fb[y * width];
+        int dy = y - cy;
+        int dy_sq = dy * dy;
+        for (int x = cx - r; x <= cx + r; ++x) {
+            if (x < 0 || x >= width) continue;
+            int dx = x - cx;
+            int dist_sq = dx * dx + dy_sq;
+            if (dist_sq <= r_sq) {
+                uint8_t cr = 0x47, cg = 0x55, cb = 0x69;
+                int hdx = dx, hdy = dy + 6;
+                int bdx = dx, bdy = dy - 22;
+                if (hdx * hdx + hdy * hdy <= 9 * 9) {
+                    cr = 0xE2; cg = 0xE8; cb = 0xF0;
+                } else if ((bdx * bdx * 3 + bdy * bdy * 6) <= 800 && dy > 0) {
+                    cr = 0xE2; cg = 0xE8; cb = 0xF0;
+                }
+                if (dist_sq >= edge_r_sq) {
+                    uint32_t src = row[x];
+                    cr = (uint8_t)((cr + ((src >> 16) & 0xFF)) >> 1);
+                    cg = (uint8_t)((cg + ((src >> 8) & 0xFF)) >> 1);
+                    cb = (uint8_t)((cb + (src & 0xFF)) >> 1);
+                }
+                row[x] = ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
+            }
+        }
+    }
+}
+
+static void draw_password_dots(uint32_t *fb, int width, int height, int start_x, int cy, int count) {
+    int r = 4, gap = 12;
+    for (int i = 0; i < count; ++i) {
+        int cx = start_x + i * gap;
+        for (int y = cy - r; y <= cy + r; ++y) {
+            if (y < 0 || y >= height) continue;
+            uint32_t *row = &fb[y * width];
+            int dy = y - cy;
+            for (int x = cx - r; x <= cx + r; ++x) {
+                if (x < 0 || x >= width) continue;
+                int dx = x - cx;
+                if (dx * dx + dy * dy <= r * r) row[x] = 0xFFFFFFFF;
+            }
+        }
+    }
+}
+
+static inline uint32_t blend(uint32_t src, uint32_t dst, uint8_t alpha) {
+    uint32_t sr = (src >> 16) & 0xFF;
+    uint32_t sg = (src >> 8) & 0xFF;
+    uint32_t sb = src & 0xFF;
+    uint32_t dr = (dst >> 16) & 0xFF;
+    uint32_t dg = (dst >> 8) & 0xFF;
+    uint32_t db = dst & 0xFF;
+    uint32_t r = (sr * alpha + dr * (255 - alpha)) >> 8;
+    uint32_t g = (sg * alpha + dg * (255 - alpha)) >> 8;
+    uint32_t b = (sb * alpha + db * (255 - alpha)) >> 8;
     return (r << 16) | (g << 8) | b;
 }
 
-static void draw_char(int x, int y, utf8_codepoint_t cp, float scale, uint32_t color)
-{
-    if (!g_font_loaded) {
-        return;
+static void draw_char(int x, int y, utf8_codepoint_t cp, float scale, uint32_t color) {
+    if (!g_font_loaded) return;
+
+    int c_x1, c_y1, c_x2, c_y2;
+    stbtt_GetCodepointBitmapBox(&g_font, cp, scale, scale,
+                                &c_x1, &c_y1, &c_x2, &c_y2);
+
+    int width = c_x2 - c_x1;
+    int height = c_y2 - c_y1;
+
+    if (width <= 0 || height <= 0) return;
+
+    uint8_t local_bitmap[4096];
+    uint8_t *bitmap = local_bitmap;
+    bool allocated = false;
+
+    if (width * height > (int)sizeof(local_bitmap)) {
+        bitmap = (uint8_t *)malloc((size_t)(width * height));
+        if (!bitmap) return;
+        allocated = true;
     }
 
-    int width, height, xoff, yoff;
-
-    uint8_t *bitmap = stbtt_GetCodepointBitmap(
+    stbtt_MakeCodepointBitmap(
         &g_font,
+        bitmap,
+        width,
+        height,
+        width,
         scale,
         scale,
-        cp,
-        &width,
-        &height,
-        &xoff,
-        &yoff
+        cp
     );
-
-    if (!bitmap) {
-        return;
-    }
-
-    uint32_t dst = 0x000000;
 
     for (int py = 0; py < height; ++py) {
         for (int px = 0; px < width; ++px) {
-            uint8_t alpha = bitmap[py * width + px];
 
+            uint8_t alpha = bitmap[py * width + px];
             if (alpha == 0) continue;
 
-            uint32_t src = color;
+            int sx = x + c_x1 + px;
+            int sy = y + c_y1 + py;
+
+            uint32_t dst = get_pixel((uint32_t)sx, (uint32_t)sy);
 
             draw_pixel(
-                x + xoff + px,
-                y + yoff + py,
-                blend(src, dst, alpha)
+                sx,
+                sy,
+                blend(color, dst, alpha)
             );
         }
     }
 
-    stbtt_FreeBitmap(bitmap, 0);
+    if (allocated) {
+        free(bitmap);
+    }
 }
 
-
-static int get_text_width(const char *text, float scale)
-{
-    const char *p = text;
-    const char *end = text + strlen(text);
-
-    int width = 0;
-
+static int get_text_width(const char *text, float scale) {
+    const char *p = text, *end = text + strlen(text);
+    int width = 0, has_prev = 0;
     utf8_codepoint_t prev = 0;
-    int has_prev = 0;
-
     while (p < end) {
         utf8_codepoint_t cp;
-
-        if (utf8_next(&p, end, &cp) != 0) {
-            continue;
-        }
-
+        if (utf8_next(&p, end, &cp) != 0) continue;
         if (has_prev) {
-            int kern = stbtt_GetCodepointKernAdvance(&g_font, prev, cp);
-            width += (int)(kern * scale);
+            width += (int)(stbtt_GetCodepointKernAdvance(&g_font, prev, cp) * scale);
         }
-
         int advance, lsb;
         stbtt_GetCodepointHMetrics(&g_font, cp, &advance, &lsb);
-
         width += (int)(advance * scale);
-
         prev = cp;
         has_prev = 1;
     }
-
     return width;
 }
 
-static void draw_text(int x, int y, const char *text, float scale, uint32_t color)
-{
-    if (!g_font_loaded || !text) {
-        return;
-    }
-
-    const char *p = text;
-    const char *end = text + strlen(text);
-
-    int pen_x = x;
-
+static void draw_text(int x, int y, const char *text, float scale, uint32_t color) {
+    if (!g_font_loaded || !text) return;
+    const char *p = text, *end = text + strlen(text);
+    int pen_x = x, has_prev = 0;
     utf8_codepoint_t prev = 0;
-    int has_prev = 0;
-
     while (p < end) {
         utf8_codepoint_t cp;
-
-        utf8_status_t st = utf8_next(&p, end, &cp);
-        if (st != 0) {
-            continue;
-        }
-
+        if (utf8_next(&p, end, &cp) != 0) continue;
         if (cp == ' ') {
             int advance, lsb;
             stbtt_GetCodepointHMetrics(&g_font, ' ', &advance, &lsb);
@@ -233,86 +445,112 @@ static void draw_text(int x, int y, const char *text, float scale, uint32_t colo
             has_prev = 0;
             continue;
         }
-
         if (has_prev) {
-            int kern = stbtt_GetCodepointKernAdvance(&g_font, prev, cp);
-            pen_x += (int)(kern * scale);
+            pen_x += (int)(stbtt_GetCodepointKernAdvance(&g_font, prev, cp) * scale);
         }
-
         draw_char(pen_x, y, cp, scale, color);
-
         int advance, lsb;
         stbtt_GetCodepointHMetrics(&g_font, cp, &advance, &lsb);
-
         pen_x += (int)(advance * scale);
-
         prev = cp;
         has_prev = 1;
     }
-
-    draw_present();
 }
 
-static void draw_text_centered(const char *text, int ypos, float pixel_height, uint32_t color)
-{
-    if (!g_font_loaded || !text) {
-        return;
-    }
-
+static void draw_text_centered(const char *text, int ypos, float pixel_height, uint32_t color) {
+    if (!g_font_loaded || !text) return;
     float scale = stbtt_ScaleForPixelHeight(&g_font, pixel_height);
-
     int width = get_text_width(text, scale);
-
-    int x = (get_display_width() - width) / 2;
-    int y = (get_display_height() / 2) + (int)ypos;
-
-    draw_text(x, y, text, scale, color);
+    draw_text((get_display_width() - width) / 2, (get_display_height() / 2) + ypos, text, scale, color);
 }
 
-static void draw_login_screen(const char *title, const char *prompt, const char *value, bool hidden, const char *status)
-{
-    draw_gradient_background(0x000000, 0x11223F);
-    draw_text_centered(title, -80, 38.0f, 0xFFFFFF);
-    draw_text_centered(prompt, -20, 24.0f, 0xC0D8FF);
+static void draw_login_screen(const char *title, const char *prompt, const char *value, bool hidden, const char *status) {
+    uint32_t *fb = (uint32_t *)sys_get_display_framebuffer();
+    if (!fb) return;
+    int width = (int)get_display_width(), height = (int)get_display_height();
+    draw_background();
 
-    char display_value[256];
-    if (hidden) {
-        size_t len = strlen(value);
-        if (len > sizeof(display_value) - 1) {
-            len = sizeof(display_value) - 1;
-        }
-        for (size_t i = 0; i < len; ++i) {
-            display_value[i] = '*';
-        }
-        display_value[len] = '\0';
-    } else {
-        os_strcpy_s(display_value, sizeof(display_value), value);
-    }
+    int card_w = 460, card_h = 320;
+    int card_x = (width - card_w) / 2, card_y = (height - card_h) / 2;
+    draw_translucent_card(fb, width, height, card_x, card_y, card_w, card_h, 0x0F172A, 220, 0x25FFFFFF, 12);
+    draw_avatar_icon(fb, width, height, card_x + card_w / 2, card_y + 55);
 
-    draw_text_centered(display_value, 40, 28.0f, 0xFFFFFF);
-    if (status && status[0]) {
-        draw_text_centered(status, 100, 20.0f, 0xFF8080);
+    if (g_font_loaded) {
+        float title_scale = stbtt_ScaleForPixelHeight(&g_font, 22.0f);
+        float prompt_scale = stbtt_ScaleForPixelHeight(&g_font, 14.0f);
+        float text_scale = stbtt_ScaleForPixelHeight(&g_font, 16.0f);
+        float hint_scale = stbtt_ScaleForPixelHeight(&g_font, 11.0f);
+
+        int title_w = get_text_width(title, title_scale);
+        draw_text(card_x + (card_w - title_w) / 2, card_y + 110, title, title_scale, 0xFFFFFF);
+
+        int prompt_w = get_text_width(prompt, prompt_scale);
+        draw_text(card_x + (card_w - prompt_w) / 2, card_y + 148, prompt, prompt_scale, 0x94A3B8);
+
+        int input_w = 340, input_h = 38;
+        int input_x = card_x + (card_w - input_w) / 2, input_y = card_y + 172;
+        draw_translucent_card(fb, width, height, input_x, input_y, input_w, input_h, 0x090D16, 200, 0xFF3B82F6, 6);
+
+        if (hidden) {
+            draw_password_dots(fb, width, height, input_x + 14, input_y + input_h / 2, (int)strlen(value));
+        } else {
+            draw_text(input_x + 14, input_y + (input_h - 16) / 2, value, text_scale, 0xFFFFFF);
+            int val_w = get_text_width(value, text_scale);
+            int cursor_x = input_x + 14 + val_w;
+            if (cursor_x < input_x + input_w - 14) {
+                draw_fill_rect((uint32_t)cursor_x, (uint32_t)(input_y + 10), 2, 18, 0xFFFFFFFF);
+            }
+        }
+
+        if (status && status[0]) {
+            int status_w = get_text_width(status, prompt_scale);
+            draw_text(card_x + (card_w - status_w) / 2, card_y + 225, status, prompt_scale, 0xEF4444);
+        }
+
+        int btn_w = 140, btn_h = 32;
+        int btn_x = card_x + (card_w - btn_w) / 2, btn_y = card_y + 258;
+        draw_translucent_card(fb, width, height, btn_x, btn_y, btn_w, btn_h, 0x0078D4, 255, 0x0078D4, 6);
+        int btn_text_w = get_text_width("確定 [Enter]", hint_scale);
+        draw_text(btn_x + (btn_w - btn_text_w) / 2, btn_y + (btn_h - 11) / 2, "確定 [Enter]", hint_scale, 0xFFFFFF);
     }
     draw_present();
 }
 
 #define USER_DB_FILE "/Userland/users.db"
 
-static int prompt_user_input(const char *title, const char *prompt, char *out, size_t out_size, bool hidden)
-{
+static int prompt_user_input(const char *title, const char *prompt,
+                             char *out, size_t out_size, bool hidden) {
     size_t pos = 0;
     out[0] = '\0';
+
     draw_login_screen(title, prompt, out, hidden, "");
+
+    bool key_down[256];
+    memset(key_down, 0, sizeof(key_down));
 
     while (1) {
         input_keyboard_event_t ev;
+
         if (input_read_keyboard(&ev) < 0) {
             process_yield();
             continue;
         }
 
+        uint8_t key = (uint8_t)ev.keycode;
+        
         if (!ev.pressed) {
+            if (key < sizeof(key_down)) {
+                key_down[key] = false;
+            }
             continue;
+        }
+
+        if (key < sizeof(key_down) && key_down[key]) {
+            continue;
+        }
+
+        if (key < sizeof(key_down)) {
+            key_down[key] = true;
         }
 
         if (ev.ascii == '\r' || ev.ascii == '\n') {
@@ -321,42 +559,34 @@ static int prompt_user_input(const char *title, const char *prompt, char *out, s
 
         if (ev.ascii == 8 || ev.ascii == 127) {
             if (pos > 0) {
-                pos -= 1;
-                out[pos] = '\0';
+                out[--pos] = '\0';
                 draw_login_screen(title, prompt, out, hidden, "");
             }
             continue;
         }
 
-        if (ev.ascii >= 32 && ev.ascii < 127 && pos + 1 < out_size) {
+        if (ev.ascii >= 32 &&
+            ev.ascii < 127 &&
+            pos + 1 < out_size) {
+
             out[pos++] = (char)ev.ascii;
             out[pos] = '\0';
+
             draw_login_screen(title, prompt, out, hidden, "");
         }
     }
 }
 
-static bool user_db_exists(void)
-{
+static bool user_db_exists(void) {
     file_stat_t stat;
-    if (file_stat(USER_DB_FILE, &stat) < 0) {
-        return false;
-    }
-    return stat.exists != 0;
+    return (file_stat(USER_DB_FILE, &stat) >= 0) && (stat.exists != 0);
 }
 
-static bool parse_user_record(const char *line, char *username, size_t username_size,
-                              char *salt, size_t salt_size, char *hash, size_t hash_size)
-{
+static bool parse_user_record(const char *line, char *username, size_t username_size, char *salt, size_t salt_size, char *hash, size_t hash_size) {
     const char *first_colon = strchr(line, ':');
-    if (!first_colon) {
-        return false;
-    }
-
+    if (!first_colon) return false;
     const char *second_colon = strchr(first_colon + 1, ':');
-    if (!second_colon) {
-        return false;
-    }
+    if (!second_colon) return false;
 
     size_t name_len = (size_t)(first_colon - line);
     size_t salt_len = (size_t)(second_colon - first_colon - 1);
@@ -364,10 +594,7 @@ static bool parse_user_record(const char *line, char *username, size_t username_
     if (hash_len > 0 && (second_colon[1 + hash_len - 1] == '\n' || second_colon[1 + hash_len - 1] == '\r')) {
         hash_len -= 1;
     }
-
-    if (name_len >= username_size || salt_len >= salt_size || hash_len >= hash_size) {
-        return false;
-    }
+    if (name_len >= username_size || salt_len >= salt_size || hash_len >= hash_size) return false;
 
     memcpy(username, line, name_len);
     username[name_len] = '\0';
@@ -378,31 +605,21 @@ static bool parse_user_record(const char *line, char *username, size_t username_
     return true;
 }
 
-static bool user_db_lookup(const char *username, char *salt, size_t salt_size, char *hash, size_t hash_size)
-{
+static bool user_db_lookup(const char *username, char *salt, size_t salt_size, char *hash, size_t hash_size) {
     int32_t fd = file_open(USER_DB_FILE, 0);
-    if (fd < 0) {
-        return false;
-    }
-
+    if (fd < 0) return false;
     char buffer[4096];
     int64_t read_len = file_read(fd, buffer, sizeof(buffer) - 1);
     file_close(fd);
-    if (read_len <= 0) {
-        return false;
-    }
+    if (read_len <= 0) return false;
     buffer[read_len] = '\0';
 
     char *line = buffer;
     while (*line) {
         char *newline = strchr(line, '\n');
-        if (newline) {
-            *newline = '\0';
-        }
+        if (newline) *newline = '\0';
 
-        char record_user[33];
-        char record_salt[17];
-        char record_hash[65];
+        char record_user[33], record_salt[17], record_hash[65];
         if (parse_user_record(line, record_user, sizeof(record_user), record_salt, sizeof(record_salt), record_hash, sizeof(record_hash))) {
             if (strcmp(record_user, username) == 0) {
                 os_strcpy_s(salt, salt_size, record_salt);
@@ -410,76 +627,46 @@ static bool user_db_lookup(const char *username, char *salt, size_t salt_size, c
                 return true;
             }
         }
-
-        if (!newline) {
-            break;
-        }
+        if (!newline) break;
         line = newline + 1;
     }
-
     return false;
 }
 
-static bool user_db_add(const char *username, const char *salt, const char *hash)
-{
+static bool user_db_add(const char *username, const char *salt, const char *hash) {
     int32_t fd = file_open(USER_DB_FILE, 1);
     if (fd < 0) {
         fd = file_creat(USER_DB_FILE);
-        if (fd < 0) {
-            return false;
-        }
+        if (fd < 0) return false;
     }
-
     file_seek(fd, 0, 2);
     char line[128];
     int len = snprintf(line, sizeof(line), "%s:%s:%s\n", username, salt, hash);
-    if (len <= 0 || (size_t)len >= sizeof(line)) {
+    if (len <= 0 || (size_t)len >= sizeof(line) || file_write(fd, line, (uint64_t)len) != len) {
         file_close(fd);
         return false;
     }
-
-    if (file_write(fd, line, (uint64_t)len) != len) {
-        file_close(fd);
-        return false;
-    }
-
     file_close(fd);
     return true;
 }
 
-static bool user_login_create_user(char *username_out, size_t username_out_size)
-{
-    char username[33];
-    char password[129];
-    char confirm[129];
-    char status[128];
-
+static bool user_login_create_user(char *username_out, size_t username_out_size) {
+    char username[33], password[129], confirm[129], status[128];
     while (1) {
         status[0] = '\0';
-        if (!prompt_user_input("新規ユーザー登録", "ユーザー名を入力してください", username, sizeof(username), false)) {
-            return false;
-        }
-
+        if (!prompt_user_input("新規ユーザー登録", "ユーザー名を入力してください", username, sizeof(username), false)) return false;
         if (username[0] == '\0' || strchr(username, ':') || strchr(username, '\n') || strchr(username, '\r')) {
-            os_strcpy_s(status, sizeof(status), "ユーザー名に無効な文字が含まれています。もう一度入力してください。");
+            os_strcpy_s(status, sizeof(status), "ユーザー名に無効な文字が含まれています。");
             draw_login_screen("新規ユーザー登録", "ユーザー名を入力してください", username, false, status);
             continue;
         }
-
-        if (user_db_lookup(username, (char[17]){0}, sizeof(char[17]), (char[65]){0}, sizeof(char[65]))) {
-            os_strcpy_s(status, sizeof(status), "このユーザー名は既に使われています。別の名前を入力してください。");
+        if (user_db_lookup(username, (char[17]){0}, 17, (char[65]){0}, 65)) {
+            os_strcpy_s(status, sizeof(status), "このユーザー名は既に使われています。");
             draw_login_screen("新規ユーザー登録", "ユーザー名を入力してください", username, false, status);
             continue;
         }
-
-        if (!prompt_user_input("新規ユーザー登録", "パスワードを入力してください", password, sizeof(password), true)) {
-            return false;
-        }
-
-        if (!prompt_user_input("新規ユーザー登録", "パスワードを再入力してください", confirm, sizeof(confirm), true)) {
-            return false;
-        }
-
+        if (!prompt_user_input("新規ユーザー登録", "パスワードを入力してください", password, sizeof(password), true)) return false;
+        if (!prompt_user_input("新規ユーザー登録", "パスワードを再入力してください", confirm, sizeof(confirm), true)) return false;
         if (strcmp(password, confirm) != 0) {
             os_strcpy_s(status, sizeof(status), "パスワードが一致しません。もう一度入力してください。");
             draw_login_screen("新規ユーザー登録", "パスワードを入力してください", password, true, status);
@@ -487,114 +674,72 @@ static bool user_login_create_user(char *username_out, size_t username_out_size)
         }
 
         uint8_t salt_bytes[8];
-        char salt_hex[17];
-        char hash_hex[65];
+        char salt_hex[17], hash_hex[65];
         crypto_generate_salt(salt_bytes);
         crypto_hex_encode(salt_bytes, sizeof(salt_bytes), salt_hex);
         crypto_hash_password_hex(password, salt_hex, hash_hex);
 
         if (!user_db_add(username, salt_hex, hash_hex)) {
-            os_strcpy_s(status, sizeof(status), "ユーザー登録に失敗しました。もう一度お試しください。");
+            os_strcpy_s(status, sizeof(status), "ユーザー登録に失敗しました。");
             draw_login_screen("新規ユーザー登録", "ユーザー名を入力してください", username, false, status);
             continue;
         }
-
         os_strcpy_s(username_out, username_out_size, username);
         return true;
     }
 }
 
-static bool user_login_authenticate(char *username_out, size_t username_out_size)
-{
-    char username[33];
-    char password[129];
-    char salt[17];
-    char stored_hash[65];
-    char computed_hash[65];
-    char status[128];
-
+static bool user_login_authenticate(char *username_out, size_t username_out_size) {
+    char username[33], password[129], salt[17], stored_hash[65], computed_hash[65], status[128];
     while (1) {
         status[0] = '\0';
-        if (!prompt_user_input("ログイン", "ユーザー名を入力してください", username, sizeof(username), false)) {
-            return false;
-        }
-
+        if (!prompt_user_input("ログイン", "ユーザー名を入力してください", username, sizeof(username), false)) return false;
         if (!user_db_lookup(username, salt, sizeof(salt), stored_hash, sizeof(stored_hash))) {
-            os_strcpy_s(status, sizeof(status), "そのユーザーが見つかりません。もう一度入力してください。");
+            os_strcpy_s(status, sizeof(status), "そのユーザーが見つかりません。");
             draw_login_screen("ログイン", "ユーザー名を入力してください", username, false, status);
             continue;
         }
-
-        if (!prompt_user_input("ログイン", "パスワードを入力してください", password, sizeof(password), true)) {
-            return false;
-        }
+        if (!prompt_user_input("ログイン", "パスワードを入力してください", password, sizeof(password), true)) return false;
 
         crypto_hash_password_hex(password, salt, computed_hash);
         if (strcmp(stored_hash, computed_hash) == 0) {
             os_strcpy_s(username_out, username_out_size, username);
             return true;
         }
-
-        os_strcpy_s(status, sizeof(status), "パスワードが違います。もう一度入力してください。");
+        os_strcpy_s(status, sizeof(status), "パスワードが違います。");
         draw_login_screen("ログイン", "ユーザー名を入力してください", username, false, status);
     }
 }
 
-static bool run_user_login_flow(char *current_username, size_t current_username_size)
-{
-    if (!user_db_exists()) {
-        return user_login_create_user(current_username, current_username_size);
-    }
+static bool run_user_login_flow(char *current_username, size_t current_username_size) {
+    if (!user_db_exists()) return user_login_create_user(current_username, current_username_size);
     return user_login_authenticate(current_username, current_username_size);
 }
 
-static void fade_in(uint32_t duration_ms, uint32_t steps)
-{
-    uint32_t width  = get_display_width();
-    uint32_t height = get_display_height();
-
+static void fade_in(uint32_t duration_ms, uint32_t steps) {
+    uint32_t width  = get_display_width(), height = get_display_height();
     uint32_t *fb = (uint32_t *)sys_get_display_framebuffer();
-    if (!fb) {
-        return;
-    }
-
+    if (!fb) return;
     uint32_t pixels = width * height;
 
     if (!g_fb_snapshot || g_fb_snapshot_pixels != pixels) {
-        if (g_fb_snapshot) {
-            free(g_fb_snapshot);
-        }
-
+        free(g_fb_snapshot);
         g_fb_snapshot = (uint32_t *)malloc(pixels * sizeof(uint32_t));
-
-        if (!g_fb_snapshot) {
-            return;
-        }
-
+        if (!g_fb_snapshot) return;
         g_fb_snapshot_pixels = pixels;
     }
-
     memcpy(g_fb_snapshot, fb, pixels * sizeof(uint32_t));
-
     uint32_t delay = duration_ms / steps;
 
     for (uint32_t step = 0; step <= steps; ++step) {
         float t = (float)step / (float)steps;
-
         for (uint32_t i = 0; i < pixels; ++i) {
             uint32_t src = g_fb_snapshot[i];
-
-            uint8_t r = (src >> 16) & 0xFF;
-            uint8_t g = (src >> 8) & 0xFF;
-            uint8_t b = src & 0xFF;
-
-            r = (uint8_t)(r * t);
-            g = (uint8_t)(g * t);
-            b = (uint8_t)(b * t);
-
+            uint8_t r = (uint8_t)(((src >> 16) & 0xFF) * t);
+            uint8_t g = (uint8_t)(((src >> 8) & 0xFF) * t);
+            uint8_t b = (uint8_t)((src & 0xFF) * t);
             fb[i] = (r << 16) | (g << 8) | b;
         }
-
         draw_present();
         sleep_ms(delay);
     }
@@ -602,79 +747,36 @@ static void fade_in(uint32_t duration_ms, uint32_t steps)
 
 #define BOOT_COUNT_FILE "/Userland/boot_count.txt"
 
-static int read_boot_count(void)
-{
+static int read_boot_count(void) {
     int32_t fd = file_open(BOOT_COUNT_FILE, 0);
-    if (fd < 0) {
-        return 0;
-    }
-
-    char buf[32];
-    memset(buf, 0, sizeof(buf));
-
+    if (fd < 0) return 0;
+    char buf[32] = {0};
     int64_t n = file_read(fd, buf, sizeof(buf) - 1);
     file_close(fd);
-
-    if (n <= 0) {
-        return 0;
-    }
-
+    if (n <= 0) return 0;
     int count = 0;
-
     for (int i = 0; buf[i]; ++i) {
-        if (buf[i] >= '0' && buf[i] <= '9') {
-            count = (count * 10) + (buf[i] - '0');
-        }
+        if (buf[i] >= '0' && buf[i] <= '9') count = (count * 10) + (buf[i] - '0');
     }
-
     return count;
 }
 
-static void write_boot_count(int count)
-{
+static void write_boot_count(int count) {
     int32_t fd = file_creat(BOOT_COUNT_FILE);
-    if (fd < 0) {
-        return;
-    }
-
+    if (fd < 0) return;
     char buf[32];
-    memset(buf, 0, sizeof(buf));
-
-    int temp = count;
-    int len = 0;
-
-    if (temp == 0) {
-        buf[len++] = '0';
-    } else {
-        char rev[32];
-        int rev_len = 0;
-
-        while (temp > 0) {
-            rev[rev_len++] = '0' + (temp % 10);
-            temp /= 10;
-        }
-
-        for (int i = rev_len - 1; i >= 0; --i) {
-            buf[len++] = rev[i];
-        }
-    }
-
-    file_write(fd, buf, len);
+    int len = snprintf(buf, sizeof(buf), "%d", count);
+    if (len > 0) file_write(fd, buf, (uint64_t)len);
     file_close(fd);
 }
 
-void _start(void)
-{
+void _start(void) {
     int boot_count = read_boot_count();
-
     bool first_boot = (boot_count == 0);
-
     boot_count++;
-
     write_boot_count(boot_count);
 
-    draw_gradient_background(0x000000, 0x11223F);
-
+    draw_background();
     load_font("/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Fonts/NotoSansJP-Regular.ttf");
 
     if (first_boot) {
@@ -687,83 +789,48 @@ void _start(void)
     if (!run_user_login_flow(current_user, sizeof(current_user))) {
         draw_text_centered("ログインに失敗しました。再起動してください。", 80, 20.0f, 0xFF8080);
         draw_present();
-        while (1) {
-            process_yield();
-        }
+        while (1) process_yield();
     }
 
     char welcome_text[128];
-    memset(welcome_text, 0, sizeof(welcome_text));
-    os_strcpy_s(welcome_text, sizeof(welcome_text), "ようこそ、");
-    os_strcat_s(welcome_text, sizeof(welcome_text), current_user);
-    os_strcat_s(welcome_text, sizeof(welcome_text), " さん。システムを起動しています...");
+    snprintf(welcome_text, sizeof(welcome_text), "ようこそ、%s さん。システムを起動しています...", current_user);
     draw_text_centered(welcome_text, 80, 20.0f, 0xFFFFFF);
 
     char boot_msg[128];
-    memset(boot_msg, 0, sizeof(boot_msg));
-
-    os_strcpy_s(boot_msg, sizeof(boot_msg), "今回は、");
-
-    char num_buf[32];
-    memset(num_buf, 0, sizeof(num_buf));
-
-    int temp = boot_count;
-    int len = 0;
-
-    if (temp == 0) {
-        num_buf[len++] = '0';
-    } else {
-        char rev[32];
-        int rev_len = 0;
-
-        while (temp > 0) {
-            rev[rev_len++] = '0' + (temp % 10);
-            temp /= 10;
-        }
-
-        for (int i = rev_len - 1; i >= 0; --i) {
-            num_buf[len++] = rev[i];
-        }
-    }
-
-    num_buf[len] = '\0';
-
-    os_strcat_s(boot_msg, sizeof(boot_msg), num_buf);
-    os_strcat_s(boot_msg, sizeof(boot_msg), "回目の起動です。");
-
+    snprintf(boot_msg, sizeof(boot_msg), "今回は、%d回目の起動です。", boot_count);
     draw_text_centered(boot_msg, 100, 25.0f, 0xFFFFFF);
 
     draw_present();
-
     fade_in(1200, 32);
 
     static const char *const com_ImplusOS_windowmanager[] = {
         "/Userland/SystemApps/com_ImplusOS_windowmanager/com_ImplusOS_windowmanager.ELF",
     };
-
     static const char *const com_ImplusOS_procman[] = {
         "/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF",
     };
 
-    spawn_with_fallbacks(com_ImplusOS_windowmanager, sizeof(com_ImplusOS_windowmanager) / sizeof(com_ImplusOS_windowmanager[0]));
+    spawn_with_fallbacks(com_ImplusOS_windowmanager, 1);
     process_yield();
-    spawn_with_fallbacks(com_ImplusOS_procman, sizeof(com_ImplusOS_procman) / sizeof(com_ImplusOS_procman[0]));
+    spawn_with_fallbacks(com_ImplusOS_procman, 1);
     process_yield();
-    
-    
+
     int32_t wm_pid = -1;
     for (int i = 0; i < 50; i++) {
         wm_pid = window_get_wm_pid();
         if (wm_pid >= 0) break;
         sleep_ms(100);
     }
-    
+
     if (wm_pid >= 0) {
-        sleep_ms(500); 
+        sleep_ms(500);
         window_show_notification("System", "Welcome to ImplusOS!");
     }
 
-    while (1) {
-        process_yield();
+    if (g_bg_cache) {
+        free(g_bg_cache);
+        g_bg_cache = NULL;
     }
+
+    while (1) process_yield();
 }

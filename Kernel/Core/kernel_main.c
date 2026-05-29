@@ -46,8 +46,7 @@ extern const arch_ops_t *arch_ops_get(void);
 
 #include "Debug/serial/Serial.h"
 
-bool all_fs_initialize(const BOOT_INFO *boot_info) {
-    (void)boot_info;
+bool all_fs_initialize() {
     if (!vfs_init()) {
         return false;
     }
@@ -55,7 +54,6 @@ bool all_fs_initialize(const BOOT_INFO *boot_info) {
     if (!fat32_init()) {
         return false;
     }
-
 
     vfs_mount("", fat32_vfs_get_driver());
     vfs_mount("", iso9660_vfs_get_driver());
@@ -204,11 +202,9 @@ void kernel_main(BOOT_INFO *boot_info) {
     disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType);
 
     bool fs_ready = false;
-    if (all_fs_initialize(boot_info)) {
+    if (all_fs_initialize()) {
         fs_ready = true;
     }
-
-    iso9660_list_root_files();
 
     if (!fs_ready) {
         kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");

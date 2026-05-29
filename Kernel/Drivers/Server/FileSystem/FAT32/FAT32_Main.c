@@ -1444,23 +1444,18 @@ static void fat32_write_cluster_to_entry(uint8_t *entry, uint32_t cluster) {
 }
 
 static bool _fat32_init() {
-    serial_write_string("FAT32: Initializing driver...\n");
     g_fat32_partition_lba = disk_get_partition_lba();
 
     if (!fat32_read_boot_sector_bpb(&bpb)) {
-        serial_write_string("FAT32: Failed to read boot sector BPB.\n");
         return false;
     }
 
     if (!fat32_validate_bpb()) {
-        serial_write_string("FAT32: BPB validation failed.\n");
         return false;
     }
-
+    
     g_cached_fat_sector = 0xFFFFFFFFu;
     g_cluster_cache.cluster_value = 0;
-
-    serial_write_string("FAT32: Driver initialized successfully.\n");
     return true;
 }
 
