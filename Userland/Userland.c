@@ -347,33 +347,38 @@ static inline uint32_t blend(uint32_t src, uint32_t dst, uint8_t alpha) {
     uint32_t dr = (dst >> 16) & 0xFF;
     uint32_t dg = (dst >> 8) & 0xFF;
     uint32_t db = dst & 0xFF;
-    uint32_t r = (sr * alpha + dr * (255 - alpha)) >> 8;
-    uint32_t g = (sg * alpha + dg * (255 - alpha)) >> 8;
-    uint32_t b = (sb * alpha + db * (255 - alpha)) >> 8;
+    uint32_t r = (sr * alpha + dr * (255 - alpha)) / 255;
+    uint32_t g = (sg * alpha + dg * (255 - alpha)) / 255;
+    uint32_t b = (sb * alpha + db * (255 - alpha)) / 255;
     return (r << 16) | (g << 8) | b;
 }
 
-static void draw_char(int x, int y, utf8_codepoint_t cp, float scale, uint32_t color) {
+static void draw_char(int x, int y, utf8_codepoint_t cp,
+                      float scale, uint32_t color) {
     if (!g_font_loaded) return;
 
     int c_x1, c_y1, c_x2, c_y2;
-    stbtt_GetCodepointBitmapBox(&g_font, cp, scale, scale,
-                                &c_x1, &c_y1, &c_x2, &c_y2);
 
-    int width = c_x2 - c_x1;
+    stbtt_GetCodepointBitmapBox(
+        &g_font,
+        cp,
+        scale,
+        scale,
+        &c_x1,
+        &c_y1,
+        &c_x2,
+        &c_y2
+    );
+
+    int width  = c_x2 - c_x1;
     int height = c_y2 - c_y1;
 
-    if (width <= 0 || height <= 0) return;
+    if (width <= 0 || height <= 0)
+        return;
 
-    uint8_t local_bitmap[4096];
-    uint8_t *bitmap = local_bitmap;
-    bool allocated = false;
-
-    if (width * height > (int)sizeof(local_bitmap)) {
-        bitmap = (uint8_t *)malloc((size_t)(width * height));
-        if (!bitmap) return;
-        allocated = true;
-    }
+    uint8_t *bitmap = malloc((size_t)(width * height));
+    if (!bitmap)
+        return;
 
     stbtt_MakeCodepointBitmap(
         &g_font,
@@ -386,28 +391,31 @@ static void draw_char(int x, int y, utf8_codepoint_t cp, float scale, uint32_t c
         cp
     );
 
+    uint32_t *fb = (uint32_t*)sys_get_display_framebuffer();
+    int screen_w = (int)get_display_width();
+    int screen_h = (int)get_display_height();
+
     for (int py = 0; py < height; ++py) {
         for (int px = 0; px < width; ++px) {
 
             uint8_t alpha = bitmap[py * width + px];
-            if (alpha == 0) continue;
+            if (!alpha) continue;
 
             int sx = x + c_x1 + px;
             int sy = y + c_y1 + py;
 
-            uint32_t dst = get_pixel((uint32_t)sx, (uint32_t)sy);
+            if (sx < 0 || sy < 0 ||
+                sx >= screen_w || sy >= screen_h)
+                continue;
 
-            draw_pixel(
-                sx,
-                sy,
-                blend(color, dst, alpha)
-            );
+            uint32_t dst = fb[sy * screen_w + sx];
+
+            fb[sy * screen_w + sx] =
+                blend(color, dst, alpha);
         }
     }
 
-    if (allocated) {
-        free(bitmap);
-    }
+    free(bitmap);
 }
 
 static int get_text_width(const char *text, float scale) {
@@ -431,12 +439,17 @@ static int get_text_width(const char *text, float scale) {
 
 static void draw_text(int x, int y, const char *text, float scale, uint32_t color) {
     if (!g_font_loaded || !text) return;
+
     const char *p = text, *end = text + strlen(text);
     int pen_x = x, has_prev = 0;
     utf8_codepoint_t prev = 0;
+
     while (p < end) {
         utf8_codepoint_t cp;
-        if (utf8_next(&p, end, &cp) != 0) continue;
+
+        if (utf8_next(&p, end, &cp) != 0)
+            continue;
+
         if (cp == ' ') {
             int advance, lsb;
             stbtt_GetCodepointHMetrics(&g_font, ' ', &advance, &lsb);
@@ -445,13 +458,17 @@ static void draw_text(int x, int y, const char *text, float scale, uint32_t colo
             has_prev = 0;
             continue;
         }
+
         if (has_prev) {
             pen_x += (int)(stbtt_GetCodepointKernAdvance(&g_font, prev, cp) * scale);
         }
+
         draw_char(pen_x, y, cp, scale, color);
+
         int advance, lsb;
         stbtt_GetCodepointHMetrics(&g_font, cp, &advance, &lsb);
         pen_x += (int)(advance * scale);
+
         prev = cp;
         has_prev = 1;
     }

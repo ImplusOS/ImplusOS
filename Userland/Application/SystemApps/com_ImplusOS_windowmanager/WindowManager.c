@@ -53,17 +53,21 @@ static void* realloc_sized(void* p, size_t oldsz, size_t newsz) {
 typedef struct {
     const char *name;
     const char *path;
-    const char *icon;
+    const char *emoji_icon;
+    uint32_t *icon_pixels;
+    uint32_t icon_w;
+    uint32_t icon_h;
+    bool has_png_icon;
 } start_menu_app_t;
 
-static const start_menu_app_t g_start_apps[] = {
-    {"Terminal",       "/Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF", "💻"},
-    {"File Manager",   "/Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF", "📁"},
-    {"Editor",         "/Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF", "📝"},
-    {"Process Manager","/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF", "📊"},
-    {"Virtual Machine","/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF", "🖥️"},
-    {"Example App",    "/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF", "🚀"},
-    {"System Info",    "/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF", "ℹ️"},
+static start_menu_app_t g_start_apps[] = {
+    {"Terminal",       "/Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF", "💻", NULL, 0, 0, false},
+    {"File Manager",   "/Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF", "📁", NULL, 0, 0, false},
+    {"Editor",         "/Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF", "📝", NULL, 0, 0, false},
+    {"Process Manager","/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF", "📊", NULL, 0, 0, false},
+    {"Virtual Machine","/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF", "🖥️", NULL, 0, 0, false},
+    {"Example App",    "/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF", "🚀", NULL, 0, 0, false},
+    {"System Info",    "/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF", "ℹ️", NULL, 0, 0, false},
 };
 #define START_APPS_COUNT (sizeof(g_start_apps) / sizeof(g_start_apps[0]))
 
@@ -79,6 +83,99 @@ static uint32_t parse_hex_color(const char *str) {
         else if (c >= 'A' && c <= 'F') val |= (c - 'A' + 10);
     }
     return val;
+}
+
+static uint32_t *app_icon_load_from_file(const char *path, uint32_t *out_w, uint32_t *out_h) {
+    if (!path || !out_w || !out_h) return NULL;
+    
+    int32_t fd = file_open(path, 0);
+    if (fd < 0) return NULL;
+    
+    int32_t file_size = file_seek(fd, 0, 2);
+    if (file_size < 0) { file_close(fd); return NULL; }
+    file_seek(fd, 0, 0);
+    
+    uint8_t *file_data = (uint8_t *)malloc((size_t)file_size);
+    if (!file_data) { file_close(fd); return NULL; }
+    
+    int64_t bytes_read = file_read(fd, file_data, (uint32_t)file_size);
+    file_close(fd);
+    
+    if (bytes_read != file_size) { free(file_data); return NULL; }
+    
+    int w, h, channels;
+    uint8_t *pixels = stbi_load_from_memory(file_data, (int)file_size, &w, &h, &channels, 4);
+    free(file_data);
+    
+    if (!pixels) return NULL;
+    
+    *out_w = (uint32_t)w;
+    *out_h = (uint32_t)h;
+    return (uint32_t *)pixels;
+}
+
+static uint32_t *app_icon_scale(uint32_t *src_pixels, uint32_t src_w, uint32_t src_h,
+                                uint32_t dst_w, uint32_t dst_h) {
+    if (!src_pixels || src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0) return NULL;
+    if (src_w == dst_w && src_h == dst_h) return src_pixels;
+    
+    uint32_t *dst = (uint32_t *)malloc(dst_w * dst_h * sizeof(uint32_t));
+    if (!dst) return NULL;
+    
+    for (uint32_t y = 0; y < dst_h; y++) {
+        uint32_t src_y = (y * src_h) / dst_h;
+        for (uint32_t x = 0; x < dst_w; x++) {
+            uint32_t src_x = (x * src_w) / dst_w;
+            dst[y * dst_w + x] = src_pixels[src_y * src_w + src_x];
+        }
+    }
+    
+    free(src_pixels);
+    return dst;
+}
+
+static void wm_scan_app_icons(void) {
+    for (uint32_t i = 0; i < START_APPS_COUNT; i++) {
+        start_menu_app_t *app = &g_start_apps[i];
+        
+        char icon_path[256];
+        const char *app_path = app->path;
+        const char *app_name = NULL;
+        
+        if (strncmp(app_path, "/Userland/SystemApps/", 21) == 0) {
+            app_name = app_path + 21;
+            char *slash = strchr(app_name, '/');
+            if (slash) {
+                uint32_t len = (uint32_t)(slash - app_name);
+                snprintf(icon_path, sizeof(icon_path), "/Userland/SystemApps/%.*s/Resource/App.png", 
+                         (int)len, app_name);
+            } else continue;
+        } else if (strncmp(app_path, "/Userland/UserApps/", 19) == 0) {
+            app_name = app_path + 19;
+            char *slash = strchr(app_name, '/');
+            if (slash) {
+                uint32_t len = (uint32_t)(slash - app_name);
+                snprintf(icon_path, sizeof(icon_path), "/Userland/UserApps/%.*s/Resource/App.png", 
+                         (int)len, app_name);
+            } else continue;
+        } else continue;
+        
+        uint32_t icon_w = 0, icon_h = 0;
+        uint32_t *pixels = app_icon_load_from_file(icon_path, &icon_w, &icon_h);
+        
+        if (pixels && icon_w > 0 && icon_h > 0) {
+            uint32_t target_size = 32;
+            if (icon_w != target_size || icon_h != target_size) {
+                pixels = app_icon_scale(pixels, icon_w, icon_h, target_size, target_size);
+                icon_w = target_size;
+                icon_h = target_size;
+            }
+            app->icon_pixels = pixels;
+            app->icon_w = icon_w;
+            app->icon_h = icon_h;
+            app->has_png_icon = true;
+        }
+    }
 }
 
 static const char k_cursor_map[WM_CURSOR_H][WM_CURSOR_W + 1] = {
@@ -214,6 +311,37 @@ static inline uint32_t color_lerp(uint32_t c0, uint32_t c1, uint32_t t, uint32_t
     int32_t g = g0 + (g1 - g0) * (int32_t)t / (int32_t)denom;
     int32_t b = b0 + (b1 - b0) * (int32_t)t / (int32_t)denom;
     return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+static void comp_draw_png_icon(wm_compositor_t *comp,
+        uint32_t dst_x, uint32_t dst_y,
+        uint32_t icon_w, uint32_t icon_h,
+        uint32_t *pixels, float alpha,
+        uint32_t cx0, uint32_t cy0, uint32_t cx1, uint32_t cy1) {
+    if (!comp || !comp->shadow || !pixels) return;
+    if (icon_w == 0 || icon_h == 0) return;
+    
+    uint32_t dw = comp->fb_width;
+    uint32_t dh = comp->fb_height;
+    
+    for (uint32_t y = 0; y < icon_h; y++) {
+        uint32_t py = dst_y + y;
+        if (py >= cy0 && py < cy1 && py < dh) {
+            uint32_t row_off = py * dw;
+            for (uint32_t x = 0; x < icon_w; x++) {
+                uint32_t px = dst_x + x;
+                if (px >= cx0 && px < cx1 && px < dw) {
+                    uint32_t pixel = pixels[y * icon_w + x];
+                    uint32_t pa = (pixel >> 24) & 0xFF;
+                    pa = (uint32_t)(pa * alpha);
+                    if (pa > 0) {
+                        pixel = (pixel & 0x00FFFFFF) | (pa << 24);
+                        shadow_put_blend(comp, row_off + px, pixel);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #define GLYPH_CACHE_SIZE 512
@@ -1414,6 +1542,16 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
             uint32_t    tx    = bx + 10;
             uint32_t    ty    = btn_y + (btn_h - 16) / 2;
             uint32_t    tcol  = w->has_focus ? COLOR_TASKBAR_TEXT : COLOR_TASKBAR_TEXT_DIM;
+            
+            if (w->has_icon) {
+                uint32_t icon_sz = 16;
+                uint32_t icon_x = bx + 6;
+                uint32_t icon_y = btn_y + (btn_h - icon_sz) / 2;
+                comp_draw_png_icon(comp, icon_x, icon_y, 16, 16, w->icon, 1.0f,
+                                  bx, btn_y, bx + btn_w, btn_y + btn_h);
+                tx = bx + 28;
+            }
+            
             comp_draw_text(comp, tx, ty, label, tcol, 11.0f, btn_w - 20, 1.0f);
 
             bx += btn_w + btn_gap;
@@ -1510,7 +1648,19 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
              uint32_t bg_col = hover ? 0x25FFFFFF : 0x00FFFFFF;
              shadow_fill_rounded_rect_clip(comp, sm_x + 15, ay, sm_w - 30, 36, 6,
                 bx0, by0, bx1, by1, bg_col, 1.0f);
-             comp_draw_text(comp, sm_x + 28, ay + 10, g_start_apps[i].icon, 0xFFFFFFFF, 14.0f, 30, 1.0f);
+             
+             start_menu_app_t *app = &g_start_apps[i];
+             if (app->has_png_icon && app->icon_pixels) {
+                 uint32_t icon_size = 24;
+                 uint32_t icon_x = sm_x + 28 - icon_size / 2;
+                 uint32_t icon_y = ay + 10 - icon_size / 2;
+                 comp_draw_png_icon(comp, icon_x, icon_y, 
+                                   app->icon_w, app->icon_h, app->icon_pixels, 1.0f,
+                                   sm_x + 15, ay, sm_x + sm_w - 15, ay + 36);
+             } else {
+                 comp_draw_text(comp, sm_x + 28, ay + 10, app->emoji_icon, 0xFFFFFFFF, 14.0f, 30, 1.0f);
+             }
+             
              comp_draw_text(comp, sm_x + 58, ay + 10, g_start_apps[i].name, 0xFFEFF3F8, 14.0f, sm_w - 88, 1.0f);
         }
     }
@@ -2305,6 +2455,8 @@ void wm_service_init(wm_state_t *st) {
     wm_compositor_init(&st->compositor, dw, dh);
     generate_background(&st->compositor);
     wm_compositor_mark_dirty(&st->compositor, 0, 0, dw, dh);
+    
+    wm_scan_app_icons();
 }
 
 void wm_service_main_loop(void) {

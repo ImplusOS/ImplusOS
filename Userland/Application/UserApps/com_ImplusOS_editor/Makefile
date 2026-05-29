@@ -1,3 +1,5 @@
+.PHONY: all clean copy_resources
+
 CC := x86_64-elf-gcc
 CXX := x86_64-elf-g++
 LD := x86_64-elf-ld
@@ -25,7 +27,15 @@ CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
 CXXFLAGS := $(CFLAGS) -fno-exceptions -fno-rtti
 LDFLAGS := -T ../../../../Userland/Userland.ld -e _start -nostdlib --build-id=none
 
-all: $(ELF)
+RESOURCE_DIR := Resource
+
+all: $(ELF) copy_resources
+
+copy_resources:
+	@if [ -d $(RESOURCE_DIR) ]; then \
+		mkdir -p $(BUILD_DIR); \
+		cp -a $(RESOURCE_DIR) $(BUILD_DIR)/; \
+	fi
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
