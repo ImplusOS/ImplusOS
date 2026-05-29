@@ -28,7 +28,7 @@ typedef struct {
     uint8_t  attributes;
 } FAT32_DIRENT;
 
-bool     fat32_init(const FAT32_BPB *initial_bpb);
+bool     fat32_init();
 
 bool     fat32_find_file(const char *path, FAT32_FILE *out);
 uint32_t fat32_get_file_size(FAT32_FILE *file);
@@ -60,7 +60,7 @@ typedef struct {
 extern fat32_cache_t g_cluster_cache;
 
 typedef struct {
-    bool     (*init)(const FAT32_BPB *);
+    bool     (*init)(void);
     bool     (*find_file)(const char *, FAT32_FILE *);
     bool     (*read_file)(FAT32_FILE *, uint8_t *);
     bool     (*write_file)(FAT32_FILE *, const uint8_t *);

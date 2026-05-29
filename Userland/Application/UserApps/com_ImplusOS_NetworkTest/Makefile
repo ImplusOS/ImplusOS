@@ -1,3 +1,5 @@
+.PHONY: all clean copy_resources 
+
 CC := x86_64-elf-gcc
 CXX := x86_64-elf-g++
 LD := x86_64-elf-ld

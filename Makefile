@@ -1,9 +1,10 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -euxo pipefail -c
 
+export MTOOLSRC := /dev/null
 
-.PHONY: all kernel run_usb run_ide run_bios clean image app_build driver_build driver_stage \
-        image_esp image_linux image_macos
+.PHONY: all kernel run_uefi_usb run_uefi_cdrom run_bios_usb clean image app_build \
+        driver_build driver_stage copy_resources
 
 ARCH := x86_64
 CC   = $(ARCH)-elf-gcc
@@ -13,20 +14,20 @@ NASM = nasm
 
 BUILD_DIR := Build
 IMAGE_DIR := Image
-IMAGE     := $(IMAGE_DIR)/ImplusOS.iso
+IMAGE     := $(IMAGE_DIR)/ImplusOS.img
 
 OVMF_CODE := ./OVMF_CODE_4M.fd
 
 KERNEL_DIR   := Kernel
 USERLAND_DIR := Userland
 
-KERNEL_ELF        := $(BUILD_DIR)/Kernel/Kernel_Main.ELF
-BOOTX64_EFI       := $(BUILD_DIR)/Loader/BOOTX64.EFI
-BOOTMANAGER_EFI   := $(BUILD_DIR)/BootManager/BOOTMANAGER.EFI
-BIOS_STAGE1_BIN     := $(BUILD_DIR)/Loader/BIOS/stage1.bin
-BIOS_STAGE2_BIN     := $(BUILD_DIR)/Loader/BIOS/stage2.bin
+KERNEL_ELF           := $(BUILD_DIR)/Kernel/Kernel_Main.ELF
+BOOTX64_EFI          := $(BUILD_DIR)/Loader/BOOTX64.EFI
+BOOTMANAGER_EFI      := $(BUILD_DIR)/BootManager/BOOTMANAGER.EFI
+BIOS_STAGE1_BIN      := $(BUILD_DIR)/Loader/BIOS/stage1.bin
+BIOS_STAGE2_BIN      := $(BUILD_DIR)/Loader/BIOS/stage2.bin
 BIOS_BOOTMANAGER_BIN := $(BUILD_DIR)/BootManager/BootManager_BIOS.BIN
-USERLAND_INIT_ELF   := $(BUILD_DIR)/Userland/Userland.ELF
+USERLAND_INIT_ELF    := $(BUILD_DIR)/Userland/Userland.ELF
 
 LOADER_CFLAGS := \
     -I. \
@@ -47,7 +48,7 @@ BIOS_CFLAGS := \
 	-nostdlib -nostartfiles -nodefaultlibs \
 	-Wall -Wextra -O2
 
-BIOS_LDFLAGS := -m elf_i386 -nostdlib --build-id=none -T BootManager/BIOS/linker.ld
+BIOS_LDFLAGS    := -m elf_i386 -nostdlib --build-id=none -T BootManager/BIOS/linker.ld
 BIOS_BM_LDFLAGS := -m elf_i386 -nostdlib --build-id=none -T BootManager/BIOS/bootmanager_bios.ld
 
 USERLAND_LDFLAGS     := -T Userland/Userland.ld -nostdlib --build-id=none
@@ -69,9 +70,9 @@ USERLAND_CXXFLAGS := \
 	-Wall -Wextra -O3 -MMD -MP
 
 DRIVER_MAKEFILES := $(shell find Kernel/Drivers/Server -name Makefile -print 2>/dev/null | sort)
-DRIVER_DIRS := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
+DRIVER_DIRS      := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
 DRIVER_BUILD_ROOT := $(BUILD_DIR)/Modules
-DRIVER_STAGE_DIR := $(BUILD_DIR)/Kernel/Drivers
+DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
 
 SHARELIB_C_SRCS := $(shell find ShareLib -name "*.c" 2>/dev/null)
 
@@ -170,7 +171,6 @@ $(BUILD_DIR)/Loader/Loader.o: BootLoader/x86_64/UEFI/Loader.c
 
 $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 	mkdir -p $(dir $@)
-
 	$(EFI_LD) -nostdlib \
 		-znocombreloc \
 		--defsym=_DYNAMIC=0 \
@@ -181,14 +181,12 @@ $(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
 		/usr/local/lib/libefi.a \
 		/usr/local/lib/libgnuefi.a \
 		-o $@.so
-
 	$(EFI_OBJCOPY) \
 		-j .text -j .sdata -j .data -j .dynamic \
 		-j .dynsym -j .rel -j .rela -j .reloc \
 		-j .rodata -j .rdata -j .rodata.* \
 		-O efi-app-$(ARCH) \
 		$@.so $@
-
 	rm -f $@.so
 
 $(BIOS_STAGE1_BIN): BootLoader/x86_64/BIOS/stage1.asm
@@ -299,103 +297,83 @@ $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 	mkdir -p $(dir $@)
 	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
 
-USERLAND_ELFS := $(shell find $(BUILD_DIR)/Userland -name '*.ELF' 2>/dev/null)
 BOOT_RESOURCE_DIR := BootManager/Resource
 
-__mount_image:
-	@MOUNT_POINT=$$(mktemp -d); \
-	LOOP_DEVICE=$$(sudo losetup -Pf --show $(IMAGE)) || exit 1; \
-	trap "sudo losetup -d $$LOOP_DEVICE 2>/dev/null; rmdir $$MOUNT_POINT 2>/dev/null" EXIT; \
-	sudo mkfs.fat -F32 $${LOOP_DEVICE}p1 || exit 1; \
-	sudo mount $${LOOP_DEVICE}p1 $$MOUNT_POINT || exit 1; \
-	sudo mkdir -p $$MOUNT_POINT/EFI/BOOT $$MOUNT_POINT/Kernel/Driver $$MOUNT_POINT/Userland $$MOUNT_POINT/BootManager; \
-	sudo cp $(BOOTX64_EFI) $$MOUNT_POINT/EFI/BOOT/BOOTX64.EFI; \
-	sudo cp $(BOOTMANAGER_EFI) $$MOUNT_POINT/EFI/BOOT/BOOTMANAGER.EFI; \
-	sudo cp $(BIOS_BOOTMANAGER_BIN) $$MOUNT_POINT/BootManager/BootManager_BIOS.BIN; \
-	sudo cp $(KERNEL_ELF) $$MOUNT_POINT/Kernel/Kernel_Main.ELF; \
-	sudo cp $(USERLAND_INIT_ELF) $$MOUNT_POINT/Userland/Userland.ELF; \
-	if [ -d $(DRIVER_STAGE_DIR) ]; then \
-		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -exec sudo cp {} $$MOUNT_POINT/Kernel/Driver/ \; ; \
-	fi; \
-	if [ -d $(BOOT_RESOURCE_DIR) ]; then \
-		sudo cp -r $(BOOT_RESOURCE_DIR)/* $$MOUNT_POINT/BootManager/Resource/; \
-	fi; \
-	sync; \
-	sudo umount $$MOUNT_POINT || exit 1;
+IMAGE_SIZE_MB  := 256
+PART_START_LBA := 2048
+IMAGE_SIZE_SEC := $(shell echo "$$(( $(IMAGE_SIZE_MB) * 1024 * 1024 / 512 ))")
+PART_END_LBA   := $(shell echo "$$(( $(IMAGE_SIZE_SEC) - 34 - 1 ))")
 
-ESP_IMG     := $(IMAGE_DIR)/ImplusOS.iso
-ESP_SIZE_MB := 40
-
-IMAGE_DIR := Image
-
-UEFI_IMAGE := $(IMAGE_DIR)/ImplusOS_UEFI.iso
-BIOS_IMAGE := $(IMAGE_DIR)/ImplusOS_BIOS.iso
-
-image_esp: image
 image: all
 	@mkdir -p $(IMAGE_DIR)
-	@mkdir -p $(BUILD_DIR)/iso_root/EFI/BOOT
-	@mkdir -p $(BUILD_DIR)/iso_root/BootManager/Resource
-	@mkdir -p $(BUILD_DIR)/iso_root/Kernel/Driver
-	@mkdir -p $(BUILD_DIR)/iso_root/Userland/SystemApps
-	@mkdir -p $(BUILD_DIR)/iso_root/Userland/UserApps
-	
-	@cp $(BOOTX64_EFI)       $(BUILD_DIR)/iso_root/EFI/BOOT/BOOTX64.EFI
-	@cp $(BOOTMANAGER_EFI)   $(BUILD_DIR)/iso_root/EFI/BOOT/BOOTMANAGER.EFI
-	@cp $(BIOS_BOOTMANAGER_BIN) $(BUILD_DIR)/iso_root/BootManager/BootManager_BIOS.BIN
-	@mkdir -p $(BUILD_DIR)/iso_root/Kernel && cp $(KERNEL_ELF) $(BUILD_DIR)/iso_root/Kernel/Kernel_Main.ELF
-	@cp $(USERLAND_INIT_ELF) $(BUILD_DIR)/iso_root/Userland/Userland.ELF
-	@if [ -d $(DRIVER_STAGE_DIR) ]; then \
-		find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' \
-			-exec cp {} $(BUILD_DIR)/iso_root/Kernel/Driver/ \; ; \
-	fi
-	@if [ -d $(BOOT_RESOURCE_DIR) ]; then \
-		cp -R $(BOOT_RESOURCE_DIR)/* $(BUILD_DIR)/iso_root/BootManager/Resource/; \
-	fi
-	@if [ -d $(BUILD_DIR)/Userland/SystemApps ]; then \
-		find $(BUILD_DIR)/Userland/SystemApps -type f ! -name 'Userland.ELF' | while read f; do \
-			rel=$${f#$(BUILD_DIR)/Userland/SystemApps/}; \
-			dest="$(BUILD_DIR)/iso_root/Userland/SystemApps/$$rel"; \
-			mkdir -p "$$(dirname "$$dest")"; \
-			cp "$$f" "$$dest"; \
-		done; \
-	fi
-	@if [ -d $(BUILD_DIR)/Userland/UserApps ]; then \
-		find $(BUILD_DIR)/Userland/UserApps -type f ! -name 'Userland.ELF' | while read f; do \
-			rel=$${f#$(BUILD_DIR)/Userland/UserApps/}; \
-			dest="$(BUILD_DIR)/iso_root/Userland/UserApps/$$rel"; \
-			mkdir -p "$$(dirname "$$dest")"; \
-			cp "$$f" "$$dest"; \
-		done; \
-	fi
 
-	@rm -f $(BUILD_DIR)/espboot.img
-	@truncate -s 64M $(BUILD_DIR)/espboot.img
-	@mformat -i $(BUILD_DIR)/espboot.img -F -v ESP ::
-	@mmd -i $(BUILD_DIR)/espboot.img ::/EFI
-	@mmd -i $(BUILD_DIR)/espboot.img ::/EFI/BOOT
-	@mcopy -i $(BUILD_DIR)/espboot.img $(BOOTX64_EFI) ::/EFI/BOOT/BOOTX64.EFI
-	@cp $(BUILD_DIR)/espboot.img $(BUILD_DIR)/iso_root/espboot.img
+	@rm -f $(IMAGE)
+	@truncate -s $(IMAGE_SIZE_MB)M $(IMAGE)
 
-	@cat $(BIOS_STAGE1_BIN) $(BIOS_STAGE2_BIN) > $(BUILD_DIR)/iso_root/biosboot.img
+	@sgdisk \
+		--clear \
+		--new=1:$(PART_START_LBA):$(PART_END_LBA) \
+		--typecode=1:EF00 \
+		--change-name=1:ImplusOS \
+		$(IMAGE)
 
-	@xorriso -as mkisofs \
-    -iso-level 3 \
-    -full-iso9660-filenames \
-    -volid "IMPLUSOS" \
-    -eltorito-boot biosboot.img \
-        -no-emul-boot \
-        -boot-load-size 4 \
-        -boot-info-table \
-    -eltorito-alt-boot \
-    -e espboot.img \
-        -no-emul-boot \
-    -isohybrid-apm-hfsplus \
-    -J -joliet-long \
-    -R \
-    -o $(IMAGE) \
-    $(BUILD_DIR)/iso_root
-	@rm -rf $(BUILD_DIR)/iso_root $(BUILD_DIR)/espboot.img
+	@DEVICE=$$(hdiutil attach -imagekey diskimage-class=CRawDiskImage \
+		-nomount $(IMAGE) | awk '/GUID_partition_scheme/ {print $$1}'); \
+	\
+	PARTITION=$${DEVICE}s1; \
+	\
+	echo "Device: $$DEVICE"; \
+	echo "Partition: $$PARTITION"; \
+	\
+	sudo newfs_msdos -F 32 -v IMPLUSOS $$PARTITION; \
+	\
+	MNT_DIR=$$(mktemp -d); \
+	sudo mount -t msdos $$PARTITION $$MNT_DIR; \
+	\
+	sudo mkdir -p $$MNT_DIR/EFI/BOOT; \
+	sudo mkdir -p $$MNT_DIR/Kernel/Driver; \
+	sudo mkdir -p $$MNT_DIR/Userland/SystemApps; \
+	sudo mkdir -p $$MNT_DIR/Userland/UserApps; \
+	sudo mkdir -p $$MNT_DIR/BootManager/Resource; \
+	\
+	sudo cp $(BOOTX64_EFI)          $$MNT_DIR/EFI/BOOT/BOOTX64.EFI; \
+	sudo cp $(BOOTMANAGER_EFI)      $$MNT_DIR/EFI/BOOT/BOOTMANAGER.EFI; \
+	sudo cp $(BIOS_BOOTMANAGER_BIN) $$MNT_DIR/BootManager/BootManager_BIOS.BIN; \
+	sudo cp $(KERNEL_ELF)           $$MNT_DIR/Kernel/Kernel_Main.ELF; \
+	sudo cp $(USERLAND_INIT_ELF)    $$MNT_DIR/Userland/Userland.ELF; \
+	\
+	if [ -d $(DRIVER_STAGE_DIR) ]; then \
+		sudo find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' \
+			-exec cp {} $$MNT_DIR/Kernel/Driver/ \; ; \
+	fi; \
+	\
+	if [ -d $(BOOT_RESOURCE_DIR) ]; then \
+		sudo cp -R $(BOOT_RESOURCE_DIR)/* \
+			$$MNT_DIR/BootManager/Resource/ 2>/dev/null || true; \
+	fi; \
+	\
+	if [ -d $(BUILD_DIR)/Userland/SystemApps ]; then \
+		sudo cp -R $(BUILD_DIR)/Userland/SystemApps/* \
+			$$MNT_DIR/Userland/SystemApps/ 2>/dev/null || true; \
+	fi; \
+	\
+	if [ -d $(BUILD_DIR)/Userland/UserApps ]; then \
+		sudo cp -R $(BUILD_DIR)/Userland/UserApps/* \
+			$$MNT_DIR/Userland/UserApps/ 2>/dev/null || true; \
+	fi; \
+	\
+	sync; \
+	sudo umount $$MNT_DIR; \
+	rmdir $$MNT_DIR; \
+	hdiutil detach $$DEVICE
+
+	@dd if=$(BIOS_STAGE1_BIN) of=$(IMAGE) bs=446 count=1 conv=notrunc 2>/dev/null
+
+	@STAGE12=$$(mktemp); \
+	cat $(BIOS_STAGE1_BIN) $(BIOS_STAGE2_BIN) > $$STAGE12; \
+	dd if=$$STAGE12 of=$(IMAGE) bs=512 skip=1 seek=1 \
+		count=$(BIOS_STAGE2_SECTORS) conv=notrunc 2>/dev/null; \
+	rm -f $$STAGE12
 
 QEMU_COMMON = \
 	-machine q35,accel=tcg \
@@ -414,19 +392,19 @@ QEMU_COMMON = \
 	-rtc base=localtime \
 	-serial stdio
 
-QEMU_CDROM = \
-	-drive file=${IMAGE},format=raw,media=cdrom \
-	-boot d
-
 QEMU_USB = \
 	-drive if=none,id=usbstick,format=raw,file=${IMAGE} \
 	-device usb-storage,bus=xhci.0,drive=usbstick
 
-run_uefi_usb: 
+QEMU_DISK = \
+	-drive file=${IMAGE},format=raw,if=none,id=disk0 \
+	-device ide-hd,drive=disk0,bus=sata.0
+
+run_uefi_usb:
 	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_USB)
 
 run_uefi_cdrom:
-	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_CDROM)
+	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_DISK)
 
 run_bios_usb:
 	@qemu-system-$(ARCH) \

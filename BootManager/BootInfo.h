@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "../Kernel/FileSystem/FAT32_BPB.h"
+
 
 #if !defined(_EFI_H) && !defined(_EFI_H_) && !defined(_EFI_INCLUDE_) && !defined(_EFI_DEF_H) && !defined(_EFI_TYPES_H)
 typedef uint64_t UINTN;
@@ -53,8 +53,6 @@ typedef struct {
     uint32_t PixelsPerScanLine;
 
     uint64_t  PartitionStartLBA;
-    FAT32_BPB BootPartitionBPB;
-    uint32_t  BootPartitionBPBValid;
 
     uint64_t AcpiRsdpAddress;
     uint32_t AcpiRsdpSize;

@@ -215,79 +215,6 @@ static void DiscoverAcpiRsdp(EFI_SYSTEM_TABLE *ST, BOOTLOADER_HANDOFF *Handoff) 
     }
 }
 
-static void ParseBootSectorBPB(const UINT8 *sector, FAT32_BPB *out_bpb) {
-    UINT16 total16 = ReadLe16(&sector[19]);
-    UINT32 total32 = ReadLe32(&sector[32]);
-    out_bpb->bytes_per_sector    = ReadLe16(&sector[11]);
-    out_bpb->sectors_per_cluster = sector[13];
-    out_bpb->reserved_sectors    = ReadLe16(&sector[14]);
-    out_bpb->num_fats            = sector[16];
-    out_bpb->fat_size_sectors    = ReadLe32(&sector[36]);
-    out_bpb->root_cluster        = ReadLe32(&sector[44]);
-    out_bpb->total_sectors       = (total16 != 0) ? (UINT32)total16 : total32;
-}
-
-static BOOLEAN IsValidFAT32VBR(const UINT8 *block) {
-    if (block[510] != 0x55 || block[511] != 0xAA) return FALSE;
-
-    const UINT8 *fat32sig = &block[0x52];
-    if (fat32sig[0] != 'F' || fat32sig[1] != 'A' || fat32sig[2] != 'T' ||
-        fat32sig[3] != '3' || fat32sig[4] != '2' ||
-        fat32sig[5] != ' ' || fat32sig[6] != ' ' || fat32sig[7] != ' ') {
-        return FALSE;
-    }
-
-    UINT16 bps = (UINT16)block[11] | ((UINT16)block[12] << 8);
-    if (bps != 512 && bps != 1024 && bps != 2048 && bps != 4096) return FALSE;
-
-    if (block[13] == 0) return FALSE;
-
-    return TRUE;
-}
-
-static void CaptureBootPartitionBPB(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST,
-                                    BOOTLOADER_HANDOFF *Handoff, UINT64 PartitionStartLBA) {
-    EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
-    EFI_STATUS Status = uefi_call_wrapper(
-        ST->BootServices->HandleProtocol, 3,
-        DeviceHandle, &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
-    if (EFI_ERROR(Status) || !Bio || !Bio->Media) return;
-
-    UINTN block_size = Bio->Media->BlockSize;
-    if (block_size < 512u || block_size > FAT32_BOOT_BLOCK_MAX) return;
-
-    UINT8 *block = NULL;
-    Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
-        EfiLoaderData, block_size, (VOID **)&block);
-    if (EFI_ERROR(Status) || !block) return;
-
-    UINT64 lba_candidates[2];
-    int    candidate_count = 0;
-
-    if (PartitionStartLBA != 0) {
-        lba_candidates[candidate_count++] = PartitionStartLBA;
-    }
-    lba_candidates[candidate_count++] = 0ULL;
-
-    for (int attempt = 0; attempt < candidate_count; ++attempt) {
-        UINT64 lba = lba_candidates[attempt];
-        
-        if (attempt == 1 && lba_candidates[0] == lba_candidates[1]) break;
-
-        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
-                                   lba, block_size, block);
-        if (EFI_ERROR(Status)) continue;
-
-        if (!IsValidFAT32VBR(block)) continue;
-
-        ParseBootSectorBPB(block, &Handoff->BootPartitionBPB);
-        Handoff->BootPartitionBPBValid = 1;
-        Handoff->PartitionStartLBA    = lba;
-        break;
-    }
-
-    uefi_call_wrapper(ST->BootServices->FreePool, 1, block);
-}
 
 static UINT64 ParseElToritoCatalog(EFI_BLOCK_IO_PROTOCOL *Bio, EFI_SYSTEM_TABLE *ST) {
     UINT32 BS = Bio->Media->BlockSize;
@@ -633,10 +560,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     Handoff->PartitionStartLBA = GetPartitionStartLBA(
         LoadedImage->DeviceHandle, ST, Handoff, &is_iso_lba);
 
-    if (!is_iso_lba) {
-        CaptureBootPartitionBPB(LoadedImage->DeviceHandle, ST,
-                                Handoff, Handoff->PartitionStartLBA);
-    }
     EFI_GUID handoff_guid = IMPLUSOS_BOOT_HANDOFF_GUID;
     Status = uefi_call_wrapper(ST->BootServices->InstallConfigurationTable, 2,
         &handoff_guid, Handoff);

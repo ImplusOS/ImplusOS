@@ -1443,29 +1443,31 @@ static void fat32_write_cluster_to_entry(uint8_t *entry, uint32_t cluster) {
     entry[27] = (uint8_t)((cluster >>  8) & 0xFFu);
 }
 
-static bool _fat32_init(const FAT32_BPB *initial_bpb) {
-    if (initial_bpb) {
-        bpb = *initial_bpb;
-    } else {
-        if (!fat32_read_boot_sector_bpb(&bpb)) {
-            return false;
-        }
+static bool _fat32_init() {
+    serial_write_string("FAT32: Initializing driver...\n");
+    g_fat32_partition_lba = disk_get_partition_lba();
+
+    if (!fat32_read_boot_sector_bpb(&bpb)) {
+        serial_write_string("FAT32: Failed to read boot sector BPB.\n");
+        return false;
     }
 
     if (!fat32_validate_bpb()) {
+        serial_write_string("FAT32: BPB validation failed.\n");
         return false;
     }
 
     g_cached_fat_sector = 0xFFFFFFFFu;
     g_cluster_cache.cluster_value = 0;
 
+    serial_write_string("FAT32: Driver initialized successfully.\n");
     return true;
 }
 
-bool fat32_init(const FAT32_BPB *initial_bpb) {
+bool fat32_init() {
     spinlock_init(&g_fat32_lock);
     spinlock_lock(&g_fat32_lock);
-    bool ret = _fat32_init(initial_bpb);
+    bool ret = _fat32_init();
     spinlock_unlock(&g_fat32_lock);
     return ret;
 }
@@ -1855,6 +1857,7 @@ static const driver_module_descriptor_t g_fat32_module = {
 
 #undef disk_read
 #undef disk_write
+#undef disk_get_partition_lba
 #undef memset
 #undef memcpy
 #undef serial_write_string
@@ -1862,7 +1865,7 @@ static const driver_module_descriptor_t g_fat32_module = {
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
 {
-    if (!api || !api->disk_read || !api->disk_write ||
+    if (!api || !api->disk_read || !api->disk_write || !api->disk_get_partition_lba ||
          !api->memset || !api->memcpy || !api->serial_write_string || !api->serial_write_uint32)
         return NULL;
     g_driver_api = api;

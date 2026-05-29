@@ -47,23 +47,21 @@ extern const arch_ops_t *arch_ops_get(void);
 #include "Debug/serial/Serial.h"
 
 bool all_fs_initialize(const BOOT_INFO *boot_info) {
+    (void)boot_info;
     if (!vfs_init()) {
         return false;
     }
     
-    if (!fat32_init(&boot_info->BootPartitionBPB)) {
-        return false;
-    }
-    
-    if (!iso9660_init()) {
+    if (!fat32_init()) {
         return false;
     }
 
+
     vfs_mount("", fat32_vfs_get_driver());
     vfs_mount("", iso9660_vfs_get_driver());
-    
+
     vfs_set_default_fs("iso9660");
-    
+
     return true;
 }
 

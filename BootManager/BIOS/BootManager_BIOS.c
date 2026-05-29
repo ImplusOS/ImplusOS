@@ -1,6 +1,6 @@
 #include "BIOS_Handoff.h"
 #include "../BootManager_libc/include/string.h"
-#include "../../Kernel/FileSystem/FAT32_BPB.h"
+
 #include "../ISO9660.h"
 #include <stdint.h>
 #include <stddef.h>
@@ -57,6 +57,20 @@ static void bios_free(void *ptr) { (void)ptr; }
 #define STB_TRUETYPE_NO_MATH
 
 #include "../../Thirdparty/stb_truetype.h"
+
+#pragma pack(push, 1)
+typedef struct {
+    uint16_t bytes_per_sector;
+    uint8_t  sectors_per_cluster;
+    uint8_t  _reserved0;
+    uint16_t reserved_sectors;
+    uint8_t  num_fats;
+    uint8_t  _reserved1;
+    uint32_t fat_size_sectors;
+    uint32_t root_cluster;
+    uint32_t total_sectors;
+} FAT32_BPB;
+#pragma pack(pop)
 
 typedef struct {
     uint8_t boot_ind;
@@ -945,11 +959,7 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     g_boot_info.PixelsPerScanLine = params->pixels_per_scan_line;
     g_boot_info.PartitionStartLBA = is_iso ? 0 : fs.partition_lba;
     
-    if (!is_iso) {
-        g_boot_info.BootPartitionBPBValid = 1;
-        memcpy(&g_boot_info.BootPartitionBPB, &fs.bpb, sizeof(FAT32_BPB));
-    }
-    
+
     g_boot_info.AcpiRsdpAddress = params->acpi_rsdp;
     g_boot_info.AcpiRsdpSize = params->acpi_rsdp ? 20 : 0;
     g_boot_info.AcpiRsdpRevision = 0;

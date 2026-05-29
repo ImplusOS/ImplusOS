@@ -72,6 +72,7 @@ sudo apt install -y util-linux
 # For macOS (Homebrew)
 brew install x86_64-elf-binutils
 brew install x86_64-elf-gcc
+brew install gptfdisk
 ```
 2. Build and run:
 ```bash
