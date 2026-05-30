@@ -69,7 +69,7 @@ sudo apt install -y dosfstools
 sudo apt install -y xorriso
 sudo apt install -y mtools
 sudo apt install -y util-linux
-# For macOS (Homebrew)
+# Please Install Homebrew
 brew install x86_64-elf-binutils
 brew install x86_64-elf-gcc
 brew install gptfdisk
