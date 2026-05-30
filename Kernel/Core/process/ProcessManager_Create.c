@@ -1605,3 +1605,13 @@ int32_t process_get_full_info(int32_t pid, void *info_out)
     irq_restore(irq_flags);
     return 0;
 }
+
+int32_t process_get_capacity(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    int32_t capacity = g_process_capacity;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return capacity;
+}

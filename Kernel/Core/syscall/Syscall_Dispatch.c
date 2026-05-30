@@ -1,10 +1,22 @@
 #include "Syscall_Main.h"
 #include "Syscall_File.h"
 #include "kernel/status.h"
+#include "kernel/system_info.h"
 #include "Drivers/Module/DriverManager.h"
 #include "Core/process/ProcessManager.h"
+#include "Core/sysinfo/SystemInfo.h"
 #include "IPC/IPC_Main.h"
 #include "Core/window/WindowManager_Kernel.h"
+
+typedef struct {
+    int32_t pid;
+    int32_t parent_pid;
+    uint8_t state;
+    uint8_t reserved[7];
+    char    name[64];
+    uint64_t total_ticks;
+    uint64_t memory_usage;
+} process_info_kernel_t;
 #include "mmu/Paging_Main.h"
 #include "Drivers/Module/DriverBinary.h"
 #include "Debug/printf/printf.h"
@@ -881,14 +893,14 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         }
 
         case SYSCALL_GET_PROC_COUNT: {
-            set_syscall_result(saved_rsp, (uint64_t)OS_CONFIG_PROCESS_MAX_COUNT);
+            set_syscall_result(saved_rsp, (uint64_t)process_get_capacity());
             break;
         }
 
         case SYSCALL_GET_PROC_INFO: {
             int32_t query_pid = (int32_t)arg1;
             void *info_out = (void *)(uintptr_t)arg2;
-            if (!user_buffer_ok(info_out, 128)) {
+            if (!user_buffer_ok(info_out, sizeof(process_info_kernel_t))) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_info_buffer");
                 break;
             }
@@ -1285,6 +1297,104 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 paging_set_user_access(cr3, aligned_start, aligned_size, 1);
             }
             set_syscall_result(saved_rsp, (uint64_t)(uintptr_t)p);
+            break;
+        }
+        
+        case SYSCALL_GET_CPU_INFO: {
+            extern os_status_t sysinfo_get_cpu_info(system_cpu_info_t *);
+            void *info_out = (void *)(uintptr_t)arg1;
+            if (!user_buffer_ok(info_out, sizeof(system_cpu_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_cpu_info_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_cpu_info((system_cpu_info_t *)info_out);
+            set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_MEMORY_INFO: {
+            extern os_status_t sysinfo_get_memory_info(system_memory_info_t *);
+            void *info_out = (void *)(uintptr_t)arg1;
+            if (!user_buffer_ok(info_out, sizeof(system_memory_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_memory_info_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_memory_info((system_memory_info_t *)info_out);
+            set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_VMEM_INFO: {
+            extern os_status_t sysinfo_get_vmem_info(system_vmem_info_t *);
+            void *info_out = (void *)(uintptr_t)arg1;
+            if (!user_buffer_ok(info_out, sizeof(system_vmem_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_vmem_info_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_vmem_info((system_vmem_info_t *)info_out);
+            set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_DISK_INFO: {
+            extern os_status_t sysinfo_get_disk_info(uint32_t, system_disk_info_t *);
+            uint32_t index = (uint32_t)arg1;
+            void *info_out = (void *)(uintptr_t)arg2;
+            if (!user_buffer_ok(info_out, sizeof(system_disk_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_disk_info_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_disk_info(index, (system_disk_info_t *)info_out);
+            set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_DEVICE_INFO: {
+            extern os_status_t sysinfo_get_device_info(uint32_t, system_device_t *);
+            uint32_t index = (uint32_t)arg1;
+            void *info_out = (void *)(uintptr_t)arg2;
+            if (!user_buffer_ok(info_out, sizeof(system_device_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_device_info_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_device_info(index, (system_device_t *)info_out);
+            set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_GRAPHICS_INFO: {
+            extern os_status_t sysinfo_get_graphics_info(system_graphics_info_t *);
+            void *info_out = (void *)(uintptr_t)arg1;
+            if (!user_buffer_ok(info_out, sizeof(system_graphics_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_graphics_info_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_graphics_info((system_graphics_info_t *)info_out);
+            set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_ARCH_INFO: {
+            extern os_status_t sysinfo_get_arch_info(system_arch_info_t *);
+            void *info_out = (void *)(uintptr_t)arg1;
+            if (!user_buffer_ok(info_out, sizeof(system_arch_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_arch_info_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_arch_info((system_arch_info_t *)info_out);
+            set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_SYSTEM_INFO: {
+            extern os_status_t sysinfo_get_system_info(system_info_t *);
+            void *info_out = (void *)(uintptr_t)arg1;
+            if (!user_buffer_ok(info_out, sizeof(system_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_system_info_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_system_info((system_info_t *)info_out);
+            set_syscall_status(saved_rsp, status);
             break;
         }
 

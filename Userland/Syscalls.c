@@ -1254,3 +1254,104 @@ void *kvm_mmap(int32_t fd, uint64_t offset, uint64_t size)
                                        offset,
                                        size);
 }
+
+#define SYSCALL_GET_CPU_INFO       200ULL
+#define SYSCALL_GET_MEMORY_INFO   201ULL
+#define SYSCALL_GET_VMEM_INFO     202ULL
+#define SYSCALL_GET_DISK_INFO     203ULL
+#define SYSCALL_GET_DEVICE_INFO   204ULL
+#define SYSCALL_GET_GRAPHICS_INFO 205ULL
+#define SYSCALL_GET_ARCH_INFO     206ULL
+#define SYSCALL_GET_SYSTEM_INFO   207ULL
+
+int64_t os_get_cpu_info(system_cpu_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return syscall1(SYSCALL_GET_CPU_INFO, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_get_memory_info(system_memory_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return syscall1(SYSCALL_GET_MEMORY_INFO, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_get_vmem_info(system_vmem_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return syscall1(SYSCALL_GET_VMEM_INFO, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_get_disk_count(uint32_t *out_count)
+{
+    if (out_count == NULL) {
+        return -22;
+    }
+    
+    system_disk_info_t temp;
+    int64_t status = syscall2(SYSCALL_GET_DISK_INFO, 0, (uint64_t)(uintptr_t)&temp);
+    if (os_status_is_error(status)) {
+        *out_count = 0;
+        return status;
+    }
+    
+    *out_count = 1;
+    return 0;
+}
+
+int64_t os_get_disk_info(uint32_t index, system_disk_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return syscall2(SYSCALL_GET_DISK_INFO, (uint64_t)index, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_get_device_count(uint32_t *out_count)
+{
+    if (out_count == NULL) {
+        return -22;
+    }
+    
+    int64_t result = syscall1(SYSCALL_GET_DEVICE_INFO, 0xFFFFFFFF);
+    *out_count = (uint32_t)result;
+    return 0;
+}
+
+int64_t os_get_device_info(uint32_t index, system_device_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return syscall2(SYSCALL_GET_DEVICE_INFO, (uint64_t)index, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_get_graphics_info(system_graphics_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return syscall1(SYSCALL_GET_GRAPHICS_INFO, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_get_arch_info(system_arch_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return syscall1(SYSCALL_GET_ARCH_INFO, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_get_system_info(system_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return syscall1(SYSCALL_GET_SYSTEM_INFO, (uint64_t)(uintptr_t)out_info);
+}

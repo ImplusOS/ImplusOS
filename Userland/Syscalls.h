@@ -12,3 +12,4 @@
 #include "API/Network.h"
 #include "API/Time.h"
 #include "API/KVM.h"
+#include "API/SystemInfo.h"

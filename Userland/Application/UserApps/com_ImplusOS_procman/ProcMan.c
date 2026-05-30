@@ -12,7 +12,12 @@
 
 #define MAX_PROCESSES 256
 #define MAX_VISIBLE_ROWS 18
+#define MAX_SEARCH_LEN 64
 #define REFRESH_INTERVAL_MS 1000
+
+#define MODE_PROCESSES 0
+#define MODE_PERFORMANCE 1
+#define MODE_HARDWARE 2
 
 static const char *k_spawn_path = "/Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF";
 
@@ -26,6 +31,12 @@ typedef struct {
     double cpu_usage;
 } proc_entry_t;
 
+#define CPU_HISTORY_SIZE 60
+typedef struct {
+    double cpu_values[CPU_HISTORY_SIZE];
+    int write_idx;
+} cpu_history_t;
+
 static window_id_t g_win = 0;
 static proc_entry_t g_procs[MAX_PROCESSES];
 static uint64_t g_last_ticks[MAX_PROCESSES];
@@ -37,6 +48,12 @@ static uint64_t g_total_mem = 0;
 static uint64_t g_used_mem = 0;
 static uint64_t g_last_update_ms = 0;
 static char g_status[128] = {0};
+static char g_search_buf[MAX_SEARCH_LEN] = {0};
+static int g_search_active = 0;
+static int g_search_len = 0;
+static int g_display_mode = MODE_PROCESSES;
+static cpu_history_t g_cpu_history = {0};
+static double g_total_cpu_usage = 0.0;
 
 #define COLOR_BG      0xFF121212
 #define COLOR_HEADER  0xFF1F1F1F
@@ -45,6 +62,11 @@ static char g_status[128] = {0};
 #define COLOR_ACCENT  0xFF03DAC6
 #define COLOR_DEAD    0xFF757575
 #define COLOR_WARN    0xFFFFB86C
+#define COLOR_GOOD    0xFF39C991
+
+static int matches_search_filter(const char *name);
+static void update_cpu_history(double total_cpu);
+static void draw_cpu_graph(int x, int y, int width, int height);
 
 static const char *get_state_name(uint8_t state)
 {
@@ -94,7 +116,9 @@ static void format_memory(uint64_t bytes, char *out, size_t out_size)
 
 static void refresh_procs(void)
 {
-    int count = MAX_PROCESSES;
+    int count = get_process_count();
+    if (count < 0) count = 0;
+    if (count > MAX_PROCESSES) count = MAX_PROCESSES;
 
     int actual_count = 0;
     uint64_t current_ms = get_uptime_ms();
@@ -102,7 +126,8 @@ static void refresh_procs(void)
 
     for (int i = 0; i < count; i++) {
         process_info_t info;
-        if (get_process_info(i, &info) == 0) {
+        if (get_process_info(i, &info) == 0 && info.state != 0) {
+            if (actual_count >= MAX_PROCESSES) break;
             proc_entry_t *entry = &g_procs[actual_count];
             entry->pid = info.pid;
             entry->parent_pid = info.parent_pid;
@@ -115,6 +140,7 @@ static void refresh_procs(void)
             if (delta_ms > 0 && info.pid >= 0 && info.pid < MAX_PROCESSES && g_tick_initialized[info.pid] && info.total_ticks >= g_last_ticks[info.pid]) {
                 uint64_t tick_diff = info.total_ticks - g_last_ticks[info.pid];
                 entry->cpu_usage = (double)tick_diff * 100.0 / (double)delta_ms;
+                if (entry->cpu_usage > 999.9) entry->cpu_usage = 999.9;
             } else {
                 entry->cpu_usage = 0.0;
             }

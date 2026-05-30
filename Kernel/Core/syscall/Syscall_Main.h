@@ -118,15 +118,24 @@
 #define SYSCALL_VFORK             192
 #define SYSCALL_SET_ROBUST_LIST   193
 
-#define SYSCALL_DRM_OPEN          200
-#define SYSCALL_DRM_IOCTL         201
-#define SYSCALL_DRM_CLOSE         202
-#define SYSCALL_DRM_MMAP          203
+#define SYSCALL_GET_CPU_INFO       200
+#define SYSCALL_GET_MEMORY_INFO   201
+#define SYSCALL_GET_VMEM_INFO     202
+#define SYSCALL_GET_DISK_INFO     203
+#define SYSCALL_GET_DEVICE_INFO   204
+#define SYSCALL_GET_GRAPHICS_INFO 205
+#define SYSCALL_GET_ARCH_INFO     206
+#define SYSCALL_GET_SYSTEM_INFO   207
 
-#define SYSCALL_EVDEV_OPEN        210
-#define SYSCALL_EVDEV_READ        211
-#define SYSCALL_EVDEV_IOCTL       212
-#define SYSCALL_EVDEV_CLOSE       213
+#define SYSCALL_DRM_OPEN          208
+#define SYSCALL_DRM_IOCTL         209
+#define SYSCALL_DRM_CLOSE         210
+#define SYSCALL_DRM_MMAP          211
+
+#define SYSCALL_EVDEV_OPEN        212
+#define SYSCALL_EVDEV_READ        213
+#define SYSCALL_EVDEV_IOCTL       214
+#define SYSCALL_EVDEV_CLOSE       215
 
 #define SYSCALL_UNIX_SOCKET       220
 #define SYSCALL_UNIX_BIND         221
