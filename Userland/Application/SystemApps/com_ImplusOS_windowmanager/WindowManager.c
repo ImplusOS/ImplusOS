@@ -106,12 +106,24 @@ static uint32_t *app_icon_load_from_file(const char *path, uint32_t *out_w, uint
     int w, h, channels;
     uint8_t *pixels = stbi_load_from_memory(file_data, (int)file_size, &w, &h, &channels, 4);
     free(file_data);
-    
+
     if (!pixels) return NULL;
     
+    uint32_t px_count = (uint32_t)w * (uint32_t)h;
+    uint32_t *out = (uint32_t *)malloc(px_count * sizeof(uint32_t));
+    if (!out) { STBI_FREE(pixels); return NULL; }
+    for (uint32_t i = 0; i < px_count; ++i) {
+        uint8_t r = pixels[i * 4 + 0];
+        uint8_t g = pixels[i * 4 + 1];
+        uint8_t b = pixels[i * 4 + 2];
+        uint8_t a = pixels[i * 4 + 3];
+        out[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    }
+    STBI_FREE(pixels);
+
     *out_w = (uint32_t)w;
     *out_h = (uint32_t)h;
-    return (uint32_t *)pixels;
+    return out;
 }
 
 static uint32_t *app_icon_scale(uint32_t *src_pixels, uint32_t src_w, uint32_t src_h,
@@ -142,27 +154,47 @@ static void wm_scan_app_icons(void) {
         const char *app_path = app->path;
         const char *app_name = NULL;
         
-        if (strncmp(app_path, "/Userland/SystemApps/", 21) == 0) {
-            app_name = app_path + 21;
+        if (strncmp(app_path, "/Userland/SystemApps/", 21) == 0
+            || strncmp(app_path, "/Userland/Application/SystemApps/", 33) == 0) {
+            const char *prefix = (strncmp(app_path, "/Userland/SystemApps/", 21) == 0)
+                                 ? "/Userland/SystemApps/"
+                                 : "/Userland/Application/SystemApps/";
+            app_name = app_path + strlen(prefix);
             char *slash = strchr(app_name, '/');
             if (slash) {
                 uint32_t len = (uint32_t)(slash - app_name);
-                snprintf(icon_path, sizeof(icon_path), "/Userland/SystemApps/%.*s/Resource/App.png", 
-                         (int)len, app_name);
+                size_t pfx_len = strlen(prefix);
+                const char suffix[] = "/Resource/App.png";
+                size_t suf_len = strlen(suffix);
+                if (pfx_len + len + suf_len + 1 <= sizeof(icon_path)) {
+                    memcpy(icon_path, prefix, pfx_len);
+                    memcpy(icon_path + pfx_len, app_name, len);
+                    memcpy(icon_path + pfx_len + len, suffix, suf_len + 1);
+                } else continue;
             } else continue;
-        } else if (strncmp(app_path, "/Userland/UserApps/", 19) == 0) {
-            app_name = app_path + 19;
+        } else if (strncmp(app_path, "/Userland/UserApps/", 19) == 0
+                   || strncmp(app_path, "/Userland/Application/UserApps/", 31) == 0) {
+            const char *prefix = (strncmp(app_path, "/Userland/UserApps/", 19) == 0)
+                                 ? "/Userland/UserApps/"
+                                 : "/Userland/Application/UserApps/";
+            app_name = app_path + strlen(prefix);
             char *slash = strchr(app_name, '/');
             if (slash) {
                 uint32_t len = (uint32_t)(slash - app_name);
-                snprintf(icon_path, sizeof(icon_path), "/Userland/UserApps/%.*s/Resource/App.png", 
-                         (int)len, app_name);
+                size_t pfx_len = strlen(prefix);
+                const char suffix[] = "/Resource/App.png";
+                size_t suf_len = strlen(suffix);
+                if (pfx_len + len + suf_len + 1 <= sizeof(icon_path)) {
+                    memcpy(icon_path, prefix, pfx_len);
+                    memcpy(icon_path + pfx_len, app_name, len);
+                    memcpy(icon_path + pfx_len + len, suffix, suf_len + 1);
+                } else continue;
             } else continue;
         } else continue;
         
         uint32_t icon_w = 0, icon_h = 0;
         uint32_t *pixels = app_icon_load_from_file(icon_path, &icon_w, &icon_h);
-        
+
         if (pixels && icon_w > 0 && icon_h > 0) {
             uint32_t target_size = 32;
             if (icon_w != target_size || icon_h != target_size) {
@@ -315,23 +347,26 @@ static inline uint32_t color_lerp(uint32_t c0, uint32_t c1, uint32_t t, uint32_t
 
 static void comp_draw_png_icon(wm_compositor_t *comp,
         uint32_t dst_x, uint32_t dst_y,
-        uint32_t icon_w, uint32_t icon_h,
+        uint32_t dst_w, uint32_t dst_h,
+        uint32_t src_w, uint32_t src_h,
         uint32_t *pixels, float alpha,
         uint32_t cx0, uint32_t cy0, uint32_t cx1, uint32_t cy1) {
     if (!comp || !comp->shadow || !pixels) return;
-    if (icon_w == 0 || icon_h == 0) return;
-    
-    uint32_t dw = comp->fb_width;
-    uint32_t dh = comp->fb_height;
-    
-    for (uint32_t y = 0; y < icon_h; y++) {
+    if (dst_w == 0 || dst_h == 0 || src_w == 0 || src_h == 0) return;
+
+    uint32_t fbw = comp->fb_width;
+    uint32_t fbh = comp->fb_height;
+
+    for (uint32_t y = 0; y < dst_h; y++) {
         uint32_t py = dst_y + y;
-        if (py >= cy0 && py < cy1 && py < dh) {
-            uint32_t row_off = py * dw;
-            for (uint32_t x = 0; x < icon_w; x++) {
+        if (py >= cy0 && py < cy1 && py < fbh) {
+            uint32_t row_off = py * fbw;
+            uint32_t src_y = (y * src_h) / dst_h;
+            for (uint32_t x = 0; x < dst_w; x++) {
                 uint32_t px = dst_x + x;
-                if (px >= cx0 && px < cx1 && px < dw) {
-                    uint32_t pixel = pixels[y * icon_w + x];
+                if (px >= cx0 && px < cx1 && px < fbw) {
+                    uint32_t src_x = (x * src_w) / dst_w;
+                    uint32_t pixel = pixels[src_y * src_w + src_x];
                     uint32_t pa = (pixel >> 24) & 0xFF;
                     pa = (uint32_t)(pa * alpha);
                     if (pa > 0) {
@@ -532,6 +567,12 @@ static inline void wm_mark_window_title_dirty(wm_compositor_t *comp, wm_window_t
     wm_compositor_mark_dirty_bounds(comp, x0, y0, x1, y1);
 }
 
+static inline void wm_mark_taskbar_dirty(wm_compositor_t *comp) {
+    if (!comp) return;
+    wm_compositor_mark_dirty(comp, 0, comp->fb_height - WM_TASKBAR_HEIGHT,
+                             comp->fb_width, WM_TASKBAR_HEIGHT);
+}
+
 static void zlist_remove(wm_server_t *srv, wm_window_t *w) {
     if (!srv || !w) return;
     if (w->z_prev) w->z_prev->z_next = w->z_next; else srv->z_top    = w->z_next;
@@ -612,6 +653,7 @@ int32_t wm_server_create_window(wm_server_t *srv, int32_t owner,
     srv->windows[srv->window_count++] = win;
     zlist_push_top(srv, win);
     wm_server_set_focus(srv, win->id);
+    wm_mark_taskbar_dirty(&g_state.compositor);
     return (int32_t)win->id;
 }
 
@@ -653,6 +695,7 @@ void wm_server_destroy_window(wm_server_t *srv, uint32_t id) {
     if (win) {
         win->is_closing = true;
         wm_mark_window_dirty(&g_state.compositor, win);
+        wm_mark_taskbar_dirty(&g_state.compositor);
         if (srv->focused_id == id) wm_give_focus_to_next(srv, id);
     }
 }
@@ -682,6 +725,7 @@ void wm_server_show(wm_server_t *srv, uint32_t id) {
         win->anim_alpha = 0.0f;
         win->is_closing = false;
         wm_mark_window_dirty(&g_state.compositor, win);
+        wm_mark_taskbar_dirty(&g_state.compositor);
     }
 }
 
@@ -691,6 +735,7 @@ void wm_server_hide(wm_server_t *srv, uint32_t id) {
     if (win && win->visible) {
         win->is_closing = true;
         wm_mark_window_dirty(&g_state.compositor, win);
+        wm_mark_taskbar_dirty(&g_state.compositor);
     }
 }
 
@@ -701,6 +746,7 @@ void wm_server_raise(wm_server_t *srv, uint32_t id) {
     zlist_remove(srv, win);
     zlist_push_top(srv, win);
     wm_mark_window_dirty(&g_state.compositor, win);
+    wm_mark_taskbar_dirty(&g_state.compositor);
 }
 
 void wm_server_lower(wm_server_t *srv, uint32_t id) {
@@ -710,6 +756,8 @@ void wm_server_lower(wm_server_t *srv, uint32_t id) {
     zlist_remove(srv, win);
     zlist_push_bottom(srv, win);
     wm_mark_window_dirty(&g_state.compositor, win);
+    wm_mark_taskbar_dirty(&g_state.compositor);
+
 }
 
 void wm_server_set_focus(wm_server_t *srv, uint32_t id) {
@@ -717,7 +765,7 @@ void wm_server_set_focus(wm_server_t *srv, uint32_t id) {
     wm_window_t *old = slot_find_by_id(srv, srv->focused_id);
     if (old) { old->has_focus = false; wm_mark_window_dirty(&g_state.compositor, old); }
     wm_window_t *nw = slot_find_by_id(srv, id);
-    if (nw) { nw->has_focus = true; srv->focused_id = id; wm_mark_window_dirty(&g_state.compositor, nw); }
+    if (nw) { nw->has_focus = true; srv->focused_id = id; wm_mark_window_dirty(&g_state.compositor, nw); wm_mark_taskbar_dirty(&g_state.compositor); }
 }
 
 uint32_t wm_server_hit_test(wm_server_t *srv, uint32_t px, uint32_t py) {
@@ -1542,12 +1590,19 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
             uint32_t    tx    = bx + 10;
             uint32_t    ty    = btn_y + (btn_h - 16) / 2;
             uint32_t    tcol  = w->has_focus ? COLOR_TASKBAR_TEXT : COLOR_TASKBAR_TEXT_DIM;
+            if (!w->has_icon) tx = bx + 18;
             
             if (w->has_icon) {
                 uint32_t icon_sz = 16;
                 uint32_t icon_x = bx + 6;
                 uint32_t icon_y = btn_y + (btn_h - icon_sz) / 2;
-                comp_draw_png_icon(comp, icon_x, icon_y, 16, 16, w->icon, 1.0f,
+                float pulse = 1.0f - w->anim_alpha;
+                if (pulse > 0.0f) {
+                    shadow_fill_rounded_rect_clip(comp, icon_x - 3, icon_y - 3,
+                        icon_sz + 6, icon_sz + 6, 8,
+                        bx0, by0, bx1, by1, 0xFFFFFFFF, pulse * 0.12f);
+                }
+                comp_draw_png_icon(comp, icon_x, icon_y, 16, 16, 16, 16, w->icon, 1.0f,
                                   bx, btn_y, bx + btn_w, btn_y + btn_h);
                 tx = bx + 28;
             }
@@ -1652,10 +1707,10 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
              start_menu_app_t *app = &g_start_apps[i];
              if (app->has_png_icon && app->icon_pixels) {
                  uint32_t icon_size = 24;
-                 uint32_t icon_x = sm_x + 28 - icon_size / 2;
-                 uint32_t icon_y = ay + 10 - icon_size / 2;
-                 comp_draw_png_icon(comp, icon_x, icon_y, 
-                                   app->icon_w, app->icon_h, app->icon_pixels, 1.0f,
+                 uint32_t icon_x = sm_x + 20;
+                 uint32_t icon_y = ay + (36 - icon_size) / 2;
+                 comp_draw_png_icon(comp, icon_x, icon_y,
+                                   icon_size, icon_size, app->icon_w, app->icon_h, app->icon_pixels, 1.0f,
                                    sm_x + 15, ay, sm_x + sm_w - 15, ay + 36);
              } else {
                  comp_draw_text(comp, sm_x + 28, ay + 10, app->emoji_icon, 0xFFFFFFFF, 14.0f, 30, 1.0f);
@@ -2380,6 +2435,7 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
             memcpy(win->icon, cmd->icon, sizeof(win->icon));
             win->has_icon = true;
             wm_mark_window_title_dirty(&st->compositor, win);
+            wm_mark_taskbar_dirty(&st->compositor);
         }
         break;
     }
