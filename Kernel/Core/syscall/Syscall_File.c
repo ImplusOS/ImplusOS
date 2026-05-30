@@ -319,6 +319,8 @@ int32_t syscall_file_close(int32_t fd)
         return (int32_t)OS_STATUS_ACCESS_DENIED;
     }
 
+    vfs_close_file(&g_files[fd].file);
+
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
     memset(&g_files[fd], 0, sizeof(g_files[fd]));
@@ -426,6 +428,7 @@ void syscall_file_close_all_for_pid(int32_t pid, uint32_t *closed_fds_out, uint3
     spinlock_lock(&g_file_table_lock);
     for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
         if (g_files[fd].used != 0 && g_files[fd].owner_pid == pid) {
+            vfs_close_file(&g_files[fd].file);
             memset(&g_files[fd], 0, sizeof(g_files[fd]));
             ++closed_fds;
         }

@@ -8,7 +8,8 @@ static volatile uint32_t g_usb_poll_pending = 0;
 
 static bool usb_driver_client_refresh(void)
 {
-    g_usb_vtable = driver_manager_get_usb_driver();
+    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_USB, NULL);
+    g_usb_vtable = device ? (const usb_master_vtable_t *)device->ops : NULL;
     return (g_usb_vtable != NULL);
 }
 

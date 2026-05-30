@@ -94,6 +94,15 @@ static bool iso9660_vfs_unlink(const char *path) {
     return false;
 }
 
+static bool iso9660_vfs_close_file(vfs_file_t *file) {
+    if (!file || !file->driver_data) {
+        return false;
+    }
+    free(file->driver_data);
+    file->driver_data = NULL;
+    return true;
+}
+
 static const vfs_driver_t g_iso9660_vfs_driver = {
     .fs_type = "iso9660",
     .prefix = NULL,
@@ -109,6 +118,7 @@ static const vfs_driver_t g_iso9660_vfs_driver = {
     .opendir = iso9660_vfs_opendir,
     .readdir = iso9660_vfs_readdir,
     .closedir = iso9660_vfs_closedir,
+    .close_file = iso9660_vfs_close_file,
     .unlink = iso9660_vfs_unlink,
 };
 

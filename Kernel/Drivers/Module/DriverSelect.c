@@ -23,8 +23,11 @@ void driver_select_set_boot_framebuffer(const driver_boot_framebuffer_t *framebu
 
 const driver_display_t *driver_select_pick_display_driver(void) {
     const driver_display_t *drv;
+    const device_t *device;
 
-    drv = driver_manager_get_display_driver("VirtIO_Driver.ELF");
+    device = driver_manager_find(DRIVER_MANAGER_KIND_DISPLAY,
+                                 "VirtIO_Driver.ELF");
+    drv = device ? (const driver_display_t *)device->ops : NULL;
     if (drv) {
         if (!drv->probe || drv->probe()) {
             if (drv->init()) {
@@ -33,7 +36,9 @@ const driver_display_t *driver_select_pick_display_driver(void) {
         }
     }
 
-    drv = driver_manager_get_display_driver("ImplusOS_Generic_Display_Driver.ELF");
+    device = driver_manager_find(DRIVER_MANAGER_KIND_DISPLAY,
+                                 "ImplusOS_Generic_Display_Driver.ELF");
+    drv = device ? (const driver_display_t *)device->ops : NULL;
     if (drv) {
         if (drv->set_framebuffer) {
             drv->set_framebuffer(&g_boot_framebuffer);

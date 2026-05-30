@@ -17,6 +17,7 @@ typedef struct {
     driver_manager_kind_t kind;
     char module_name[LOADED_FILE_NAME_MAX];
     const void *driver_api;
+    device_t device;
 } driver_manager_entry_t;
 
 static driver_manager_entry_t g_driver_entries[MAX_LOADED_FILES];
@@ -48,6 +49,10 @@ bool driver_manager_attach(const char *module_name,
             driver_manager_streq(entry->module_name, module_name)) {
             entry->kind = kind;
             entry->driver_api = driver_api;
+            entry->device.type = (device_type_t)kind;
+            entry->device.ops = driver_api;
+            entry->device.private = NULL;
+            entry->device.name = entry->module_name;
             return true;
         }
     }
@@ -64,6 +69,10 @@ bool driver_manager_attach(const char *module_name,
         entry->driver_api = driver_api;
         strncpy(entry->module_name, module_name, sizeof(entry->module_name) - 1u);
         entry->module_name[sizeof(entry->module_name) - 1u] = '\0';
+        entry->device.type = (device_type_t)kind;
+        entry->device.ops = driver_api;
+        entry->device.private = NULL;
+        entry->device.name = entry->module_name;
         return true;
     }
 
@@ -113,7 +122,7 @@ const void *driver_manager_get_by_module_name(const char *module_name)
     return NULL;
 }
 
-const void *driver_manager_get_by_kind(driver_manager_kind_t kind)
+static const device_t *driver_manager_get_device_by_kind(driver_manager_kind_t kind)
 {
     if (kind == DRIVER_MANAGER_KIND_UNKNOWN) {
         return NULL;
@@ -122,15 +131,15 @@ const void *driver_manager_get_by_kind(driver_manager_kind_t kind)
     for (uint32_t i = 0; i < MAX_LOADED_FILES; ++i) {
         const driver_manager_entry_t *entry = &g_driver_entries[i];
         if (entry->attached != 0u && entry->kind == kind) {
-            return entry->driver_api;
+            return &entry->device;
         }
     }
 
     return NULL;
 }
 
-const void *driver_manager_get_named(driver_manager_kind_t kind,
-                                     const char *module_name)
+static const device_t *driver_manager_get_device_named(driver_manager_kind_t kind,
+                                                       const char *module_name)
 {
     if (module_name == NULL || module_name[0] == '\0') {
         return NULL;
@@ -144,10 +153,38 @@ const void *driver_manager_get_named(driver_manager_kind_t kind,
             continue;
         }
 
-        return entry->driver_api;
+        return &entry->device;
     }
 
     return NULL;
+}
+
+const device_t *driver_manager_find(driver_manager_kind_t kind,
+                                    const char *module_name)
+{
+    if (module_name == NULL || module_name[0] == '\0') {
+        return driver_manager_get_device_by_kind(kind);
+    }
+    return driver_manager_get_device_named(kind, module_name);
+}
+
+const device_t *device_manager_find(device_type_t type,
+                                   const char *module_name)
+{
+    return driver_manager_find((driver_manager_kind_t)type, module_name);
+}
+
+const void *driver_manager_get_by_kind(driver_manager_kind_t kind)
+{
+    const device_t *device = driver_manager_get_device_by_kind(kind);
+    return device ? device->ops : NULL;
+}
+
+const void *driver_manager_get_named(driver_manager_kind_t kind,
+                                     const char *module_name)
+{
+    const device_t *device = driver_manager_get_device_named(kind, module_name);
+    return device ? device->ops : NULL;
 }
 
 const pci_driver_t *driver_manager_get_pci_driver(void)
@@ -173,8 +210,9 @@ const usb_master_vtable_t *driver_manager_get_usb_driver(void)
 
 const driver_display_t *driver_manager_get_display_driver(const char *module_name)
 {
-    return (const driver_display_t *)driver_manager_get_named(DRIVER_MANAGER_KIND_DISPLAY,
-                                                              module_name);
+    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_DISPLAY,
+                                                 module_name);
+    return device ? (const driver_display_t *)device->ops : NULL;
 }
 
 const driver_nic_t *driver_manager_get_nic_driver(void)
@@ -230,6 +268,11 @@ bool driver_manager_fs_truncate(vfs_file_t *file, uint32_t new_size)
 uint32_t driver_manager_fs_get_file_size(vfs_file_t *file)
 {
     return vfs_get_file_size(file);
+}
+
+bool driver_manager_fs_close_file(vfs_file_t *file)
+{
+    return vfs_close_file(file);
 }
 
 void driver_manager_fs_list_root_files(void)

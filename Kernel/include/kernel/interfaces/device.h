@@ -1,0 +1,40 @@
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+
+typedef enum device_type {
+    DEVICE_TYPE_UNKNOWN = 0,
+    DRIVER_MANAGER_KIND_UNKNOWN = DEVICE_TYPE_UNKNOWN,
+
+    DEVICE_TYPE_PCI,
+    DRIVER_MANAGER_KIND_PCI = DEVICE_TYPE_PCI,
+
+    DEVICE_TYPE_FAT32,
+    DRIVER_MANAGER_KIND_FAT32 = DEVICE_TYPE_FAT32,
+
+    DEVICE_TYPE_ISO9660,
+    DRIVER_MANAGER_KIND_ISO9660 = DEVICE_TYPE_ISO9660,
+
+    DEVICE_TYPE_DISPLAY,
+    DRIVER_MANAGER_KIND_DISPLAY = DEVICE_TYPE_DISPLAY,
+
+    DEVICE_TYPE_INPUT,
+    DRIVER_MANAGER_KIND_INPUT = DEVICE_TYPE_INPUT,
+
+    DEVICE_TYPE_USB,
+    DRIVER_MANAGER_KIND_USB = DEVICE_TYPE_USB,
+
+    DEVICE_TYPE_NIC,
+    DRIVER_MANAGER_KIND_NIC = DEVICE_TYPE_NIC,
+
+    DEVICE_TYPE_BLOCK,
+    DEVICE_TYPE_FILESYSTEM,
+} device_type_t;
+
+typedef struct device {
+    device_type_t type;
+    const void *ops;
+    void *private;
+    const char *name;
+} device_t;

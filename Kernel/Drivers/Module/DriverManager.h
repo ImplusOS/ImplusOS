@@ -3,21 +3,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "kernel/interfaces/device.h"
 #include "DriverBinary.h"
 #include "Core/vfs/VFS.h"
 #include "Drivers/Client/FileSystem/ISO9660/ISO9660_Main.h"
 #include "Drivers/Client/PCI/PCI_Main.h"
 
-typedef enum {
-    DRIVER_MANAGER_KIND_UNKNOWN = 0,
-    DRIVER_MANAGER_KIND_PCI,
-    DRIVER_MANAGER_KIND_FAT32,
-    DRIVER_MANAGER_KIND_ISO9660,
-    DRIVER_MANAGER_KIND_DISPLAY,
-    DRIVER_MANAGER_KIND_INPUT,
-    DRIVER_MANAGER_KIND_USB,
-    DRIVER_MANAGER_KIND_NIC,
-} driver_manager_kind_t;
+typedef device_type_t driver_manager_kind_t;
 
 void driver_manager_init(void);
 
@@ -31,6 +23,10 @@ const void *driver_manager_get_by_module_name(const char *module_name);
 const void *driver_manager_get_by_kind(driver_manager_kind_t kind);
 const void *driver_manager_get_named(driver_manager_kind_t kind,
                                      const char *module_name);
+const device_t *driver_manager_find(driver_manager_kind_t kind,
+                                    const char *module_name);
+const device_t *device_manager_find(device_type_t type,
+                                   const char *module_name);
 
 const pci_driver_t *driver_manager_get_pci_driver(void);
 const iso9660_driver_t *driver_manager_get_iso9660_driver(void);
@@ -50,6 +46,7 @@ bool driver_manager_fs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffe
 bool driver_manager_fs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size);
 bool driver_manager_fs_truncate(vfs_file_t *file, uint32_t new_size);
 uint32_t driver_manager_fs_get_file_size(vfs_file_t *file);
+bool driver_manager_fs_close_file(vfs_file_t *file);
 void driver_manager_fs_list_root_files(void);
 bool driver_manager_fs_creat(const char *path);
 bool driver_manager_fs_mkdir(const char *path);

@@ -13,6 +13,7 @@ bool vfs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer, uint32_t si
 bool vfs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size);
 bool vfs_truncate(vfs_file_t *file, uint32_t new_size);
 uint32_t vfs_get_file_size(vfs_file_t *file);
+bool vfs_close_file(vfs_file_t *file);
 void vfs_list_root(void);
 bool vfs_creat(const char *path);
 bool vfs_mkdir(const char *path);

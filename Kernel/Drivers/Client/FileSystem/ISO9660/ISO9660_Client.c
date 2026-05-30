@@ -2,13 +2,15 @@
 #include "Drivers/Module/DriverManager.h"
 
 bool iso9660_init(void) {
-    const iso9660_driver_t *drv = (const iso9660_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_ISO9660);
+    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_ISO9660, NULL);
+    const iso9660_driver_t *drv = device ? (const iso9660_driver_t *)device->ops : NULL;
     if (!drv || !drv->init) return false;
     return drv->init();
 }
 
 bool iso9660_find_file(const char *path, ISO9660_FILE *file) {
-    const iso9660_driver_t *drv = (const iso9660_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_ISO9660);
+    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_ISO9660, NULL);
+    const iso9660_driver_t *drv = device ? (const iso9660_driver_t *)device->ops : NULL;
     if (!drv || !drv->find_file) return false;
     return drv->find_file(path, file);
 }

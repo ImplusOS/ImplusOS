@@ -14,7 +14,6 @@ LD := aarch64-elf-ld
 DRIVER_ARCH_CFLAGS :=
 endif
 
-# Base flags for all driver modules
 DRIVER_BASE_CFLAGS := \
 	-I$(ROOT_DIR)/Kernel \
 	-I$(ROOT_DIR)/Kernel/include \
@@ -29,7 +28,6 @@ DRIVER_BASE_CFLAGS := \
 	-MMD -MP \
 	-DIMPLUS_DRIVER_MODULE -DKERNEL
 
-# Drivers can add their own flags via DRIVER_MODULE_CFLAGS
 DRIVER_MODULE_CFLAGS += $(DRIVER_BASE_CFLAGS)
 
 DRIVER_MODULE_LDFLAGS ?= -nostdlib -shared --build-id=none -Bsymbolic -e driver_module_init -z max-page-size=4096

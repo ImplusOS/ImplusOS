@@ -8,7 +8,8 @@
 
 static const pci_driver_t *get_pci_driver(void)
 {
-    return driver_manager_get_pci_driver();
+    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_PCI, NULL);
+    return device ? (const pci_driver_t *)device->ops : NULL;
 }
 
 uint32_t pci_read_config(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset)

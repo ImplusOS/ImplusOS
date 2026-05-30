@@ -102,6 +102,11 @@ static uint32_t cluster_to_lba(uint32_t cluster);
 static uint32_t fat32_cluster_size_bytes(void);
 static bool     fat32_zero_fill_range(FAT32_FILE *file, uint32_t offset, uint32_t size);
 static bool     fat32_read_boot_sector_bpb(FAT32_BPB *out_bpb);
+static bool     fat32_read_boot_sector_bpb_at_lba(uint64_t lba, FAT32_BPB *out_bpb);
+static bool     fat32_detect_partition_start(uint64_t *out_lba);
+static bool     fat32_try_init_at_lba(uint64_t lba);
+static void     fat32_parse_bpb_from_sector(const uint8_t *sector, FAT32_BPB *out_bpb);
+static bool     fat32_validate_bpb(void);
 
 static uint16_t read_u16(const uint8_t *p) {
     if (!p) return 0;
@@ -116,12 +121,143 @@ static uint32_t read_u32(const uint8_t *p) {
            ((uint32_t)p[3] << 24);
 }
 
+static uint64_t read_u64(const uint8_t *p) {
+    if (!p) return 0;
+    return (uint64_t)p[0]         |
+           ((uint64_t)p[1] << 8)  |
+           ((uint64_t)p[2] << 16) |
+           ((uint64_t)p[3] << 24) |
+           ((uint64_t)p[4] << 32) |
+           ((uint64_t)p[5] << 40) |
+           ((uint64_t)p[6] << 48) |
+           ((uint64_t)p[7] << 56);
+}
+
+static bool is_guid_zero(const uint8_t *guid) {
+    if (!guid) return true;
+    for (uint32_t i = 0; i < 16u; ++i) {
+        if (guid[i] != 0u) return false;
+    }
+    return true;
+}
+
 static uint32_t fat32_read_u32_unaligned(const uint8_t *p)
 {
     return (uint32_t)p[0] |
            ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) |
            ((uint32_t)p[3] << 24);
+}
+
+static bool fat32_read_boot_sector_bpb_at_lba(uint64_t lba, FAT32_BPB *out_bpb) {
+    if (!out_bpb || lba > 0xFFFFFFFFULL) return false;
+    if (!disk_read((uint32_t)lba, g_sector_buffer, 1)) {
+        return false;
+    }
+    fat32_parse_bpb_from_sector(g_sector_buffer, out_bpb);
+    return true;
+}
+
+static bool fat32_try_init_at_lba(uint64_t lba) {
+    FAT32_BPB temp_bpb;
+    if (!fat32_read_boot_sector_bpb_at_lba(lba, &temp_bpb)) {
+        return false;
+    }
+
+    FAT32_BPB previous_bpb = bpb;
+    uint32_t previous_partition_lba = g_fat32_partition_lba;
+
+    bpb = temp_bpb;
+    if (!fat32_validate_bpb()) {
+        bpb = previous_bpb;
+        g_fat32_partition_lba = previous_partition_lba;
+        return false;
+    }
+
+    g_fat32_partition_lba = (uint32_t)lba;
+    g_cached_fat_sector = 0xFFFFFFFFu;
+    g_cluster_cache.cluster_value = 0;
+    return true;
+}
+
+static bool fat32_detect_partition_start(uint64_t *out_lba) {
+    if (!out_lba) return false;
+    if (!disk_read(0, g_sector_buffer, 1)) return false;
+
+    if (g_sector_buffer[510] != 0x55u || g_sector_buffer[511] != 0xAAu) {
+        return false;
+    }
+
+    bool protective_mbr = false;
+    for (uint32_t i = 0; i < 4u; ++i) {
+        uint32_t offset = 446u + i * 16u;
+        uint8_t  type   = g_sector_buffer[offset + 4u];
+        uint64_t start  = read_u32(&g_sector_buffer[offset + 8u]);
+
+        if (type == 0xEEu) {
+            protective_mbr = true;
+            continue;
+        }
+
+        if ((type == 0x0Bu || type == 0x0Cu) && start != 0u) {
+            if (fat32_try_init_at_lba(start)) {
+                *out_lba = start;
+                return true;
+            }
+        }
+    }
+
+    if (!protective_mbr) {
+        return false;
+    }
+
+    if (!disk_read(1, g_sector_buffer, 1)) {
+        return false;
+    }
+
+    if (memcmp(g_sector_buffer, "EFI PART", 8) != 0) {
+        return false;
+    }
+
+    uint32_t entries_lba      = read_u32(&g_sector_buffer[72]);
+    uint32_t num_entries      = read_u32(&g_sector_buffer[80]);
+    uint32_t entry_size       = read_u32(&g_sector_buffer[84]);
+    if (entry_size < 128u || entry_size > 4096u) {
+        return false;
+    }
+
+    uint32_t entries_per_sector = 512u / entry_size;
+    if (entries_per_sector == 0u) {
+        return false;
+    }
+
+    uint32_t sectors_to_read = (num_entries + entries_per_sector - 1u) / entries_per_sector;
+    for (uint32_t sector = 0u; sector < sectors_to_read; ++sector) {
+        if (!disk_read(entries_lba + sector, g_sector_buffer, 1)) {
+            return false;
+        }
+
+        for (uint32_t entry_index = 0u;
+             entry_index < entries_per_sector && entry_index * entry_size + 40u <= 512u;
+             ++entry_index) {
+            uint8_t *entry = g_sector_buffer + entry_index * entry_size;
+            if (is_guid_zero(entry)) {
+                continue;
+            }
+
+            uint64_t first_lba = read_u64(entry + 32u);
+            if (first_lba == 0u || first_lba > 0xFFFFFFFFULL) {
+                continue;
+            }
+
+            if (fat32_try_init_at_lba(first_lba)) {
+                *out_lba = first_lba;
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 static void fat32_write_u32_unaligned(uint8_t *p, uint32_t v)
@@ -1445,18 +1581,18 @@ static void fat32_write_cluster_to_entry(uint8_t *entry, uint32_t cluster) {
 
 static bool _fat32_init() {
     g_fat32_partition_lba = disk_get_partition_lba();
-
-    if (!fat32_read_boot_sector_bpb(&bpb)) {
-        return false;
+    if (fat32_read_boot_sector_bpb(&bpb) && fat32_validate_bpb()) {
+        g_cached_fat_sector = 0xFFFFFFFFu;
+        g_cluster_cache.cluster_value = 0;
+        return true;
     }
 
-    if (!fat32_validate_bpb()) {
-        return false;
+    uint64_t fallback_lba = 0;
+    if (fat32_detect_partition_start(&fallback_lba) && fat32_try_init_at_lba(fallback_lba)) {
+        return true;
     }
-    
-    g_cached_fat_sector = 0xFFFFFFFFu;
-    g_cluster_cache.cluster_value = 0;
-    return true;
+
+    return false;
 }
 
 bool fat32_init() {

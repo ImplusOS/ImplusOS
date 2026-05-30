@@ -46,8 +46,8 @@ static bool bot_execute_command(void *cbw_cb, uint8_t cb_len, uint8_t dir_in,
 
 static void bot_wait_ms(uint32_t ms)
 {
-    if (usb_get_hc_type() == USB_HC_XHCI) xhci_delay_ms(ms);
-    else                                   ehci_delay_ms(ms);
+    if (usb_get_hc_type() == USB_HC_XHCI) xhci_delay_ms(ms * 10);
+    else                                   ehci_delay_ms(ms * 10);
 }
 
 static bool bot_wait_ready(uint32_t max_attempts,

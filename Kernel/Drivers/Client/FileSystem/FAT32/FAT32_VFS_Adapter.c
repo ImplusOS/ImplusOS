@@ -85,6 +85,15 @@ static bool fat32_vfs_unlink(const char *path) {
     return fat32_unlink(path);
 }
 
+static bool fat32_vfs_close_file(vfs_file_t *file) {
+    if (!file || !file->driver_data) {
+        return false;
+    }
+    free(file->driver_data);
+    file->driver_data = NULL;
+    return true;
+}
+
 static const vfs_driver_t g_fat32_vfs_driver = {
     .fs_type = "fat32",
     .prefix = NULL,
@@ -100,6 +109,7 @@ static const vfs_driver_t g_fat32_vfs_driver = {
     .opendir = fat32_vfs_opendir,
     .readdir = fat32_vfs_readdir,
     .closedir = fat32_vfs_closedir,
+    .close_file = fat32_vfs_close_file,
     .unlink = fat32_vfs_unlink,
 };
 

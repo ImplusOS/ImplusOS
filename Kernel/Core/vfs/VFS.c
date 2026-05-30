@@ -116,6 +116,18 @@ uint32_t vfs_get_file_size(vfs_file_t *file) {
     return file->fs_driver->get_file_size(file);
 }
 
+bool vfs_close_file(vfs_file_t *file) {
+    if (!file || !file->fs_driver || !file->fs_driver->close_file) {
+        return false;
+    }
+    bool result = file->fs_driver->close_file(file);
+    file->driver_data = NULL;
+    file->internal_id = 0;
+    file->size = 0;
+    file->fs_driver = NULL;
+    return result;
+}
+
 bool vfs_creat(const char *path) {
     size_t best_match_len = 0;
     for (int i = 0; i < g_vfs_driver_count; i++) {

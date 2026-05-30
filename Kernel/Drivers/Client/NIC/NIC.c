@@ -6,7 +6,8 @@ static volatile uint32_t g_poll_pending = 0;
 
 static const driver_nic_t *get_nic_driver(void)
 {
-    return driver_manager_get_nic_driver();
+    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_NIC, NULL);
+    return device ? (const driver_nic_t *)device->ops : NULL;
 }
 
 bool nic_init(void)

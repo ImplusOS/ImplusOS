@@ -864,6 +864,12 @@ static bool xhci_enable_slot(uint8_t *slot_id_out)
     return true;
 }
 
+extern uint8_t g_enum_speed;
+extern uint8_t g_enum_parent_hub_addr;
+extern uint8_t g_enum_parent_port;
+extern uint8_t g_dev_root_port[256];
+extern uint32_t g_dev_route_string[256];
+
 static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
 {
     if (!g_ready)  { if (!g_api) return false; }
@@ -909,21 +915,43 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
     volatile uint32_t *slot_ctx = ic_ptr + (ctx_size / 4);
     volatile uint32_t *ep0_ctx  = ic_ptr + 2 * (ctx_size / 4);
 
+    uint32_t route_string = 0;
+    uint8_t root_port = port + 1;
+    uint8_t parent_slot = 0;
+    uint8_t parent_port = 0;
+
+    if (g_enum_parent_hub_addr != 0) {
+        parent_slot = g_slot_map[g_enum_parent_hub_addr];
+        parent_port = g_enum_parent_port;
+        root_port   = g_dev_root_port[g_enum_parent_hub_addr];
+        route_string = g_dev_route_string[0];
+    }
+
+    g_dev_root_port[dev_addr] = root_port;
+    g_dev_route_string[dev_addr] = route_string;
+    
+    uint8_t actual_speed = (g_enum_parent_hub_addr != 0) ? g_enum_speed : speed;
     uint32_t mps;
-    switch (speed) {
+    switch (actual_speed) {
     case 2:  mps = 8;   break;
     case 1:  mps = 64;  break;
     case 3:  mps = 64;  break;
     default: mps = 512; break;
     }
 
-    if (speed < 4) {
+    if (actual_speed < 4) {
         ic_ptr[0] = 0;
         ic_ptr[1] = (1u << 0) | (1u << 1);
 
-        slot_ctx[0] = (1u << 27) | ((uint32_t)(speed & 0xFu) << 20);
-        slot_ctx[1] = (uint32_t)(port + 1) << 16;
+        slot_ctx[0] = route_string | (1u << 27) | ((uint32_t)(actual_speed & 0xFu) << 20);
+        slot_ctx[1] = ((uint32_t)root_port << 16); 
         slot_ctx[2] = 0;
+        
+        if (actual_speed == 1 || actual_speed == 2) {
+            if (g_enum_parent_hub_addr != 0) {
+                slot_ctx[2] = ((uint32_t)parent_port << 8) | parent_slot;
+            }
+        }
         slot_ctx[3] = 0;
 
         ep0_ctx[0] = 0;
@@ -948,9 +976,14 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
     ic_ptr[0] = 0;
     ic_ptr[1] = (1u << 0) | (1u << 1);
 
-    slot_ctx[0] = (1u << 27) | ((uint32_t)(speed & 0xFu) << 20);
-    slot_ctx[1] = (uint32_t)(port + 1) << 16;
+    slot_ctx[0] = route_string | (1u << 27) | ((uint32_t)(actual_speed & 0xFu) << 20);
+    slot_ctx[1] = ((uint32_t)root_port << 16);
     slot_ctx[2] = 0;
+    if (actual_speed == 1 || actual_speed == 2) {
+        if (g_enum_parent_hub_addr != 0) {
+            slot_ctx[2] = ((uint32_t)parent_port << 8) | parent_slot;
+        }
+    }
     slot_ctx[3] = 0;
 
     ep0_ctx[0] = 0;
@@ -1076,6 +1109,9 @@ static bool xhci_configure_ep(uint8_t addr, uint8_t ep_addr, uint8_t ep_type,
     ep_ctx[2] = (uint32_t)(g_xfer[si][ep_idx].phys | 1u);
     ep_ctx[3] = (uint32_t)(g_xfer[si][ep_idx].phys >> 32);
     uint32_t max_esit_payload = 0;
+    if (xhci_ep_type != 4) {
+        max_esit_payload = max_packet_size;
+    }
     if (xhci_ep_type == 1 || xhci_ep_type == 5 || xhci_ep_type == 2 || xhci_ep_type == 6) {
         max_esit_payload = max_packet_size;
     }
