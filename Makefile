@@ -374,6 +374,7 @@ $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
 
 image: install_payload recovery_build
+	@mkdir -p $(IMAGE_DIR)
 	@rm -f $(IMAGE)
 
 	@dd if=/dev/zero of=$(IMAGE) bs=1M count=128 status=none
@@ -386,8 +387,8 @@ image: install_payload recovery_build
 	mmd -i $$PART_IMG ::/Kernel/Driver; \
 	mmd -i $$PART_IMG ::/Userland; \
 	mmd -i $$PART_IMG ::/Recovery; \
-	mmd -i $$PART_IMG ::/BootManager \
-	mmd -i $$PART_IMG ::/BootManager/Resource
+	mmd -i $$PART_IMG ::/BootManager; \
+	mmd -i $$PART_IMG ::/BootManager/Resource; \
 	\
 	mcopy -s -i $$PART_IMG $(abspath $(BOOTX64_EFI)) ::/EFI/BOOT/BOOTX64.EFI; \
 	mcopy -s -i $$PART_IMG $(abspath $(BOOTMANAGER_EFI)) ::/EFI/BOOT/BOOTMANAGER.EFI; \
