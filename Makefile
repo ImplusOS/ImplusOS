@@ -373,41 +373,32 @@ $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
 
 image: install_payload recovery_build
-	@mkdir -p $(IMAGE_DIR)
-	@rm -f $(IMAGE)
+	@mkdir -p $(IMAGE_DIR)/iso_root
+	@rm -f $(IMAGE_DIR)/ImplusOS.iso
 
-	@dd if=/dev/zero of=$(IMAGE) bs=1M count=128 status=none
-	@mformat -i $(IMAGE) -F -v "IMPLUSOS" ::
+	@mkdir -p $(IMAGE_DIR)/iso_root/EFI/BOOT
+	@mkdir -p $(IMAGE_DIR)/iso_root/Kernel
+	@mkdir -p $(IMAGE_DIR)/iso_root/Kernel/Driver
+	@mkdir -p $(IMAGE_DIR)/iso_root/Userland
+	@mkdir -p $(IMAGE_DIR)/iso_root/Recovery
+	@mkdir -p $(IMAGE_DIR)/iso_root/BootManager/Resource
 
-	@PART_IMG=$(IMAGE); \
-	mmd -i $$PART_IMG ::/EFI; \
-	mmd -i $$PART_IMG ::/EFI/BOOT; \
-	mmd -i $$PART_IMG ::/Kernel; \
-	mmd -i $$PART_IMG ::/Kernel/Driver; \
-	mmd -i $$PART_IMG ::/Userland; \
-	mmd -i $$PART_IMG ::/Recovery; \
-	mmd -i $$PART_IMG ::/BootManager; \
-	mmd -i $$PART_IMG ::/BootManager/Resource; \
-	\
-	mcopy -o -i $$PART_IMG $(BOOTX64_EFI)          ::/EFI/BOOT/BOOTX64.EFI; \
-	mcopy -o -i $$PART_IMG $(BOOTMANAGER_EFI)      ::/EFI/BOOT/BOOTMANAGER.EFI; \
-	mcopy -o -i $$PART_IMG $(BIOS_BOOTMANAGER_BIN) ::/BootManager/BootManager_BIOS.BIN; \
-	mcopy -o -i $$PART_IMG $(KERNEL_ELF)           ::/Kernel/Kernel_Main.ELF; \
-	mcopy -o -i $$PART_IMG $(RECOVERY_INIT_ELF)    ::/Userland/Userland.ELF; \
-	mcopy -o -i $$PART_IMG $(INSTALL_PAYLOAD_TGZ)  ::/Recovery/ImplusOS-root.tar.gz; \
-	mcopy -o -i $$PART_IMG $(INSTALL_DISK_IMAGE)   ::/Recovery/ImplusOS-install.img; \
-	mcopy -o -i $$PART_IMG $(INSTALL_MANIFEST)     ::/Recovery/MANIFEST.txt; \
-	\
-	mcopy -s -i $$PART_IMG $(BOOT_RESOURCE_DIR) ::/BootManager; \
-	\
-	for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
+	@cp $(BOOTX64_EFI)          $(IMAGE_DIR)/iso_root/EFI/BOOT/BOOTX64.EFI
+	@cp $(BOOTMANAGER_EFI)      $(IMAGE_DIR)/iso_root/EFI/BOOT/BOOTMANAGER.EFI
+	@cp $(KERNEL_ELF)           $(IMAGE_DIR)/iso_root/Kernel/Kernel_Main.ELF
+	@cp $(RECOVERY_INIT_ELF)    $(IMAGE_DIR)/iso_root/Userland/Userland.ELF
+	@cp $(INSTALL_PAYLOAD_TGZ)  $(IMAGE_DIR)/iso_root/Recovery/ImplusOS-root.tar.gz
+	@cp $(INSTALL_DISK_IMAGE)   $(IMAGE_DIR)/iso_root/Recovery/ImplusOS-install.img
+	@cp $(INSTALL_MANIFEST)     $(IMAGE_DIR)/iso_root/Recovery/MANIFEST.txt
+
+	@cp -r $(BOOT_RESOURCE_DIR) $(IMAGE_DIR)/iso_root/BootManager/
+
+	@for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
 		[ -e "$$f" ] || continue; \
-		mcopy -o -i $$PART_IMG "$$f" ::/Kernel/Driver/; \
+		cp "$$f" $(IMAGE_DIR)/iso_root/Kernel/Driver/; \
 	done
 
-	@echo "Creating hybrid ISO..."
-	@mkdir -p $(IMAGE_DIR)/iso_root
-	@cp $(IMAGE) $(IMAGE_DIR)/iso_root/boot.img
+	@echo "Creating bootable ISO..."
 
 	@xorriso -as mkisofs \
 		-o $(IMAGE_DIR)/ImplusOS.iso \
@@ -415,7 +406,7 @@ image: install_payload recovery_build
 		-full-iso9660-filenames \
 		-J -joliet-long \
 		-r \
-		-volid "ImplusOS 0.2 Beta Clesk" \
+		-volid "IMPLUSOS" \
 		$(IMAGE_DIR)/iso_root
 
 QEMU_COMMON = \
