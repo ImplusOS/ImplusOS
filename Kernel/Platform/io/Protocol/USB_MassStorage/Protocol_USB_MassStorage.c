@@ -9,8 +9,6 @@ bool usb_ms_init(uint64_t partition_lba) {
     (void)partition_lba;
     g_usb_ms_working = false;
 
-    driver_manager_input_usb_init();
-
     uint8_t probe_buf[512];
     if (!driver_manager_input_usb_read_sectors(0, probe_buf, 1)) {
         return false;

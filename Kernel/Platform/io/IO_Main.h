@@ -48,6 +48,19 @@ typedef enum {
     IO_PROTOCOL_TYPE_USB_MASS_STORAGE
 } io_protocol_type_t;
 
+typedef struct {
+    char disk_name[32];
+    char manufacturer[64];
+    char model[64];
+    io_protocol_type_t protocol;
+    uint64_t total_bytes;
+    uint32_t sector_size;
+    uint32_t flags;
+} io_disk_info_t;
+
+#define IO_DISK_FLAG_BOOT     (1u << 0)
+#define IO_DISK_FLAG_WRITABLE (1u << 1)
+
 void disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type);
 
 bool disk_read(uint32_t lba, uint8_t *buffer, uint32_t sectors);
@@ -55,3 +68,7 @@ bool disk_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors);
 bool disk_io_is_working(void);
 io_protocol_type_t disk_io_get_protocol(void);
 uint32_t disk_get_partition_lba(void);
+uint32_t disk_get_count(void);
+bool disk_get_info(uint32_t index, io_disk_info_t *out_info);
+bool disk_raw_read(uint32_t index, uint32_t lba, uint8_t *buffer, uint32_t sectors);
+bool disk_raw_write(uint32_t index, uint32_t lba, const uint8_t *buffer, uint32_t sectors);

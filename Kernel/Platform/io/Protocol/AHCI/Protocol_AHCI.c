@@ -20,7 +20,12 @@
 #define P_SERR  0x30u  
 #define P_CI    0x38u  
 
-#define ATAPI_SIG  0xEB140101u   
+#define SATA_SIG   0x00000101u
+#define ATAPI_SIG  0xEB140101u
+#define ATA_CMD_READ_DMA_EXT  0x25u
+#define ATA_CMD_WRITE_DMA_EXT 0x35u
+#define AHCI_DMA_SECTORS 64u
+#define AHCI_SECTOR_SIZE 512u
 
 
 typedef struct __attribute__((packed)) {
@@ -49,11 +54,12 @@ typedef struct __attribute__((packed)) {
 static ahci_cmd_hdr_t   s_clb[32]  __attribute__((aligned(1024)));
 static uint8_t          s_fis[256] __attribute__((aligned(256)));
 static ahci_cmd_table_t s_ctbl     __attribute__((aligned(128)));
-static uint8_t          s_dma[2048] __attribute__((aligned(2048)));
+static uint8_t          s_dma[AHCI_DMA_SECTORS * AHCI_SECTOR_SIZE] __attribute__((aligned(4096)));
 
 static uint32_t g_abar    = 0;
 static int      g_port    = -1;
 static bool     g_working = false;
+static bool     g_atapi   = false;
 
 
 static uint32_t g_cached_block = 0xFFFFFFFFu;
@@ -176,9 +182,77 @@ static bool atapi_read_one(uint32_t lba2048) {
     return false;  
 }
 
+static bool sata_dma_rw(uint32_t lba, uint32_t sectors, bool write) {
+    if (sectors == 0 || sectors > AHCI_DMA_SECTORS) return false;
+
+    for (uint32_t t = 1000000u; t; --t) {
+        uint32_t tfd = port_rd(g_port, P_TFD);
+        if (!((tfd & 0x80u) || (tfd & 0x08u))) break;
+        if (t == 1u) return false;
+    }
+
+    for (uint32_t t = 1000000u; t; --t) {
+        if (!port_rd(g_port, P_CI)) break;
+        if (t == 1u) return false;
+    }
+
+    port_wr(g_port, P_SERR, port_rd(g_port, P_SERR));
+    port_wr(g_port, P_IS,   port_rd(g_port, P_IS));
+
+    memset(&s_ctbl, 0, sizeof(s_ctbl));
+    s_clb[0].flags = (5u & 0x1Fu) | (write ? (1u << 6) : 0u);
+    s_clb[0].prdtl = 1u;
+    s_clb[0].prdbc = 0u;
+
+    s_ctbl.cfis[0] = 0x27u;
+    s_ctbl.cfis[1] = 0x80u;
+    s_ctbl.cfis[2] = write ? ATA_CMD_WRITE_DMA_EXT : ATA_CMD_READ_DMA_EXT;
+    s_ctbl.cfis[4] = (uint8_t)(lba & 0xFFu);
+    s_ctbl.cfis[5] = (uint8_t)((lba >> 8) & 0xFFu);
+    s_ctbl.cfis[6] = (uint8_t)((lba >> 16) & 0xFFu);
+    s_ctbl.cfis[7] = 0x40u;
+    s_ctbl.cfis[8] = (uint8_t)((lba >> 24) & 0xFFu);
+    s_ctbl.cfis[9] = 0u;
+    s_ctbl.cfis[10] = 0u;
+    s_ctbl.cfis[12] = (uint8_t)(sectors & 0xFFu);
+    s_ctbl.cfis[13] = (uint8_t)((sectors >> 8) & 0xFFu);
+
+    s_ctbl.prdt[0].dba  = (uint32_t)(uintptr_t)s_dma;
+    s_ctbl.prdt[0].dbau = 0u;
+    s_ctbl.prdt[0].dbc  = ((sectors * AHCI_SECTOR_SIZE) - 1u) | (1u << 31);
+
+    port_wr(g_port, P_CI, 1u);
+
+    for (uint32_t t = 10000000u; t; --t) {
+        uint32_t ci = port_rd(g_port, P_CI);
+        uint32_t is = port_rd(g_port, P_IS);
+        if (is & (1u << 30)) {
+            port_wr(g_port, P_IS, is);
+            return false;
+        }
+        if ((ci & 1u) == 0u) {
+            port_wr(g_port, P_IS, is);
+            return true;
+        }
+    }
+    return false;
+}
 
 bool ahci_read(uint32_t lba_512, uint8_t *buffer, uint32_t sectors_512) {
     if (!buffer || sectors_512 == 0) return false;
+
+    if (!g_atapi) {
+        uint32_t done = 0;
+        while (done < sectors_512) {
+            uint32_t chunk = sectors_512 - done;
+            if (chunk > AHCI_DMA_SECTORS) chunk = AHCI_DMA_SECTORS;
+            if (!sata_dma_rw(lba_512 + done, chunk, false)) return false;
+            memcpy(buffer + done * AHCI_SECTOR_SIZE, s_dma, chunk * AHCI_SECTOR_SIZE);
+            done += chunk;
+        }
+        g_working = true;
+        return true;
+    }
 
     for (uint32_t s = 0; s < sectors_512; ++s) {
         uint32_t byte_off     = (lba_512 + s) * 512u;
@@ -195,8 +269,19 @@ bool ahci_read(uint32_t lba_512, uint8_t *buffer, uint32_t sectors_512) {
 }
 
 bool ahci_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors) {
-    (void)lba; (void)buffer; (void)sectors;
-    return false;   
+    if (!buffer || sectors == 0) return false;
+    if (g_atapi) return false;
+
+    uint32_t done = 0;
+    while (done < sectors) {
+        uint32_t chunk = sectors - done;
+        if (chunk > AHCI_DMA_SECTORS) chunk = AHCI_DMA_SECTORS;
+        memcpy(s_dma, buffer + done * AHCI_SECTOR_SIZE, chunk * AHCI_SECTOR_SIZE);
+        if (!sata_dma_rw(lba + done, chunk, true)) return false;
+        done += chunk;
+    }
+    g_working = true;
+    return true;
 }
 
 bool ahci_is_working(void) { return g_working; }
@@ -206,6 +291,7 @@ bool ahci_init(uint64_t partition_lba) {
     g_working      = false;
     g_port         = -1;
     g_abar         = 0;
+    g_atapi        = false;
     g_cached_block = 0xFFFFFFFFu;
 
     
@@ -251,23 +337,36 @@ bool ahci_init(uint64_t partition_lba) {
 
                     for (int spin = 0; spin < 1000; spin++) {
                         uint32_t sig = port_rd(p, P_SIG);
-                        if (sig == ATAPI_SIG) break;
+                        if (sig == ATAPI_SIG || sig == SATA_SIG) break;
                         
                         for (volatile int delay = 0; delay < 10000; delay++);
                     }
-                    
-                    if (port_rd(p, P_SIG) != ATAPI_SIG) {
+
+                    uint32_t sig = port_rd(p, P_SIG);
+                    if (sig == SATA_SIG) {
+                        g_atapi = false;
+                        if (!sata_dma_rw(0u, 1u, false)) {
+                            port_stop(p);
+                            g_port = -1;
+                            continue;
+                        }
+                        g_working = true;
+                        return true;
+                    }
+
+                    if (sig != ATAPI_SIG) {
                         port_stop(p);
                         g_port = -1;
                         continue;
                     }
 
+                    g_atapi = true;
                     if (!atapi_read_one(0u)) {
                         port_stop(p);
                         g_port = -1;
+                        g_atapi = false;
                         continue;
                     }
-
                     g_working = true;
                     return true;
                 }

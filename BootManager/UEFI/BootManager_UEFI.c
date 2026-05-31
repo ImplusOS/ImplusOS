@@ -98,6 +98,23 @@ static void IsoNormalizeName(char *name) {
     if (Len > 0 && name[Len - 1] == '.') name[Len - 1] = 0;
 }
 
+static void UefiNormalizeName(CHAR16 *name) {
+    if (!name) return;
+
+    UINTN len = 0;
+    while (name[len] != 0) {
+        if (name[len] == L';') {
+            name[len] = 0;
+            break;
+        }
+        ++len;
+    }
+
+    if (len > 0 && name[len - 1] == L'.') {
+        name[len - 1] = 0;
+    }
+}
+
 static void IsoGetDirectoryRecordName(ISO9660_DIR_RECORD *rec, UINT8 *record_end, char *out, UINTN out_size) {
     if (!out || out_size == 0) return;
     out[0] = 0;
@@ -1109,6 +1126,8 @@ static EFI_STATUS PreloadDriverModules(
 
         EFI_FILE_INFO *FileInfo = (EFI_FILE_INFO *)InfoBuf;
         if (FileInfo->Attribute & EFI_FILE_DIRECTORY) continue;
+
+        UefiNormalizeName(FileInfo->FileName);
         if (!StrEndsWith_ELF(FileInfo->FileName)) continue;
 
         CHAR16        FullPath[256];

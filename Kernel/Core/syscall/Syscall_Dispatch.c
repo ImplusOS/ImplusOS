@@ -29,6 +29,7 @@ typedef struct {
 #include "Drivers/RTC/RTC.h"
 #include "Core/vfs/VFS.h"
 #include "kernel/config.h"
+#include "Platform/io/IO_Main.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -131,6 +132,8 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
         case SYSCALL_FILE_PIPE:
         case SYSCALL_FILE_DUP:
         case SYSCALL_FILE_DUP2:
+        case SYSCALL_RAW_BLOCK_READ:
+        case SYSCALL_RAW_BLOCK_WRITE:
             return PROCESS_CAP_FILE;
 
         case SYSCALL_USER_MMAP:
@@ -174,6 +177,7 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
         case SYSCALL_GETCWD:
         case SYSCALL_GET_PROC_COUNT:
         case SYSCALL_GET_PROC_INFO:
+        case SYSCALL_GET_DISK_COUNT:
         default:
             return 0;
     }
@@ -1346,6 +1350,45 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             }
             os_status_t status = sysinfo_get_disk_info(index, (system_disk_info_t *)info_out);
             set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_DISK_COUNT: {
+            extern os_status_t sysinfo_get_disk_count(uint32_t *);
+            void *count_out = (void *)(uintptr_t)arg1;
+            if (!user_buffer_ok(count_out, sizeof(uint32_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_disk_count_buffer");
+                break;
+            }
+            os_status_t status = sysinfo_get_disk_count((uint32_t *)count_out);
+            set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_RAW_BLOCK_READ:
+        case SYSCALL_RAW_BLOCK_WRITE: {
+            uint32_t disk_index = (uint32_t)arg1;
+            uint32_t lba = (uint32_t)arg2;
+            void *buffer = (void *)(uintptr_t)arg3;
+            uint32_t sectors = (uint32_t)arg4;
+            uint64_t byte_count = (uint64_t)sectors * 512ULL;
+
+            if ((uint64_t)sectors != arg4 || byte_count > SYSCALL_MAX_IO_BYTES) {
+                syscall_fail(saved_rsp, num, OS_STATUS_INVALID_ARG, "invalid_raw_block_size");
+                break;
+            }
+            if (sectors != 0 && !user_buffer_ok(buffer, byte_count)) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_raw_block_buffer");
+                break;
+            }
+
+            bool ok;
+            if (num == SYSCALL_RAW_BLOCK_READ) {
+                ok = disk_raw_read(disk_index, lba, (uint8_t *)buffer, sectors);
+            } else {
+                ok = disk_raw_write(disk_index, lba, (const uint8_t *)buffer, sectors);
+            }
+            set_syscall_status(saved_rsp, ok ? OS_STATUS_OK : OS_STATUS_IO_ERROR);
             break;
         }
 

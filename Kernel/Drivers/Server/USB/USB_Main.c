@@ -6,6 +6,7 @@
 #include "MassStorage/MassStorage.h"
 #include "HID/USB_HID.h"
 #include "Drivers/Module/DriverBinary.h"
+#include "Debug/serial/Serial.h"
 
 const driver_binary_t *g_api = NULL;
 
@@ -421,12 +422,13 @@ static bool usb_enumerate_hub(uint8_t hub_addr, uint16_t max_packet_size, uint8_
     return true;
 }
 
+extern bool xhci_is_ready(void);
+
 void usb_core_init(void)
 {
     usb_wait_ms(g_hc_type, 20);
 
     uint8_t next_addr = 1;
-    bool any_device = false;
 
     g_mass_storage_addr = 0;
     g_mass_storage_ep_in = 0;
@@ -445,108 +447,92 @@ void usb_core_init(void)
     g_hid_mouse_ep_in = 0;
     g_hid_mouse_ep_mps = 0;
 
-    uint32_t num_ports = 0;
-    if      (g_hc_type == USB_HC_EHCI) num_ports = ehci_get_num_ports();
-    else if (g_hc_type == USB_HC_OHCI) num_ports = ohci_get_num_ports();
-    else if (g_hc_type == USB_HC_UHCI) num_ports = uhci_get_num_ports();
-    else if (g_hc_type == USB_HC_XHCI) num_ports = xhci_get_num_ports();
+    usb_hc_type_t hc_types[] = { USB_HC_XHCI, USB_HC_EHCI, USB_HC_OHCI, USB_HC_UHCI };
 
-    if (num_ports == 0) {
-        return;
-    }
+    for (int t = 0; t < 4; t++) {
+        usb_hc_type_t cur_hc = hc_types[t];
+        uint32_t num_ports = 0;
 
-    for (uint32_t i = 0; i < num_ports; i++) {
-        bool port_valid = false;
-        if      (g_hc_type == USB_HC_EHCI) port_valid = ehci_port_valid(i);
-        else if (g_hc_type == USB_HC_OHCI) port_valid = ohci_port_valid(i);
-        else if (g_hc_type == USB_HC_UHCI) port_valid = uhci_port_valid(i);
-        else if (g_hc_type == USB_HC_XHCI) port_valid = xhci_port_valid(i);
-        if (!port_valid) {
+        if (cur_hc == USB_HC_XHCI && xhci_is_ready()) {
+            num_ports = xhci_get_num_ports();
+        } else if (cur_hc == USB_HC_EHCI && ehci_get_num_ports() > 0) {
+            num_ports = ehci_get_num_ports();
+        } else if (cur_hc == USB_HC_OHCI && g_ohci_ready) {
+            num_ports = ohci_get_num_ports();
+        } else if (cur_hc == USB_HC_UHCI && g_uhci_ready) {
+            num_ports = uhci_get_num_ports();
+        }
+
+        if (num_ports == 0) {
             continue;
         }
 
-        usb_hc_type_t port_hc = g_hc_type;
-        bool port_ok = false;
-
-        if (g_hc_type == USB_HC_EHCI) {
-            port_ok = ehci_reset_port(i);
-            if (!port_ok && g_ohci_ready && ohci_reset_port(i)) {
-                port_hc = USB_HC_OHCI;
-                port_ok = true;
+        for (uint32_t i = 0; i < num_ports; i++) {
+            bool port_valid = false;
+            if      (cur_hc == USB_HC_EHCI) port_valid = ehci_port_valid(i);
+            else if (cur_hc == USB_HC_OHCI) port_valid = ohci_port_valid(i);
+            else if (cur_hc == USB_HC_UHCI) port_valid = uhci_port_valid(i);
+            else if (cur_hc == USB_HC_XHCI) port_valid = xhci_port_valid(i);
+            if (!port_valid) {
+                continue;
             }
-            if (!port_ok && g_uhci_ready && uhci_reset_port(i)) {
-                port_hc = USB_HC_UHCI;
-                port_ok = true;
+
+            bool port_ok = false;
+            if (cur_hc == USB_HC_EHCI) {
+                port_ok = ehci_reset_port(i);
+            } else if (cur_hc == USB_HC_OHCI) {
+                port_ok = ohci_reset_port(i);
+            } else if (cur_hc == USB_HC_UHCI) {
+                port_ok = uhci_reset_port(i);
+            } else if (cur_hc == USB_HC_XHCI) {
+                port_ok = xhci_reset_port(i);
             }
-        } else if (g_hc_type == USB_HC_OHCI) {
-            port_ok = ohci_reset_port(i);
-        } else if (g_hc_type == USB_HC_UHCI) {
-            port_ok = uhci_reset_port(i);
-        } else if (g_hc_type == USB_HC_XHCI) {
-            port_ok = xhci_reset_port(i);
-        }
 
-        if (!port_ok) {
-            continue;
-        }
-
-        usb_wait_ms(port_hc, 30);
-
-        bool connected = false;
-        if      (port_hc == USB_HC_EHCI) connected = ehci_port_connected(i);
-        else if (port_hc == USB_HC_OHCI) connected = ohci_port_connected(i);
-        else if (port_hc == USB_HC_UHCI) connected = uhci_port_connected(i);
-        else if (port_hc == USB_HC_XHCI) connected = xhci_port_connected(i);
-        if (!connected) {
-            continue;
-        }
-
-        uint8_t current_addr = next_addr++;
-
-        g_default_hc = port_hc;
-        g_dev_hc[0] = port_hc;
-
-        if (!usb_set_address(0, current_addr)) {
-            continue;
-        }
-
-        usb_wait_ms(port_hc, 10);
-        g_dev_hc[current_addr] = port_hc;
-
-        any_device = true;
-
-        uint16_t ep0_mps = 64;
-
-        usb_device_descriptor_t desc = {0};
-        if (usb_get_device_descriptor(current_addr, &desc)) {
-            ep0_mps = usb_device_max_packet_size(desc.bMaxPacketSize0);
-
-            if (port_hc == USB_HC_XHCI) {
-                xhci_evaluate_ep0_mps(current_addr, ep0_mps);
+            if (!port_ok) {
+                continue;
             }
-        }
 
-        usb_enumerate_device(
-            current_addr,
-            port_hc,
-            ep0_mps,
-            &next_addr
-        );
-    }
+            usb_wait_ms(cur_hc, 30);
 
-    if (!any_device && g_hc_type == USB_HC_EHCI) {
-        if (g_ohci_ready) {
-            g_hc_type = USB_HC_OHCI;
-            g_default_hc = USB_HC_NONE;
-            if (g_api) g_api->memset(g_dev_hc, 0, sizeof(g_dev_hc));
-            usb_core_init();
-            return;
-        } else if (g_uhci_ready) {
-            g_hc_type = USB_HC_UHCI;
-            g_default_hc = USB_HC_NONE;
-            if (g_api) g_api->memset(g_dev_hc, 0, sizeof(g_dev_hc));
-            usb_core_init();
-            return;
+            bool connected = false;
+            if      (cur_hc == USB_HC_EHCI) connected = ehci_port_connected(i);
+            else if (cur_hc == USB_HC_OHCI) connected = ohci_port_connected(i);
+            else if (cur_hc == USB_HC_UHCI) connected = uhci_port_connected(i);
+            else if (cur_hc == USB_HC_XHCI) connected = xhci_port_connected(i);
+            
+            if (!connected) {
+                continue;
+            }
+
+            uint8_t current_addr = next_addr++;
+
+            g_default_hc = cur_hc;
+            g_dev_hc[0] = cur_hc;
+
+            if (!usb_set_address(0, current_addr)) {
+                continue;
+            }
+
+            usb_wait_ms(cur_hc, 10);
+            g_dev_hc[current_addr] = cur_hc;
+
+            uint16_t ep0_mps = 64;
+
+            usb_device_descriptor_t desc = {0};
+            if (usb_get_device_descriptor(current_addr, &desc)) {
+                ep0_mps = usb_device_max_packet_size(desc.bMaxPacketSize0);
+
+                if (cur_hc == USB_HC_XHCI) {
+                    xhci_evaluate_ep0_mps(current_addr, ep0_mps);
+                }
+            }
+
+            usb_enumerate_device(
+                current_addr,
+                cur_hc,
+                ep0_mps,
+                &next_addr
+            );
         }
     }
 }
@@ -682,9 +668,20 @@ static void usb_module_init_internal(void)
         usb_set_hc_type(USB_HC_UHCI);
     }
     
-    usb_core_init();
     usb_hid_init();
+    usb_core_init();
     bot_init();
+    
+    if (g_hid_kbd_addr) {
+        g_api->serial_write_string("USB: HID keyboard found\n");
+    } else {
+        g_api->serial_write_string("USB: HID keyboard NOT found\n");
+    }
+    if (g_hid_mouse_addr) {
+        g_api->serial_write_string("USB: HID mouse found\n");
+    } else {
+        g_api->serial_write_string("USB: HID mouse NOT found\n");
+    }
 }
 
 static const usb_master_vtable_t g_usb_vtable = {

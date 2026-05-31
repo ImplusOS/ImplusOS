@@ -12,6 +12,7 @@
 #include "API/Input.h"
 #include "API/Window.h"
 #include "API/Serial.h"
+#include "API/SystemInfo.h"
 
 static uint32_t g_current_window_id = 0;
 static uint32_t g_wm_request_id = 0;
@@ -1263,6 +1264,9 @@ void *kvm_mmap(int32_t fd, uint64_t offset, uint64_t size)
 #define SYSCALL_GET_GRAPHICS_INFO 205ULL
 #define SYSCALL_GET_ARCH_INFO     206ULL
 #define SYSCALL_GET_SYSTEM_INFO   207ULL
+#define SYSCALL_GET_DISK_COUNT    216ULL
+#define SYSCALL_RAW_BLOCK_READ    217ULL
+#define SYSCALL_RAW_BLOCK_WRITE   218ULL
 
 int64_t os_get_cpu_info(system_cpu_info_t *out_info)
 {
@@ -1293,16 +1297,7 @@ int64_t os_get_disk_count(uint32_t *out_count)
     if (out_count == NULL) {
         return -22;
     }
-    
-    system_disk_info_t temp;
-    int64_t status = syscall2(SYSCALL_GET_DISK_INFO, 0, (uint64_t)(uintptr_t)&temp);
-    if (os_status_is_error(status)) {
-        *out_count = 0;
-        return status;
-    }
-    
-    *out_count = 1;
-    return 0;
+    return syscall1(SYSCALL_GET_DISK_COUNT, (uint64_t)(uintptr_t)out_count);
 }
 
 int64_t os_get_disk_info(uint32_t index, system_disk_info_t *out_info)
@@ -1311,6 +1306,30 @@ int64_t os_get_disk_info(uint32_t index, system_disk_info_t *out_info)
         return -22;
     }
     return syscall2(SYSCALL_GET_DISK_INFO, (uint64_t)index, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_raw_block_read(uint32_t disk_index, uint32_t lba, void *buffer, uint32_t sectors)
+{
+    if (buffer == NULL && sectors != 0) {
+        return -22;
+    }
+    return syscall4(SYSCALL_RAW_BLOCK_READ,
+                    (uint64_t)disk_index,
+                    (uint64_t)lba,
+                    (uint64_t)(uintptr_t)buffer,
+                    (uint64_t)sectors);
+}
+
+int64_t os_raw_block_write(uint32_t disk_index, uint32_t lba, const void *buffer, uint32_t sectors)
+{
+    if (buffer == NULL && sectors != 0) {
+        return -22;
+    }
+    return syscall4(SYSCALL_RAW_BLOCK_WRITE,
+                    (uint64_t)disk_index,
+                    (uint64_t)lba,
+                    (uint64_t)(uintptr_t)buffer,
+                    (uint64_t)sectors);
 }
 
 int64_t os_get_device_count(uint32_t *out_count)

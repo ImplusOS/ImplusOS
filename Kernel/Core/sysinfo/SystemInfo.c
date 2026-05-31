@@ -1,5 +1,6 @@
 #include "SystemInfo.h"
 #include "Drivers/Client/PCI/PCI_Main.h"
+#include "Platform/io/IO_Main.h"
 #include "kernel/config.h"
 #include "Core/sync/Spinlock.h"
 #include <stddef.h>
@@ -141,6 +142,21 @@ static system_device_type_t sysinfo_classify_pci_device(uint8_t class_code, uint
     }
 }
 
+static void sysinfo_copy_string(char *dst, size_t dst_size, const char *src)
+{
+    if (dst == NULL || dst_size == 0) {
+        return;
+    }
+
+    size_t i = 0;
+    if (src != NULL) {
+        for (; i + 1 < dst_size && src[i]; i++) {
+            dst[i] = src[i];
+        }
+    }
+    dst[i] = '\0';
+}
+
 os_status_t sysinfo_get_cpu_info(system_cpu_info_t *out_info)
 {
     if (out_info == NULL) {
@@ -231,7 +247,7 @@ os_status_t sysinfo_get_disk_count(uint32_t *out_count)
         return OS_STATUS_INVALID_ARG;
     }
     
-    *out_count = 1;
+    *out_count = disk_get_count();
     return OS_STATUS_OK;
 }
 
@@ -241,33 +257,21 @@ os_status_t sysinfo_get_disk_info(uint32_t index, system_disk_info_t *out_info)
         return OS_STATUS_INVALID_ARG;
     }
     
-    if (index >= 1) {
+    io_disk_info_t disk_info;
+    if (!disk_get_info(index, &disk_info)) {
         return OS_STATUS_NOT_FOUND;
     }
-    
-    out_info->total_bytes = 10ULL * 1024ULL * 1024ULL * 1024ULL;
-    out_info->used_bytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
-    out_info->free_bytes = out_info->total_bytes - out_info->used_bytes;
-    out_info->sector_size = 512;
-    
-    const char *name = "vda";
-    const char *manufacturer = "QEMU";
-    const char *model = "QEMU HARDDISK";
-    
-    for (size_t i = 0; i < sizeof(out_info->disk_name) - 1 && name[i]; i++) {
-        out_info->disk_name[i] = name[i];
-    }
-    out_info->disk_name[sizeof(out_info->disk_name) - 1] = '\0';
-    
-    for (size_t i = 0; i < sizeof(out_info->manufacturer) - 1 && manufacturer[i]; i++) {
-        out_info->manufacturer[i] = manufacturer[i];
-    }
-    out_info->manufacturer[sizeof(out_info->manufacturer) - 1] = '\0';
-    
-    for (size_t i = 0; i < sizeof(out_info->model) - 1 && model[i]; i++) {
-        out_info->model[i] = model[i];
-    }
-    out_info->model[sizeof(out_info->model) - 1] = '\0';
+
+    out_info->total_bytes = disk_info.total_bytes;
+    out_info->used_bytes = 0;
+    out_info->free_bytes = 0;
+    out_info->sector_size = disk_info.sector_size;
+    out_info->protocol = (uint32_t)disk_info.protocol;
+    out_info->flags = disk_info.flags;
+
+    sysinfo_copy_string(out_info->disk_name, sizeof(out_info->disk_name), disk_info.disk_name);
+    sysinfo_copy_string(out_info->manufacturer, sizeof(out_info->manufacturer), disk_info.manufacturer);
+    sysinfo_copy_string(out_info->model, sizeof(out_info->model), disk_info.model);
     
     return OS_STATUS_OK;
 }

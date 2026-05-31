@@ -36,10 +36,6 @@ static uint32_t g_mouse_poll_count = 0;
 
 void usb_hid_init(void)
 {
-    if ((g_usd_kbd.valid && g_usd_kbd.dma_buf) ||
-        (g_usd_mouse.valid && g_usd_mouse.dma_buf)) {
-        return;
-    }
     g_usd_kbd.valid     = false;
     g_usd_kbd.dma_buf   = NULL;
     g_usd_kbd.pending   = false;

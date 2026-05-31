@@ -151,7 +151,14 @@ uint32_t uhci_get_num_ports(void) {
 bool uhci_reset_port(uint32_t port) {
     if (!g_ready || !uhci_port_valid(port)) return false;
     uint16_t portsc = (uint16_t)(g_io_base + UHCI_REG_PORTSC1 + (port * 2));
-    uint16_t v = io_inw(portsc);
+    uint16_t v = 0;
+    
+    for (int i = 0; i < 50; i++) {
+        v = io_inw(portsc);
+        if (v & 1u) break;
+        uhci_delay_ms(1);
+    }
+    
     if ((v & 1u) == 0) return false;
 
     io_outw(portsc, v | (1u << 9));

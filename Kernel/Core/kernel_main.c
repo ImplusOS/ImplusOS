@@ -198,6 +198,9 @@ void kernel_main(BOOT_INFO *boot_info) {
     };
     driver_select_set_boot_framebuffer(&boot_fb);
     debugger_init(boot_info);
+
+    driver_manager_input_usb_init();
+    driver_manager_input_ps2_init();
     
     disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType);
 

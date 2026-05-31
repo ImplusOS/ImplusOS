@@ -42,7 +42,12 @@ typedef struct __attribute__((packed)) {
     char manufacturer[64];
     char model[64];
     uint32_t sector_size;
+    uint32_t protocol;
+    uint32_t flags;
 } system_disk_info_t;
+
+#define SYSTEM_DISK_FLAG_BOOT     (1u << 0)
+#define SYSTEM_DISK_FLAG_WRITABLE (1u << 1)
 
 typedef enum {
     SYSTEM_DEVICE_UNKNOWN = 0,
@@ -107,6 +112,8 @@ int64_t os_get_memory_info(system_memory_info_t *out_info);
 int64_t os_get_vmem_info(system_vmem_info_t *out_info);
 int64_t os_get_disk_count(uint32_t *out_count);
 int64_t os_get_disk_info(uint32_t index, system_disk_info_t *out_info);
+int64_t os_raw_block_read(uint32_t disk_index, uint32_t lba, void *buffer, uint32_t sectors);
+int64_t os_raw_block_write(uint32_t disk_index, uint32_t lba, const void *buffer, uint32_t sectors);
 int64_t os_get_device_count(uint32_t *out_count);
 int64_t os_get_device_info(uint32_t index, system_device_t *out_info);
 int64_t os_get_graphics_info(system_graphics_info_t *out_info);

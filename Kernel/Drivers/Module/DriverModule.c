@@ -10,6 +10,7 @@
 #include "mmu/Paging_Main.h"
 #include "Debug/serial/Serial.h"
 #include "Core/timer/Timer.h"
+#include "Debug/printf/printf.h"
 #include "Network/network_main.h"
 
 #include <stddef.h>
@@ -220,7 +221,7 @@ void driver_module_manager_init(const BOOT_INFO *boot_info)
         if (file->PhysAddr == 0u || file->Size == 0u || file->Name[0] == '\0') {
             continue;
         }
-
+        
         const void *src_ptr = (const void *)(uintptr_t)file->PhysAddr;
         if (file->PhysAddr >= (1ULL << 32)) {
             src_ptr = map_mmio_virt(file->PhysAddr);
@@ -345,6 +346,7 @@ static bool driver_module_activate(module_state_t *state)
     if (state == NULL || state->present == 0u) {
         return false;
     }
+
 
     for (uint32_t i = 0; i < driver_module_dependency_count(state->name); ++i) {
         const char *dependency = driver_module_dependency_name(state->name, i);

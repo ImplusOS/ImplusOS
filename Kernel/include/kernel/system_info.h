@@ -42,6 +42,8 @@ typedef struct __attribute__((packed)) {
     char manufacturer[64];
     char model[64];
     uint32_t sector_size;
+    uint32_t protocol;
+    uint32_t flags;
 } system_disk_info_t;
 
 typedef enum {
