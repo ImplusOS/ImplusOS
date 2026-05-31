@@ -286,6 +286,10 @@ bool ahci_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors) {
 
 bool ahci_is_working(void) { return g_working; }
 
+uint32_t ahci_get_device_count(void) { return g_port >= 0 ? 1 : 0; }
+bool ahci_select_device(uint32_t index) { return index == 0; }
+uint64_t ahci_get_total_bytes(void) { return 0; }
+
 bool ahci_init(uint64_t partition_lba) {
     (void)partition_lba;   
     g_working      = false;

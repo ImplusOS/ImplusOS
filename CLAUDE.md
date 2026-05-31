@@ -62,7 +62,7 @@ sudo apt install -y build-essential nasm binutils gnu-efi \
 | `make app_build` | Build all userland applications |
 | `make driver_build` | Build all driver modules |
 | `make driver_stage` | Build drivers + copy ELFs to staging directory |
-| `make image_esp` | Build full hybrid ISO image (`Image/ImplusOS.iso`) |
+| `make image` | Build full hybrid ISO image (`Image/ImplusOS.iso`) |
 | `make run_uefi_usb` | Launch QEMU with UEFI USB boot |
 | `make run_uefi_cdrom`| Launch QEMU with UEFI CD-ROM boot |
 | `make run_bios_usb` | Launch QEMU with BIOS USB boot |

@@ -7,6 +7,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "kernel/keycodes.h"
+#include "kernel/input_utils.h"
 
 static const driver_binary_t *g_driver_api = NULL;
 
@@ -262,156 +264,41 @@ static int mouse_queue_pop(driver_mouse_event_t *event_out)
     return 1;
 }
 
-
-
-static char keyboard_scancode_to_ascii(uint16_t keycode, uint8_t modifiers)
-{
-    if ((keycode & 0xFF00u) != 0u) {
-        return 0;
-    }
-
-    uint8_t scancode = (uint8_t)keycode;
-    int shift = (modifiers & DRIVER_KBD_MOD_SHIFT) != 0u;
-    int caps = (modifiers & DRIVER_KBD_MOD_CAPS) != 0u;
-    int alpha_upper = shift ^ caps;
-
-    switch (scancode) {
-    case 0x01: return 0x1B;
-    case 0x1E: return alpha_upper ? 'A' : 'a';
-    case 0x30: return alpha_upper ? 'B' : 'b';
-    case 0x2E: return alpha_upper ? 'C' : 'c';
-    case 0x20: return alpha_upper ? 'D' : 'd';
-    case 0x12: return alpha_upper ? 'E' : 'e';
-    case 0x21: return alpha_upper ? 'F' : 'f';
-    case 0x22: return alpha_upper ? 'G' : 'g';
-    case 0x23: return alpha_upper ? 'H' : 'h';
-    case 0x17: return alpha_upper ? 'I' : 'i';
-    case 0x24: return alpha_upper ? 'J' : 'j';
-    case 0x25: return alpha_upper ? 'K' : 'k';
-    case 0x26: return alpha_upper ? 'L' : 'l';
-    case 0x32: return alpha_upper ? 'M' : 'm';
-    case 0x31: return alpha_upper ? 'N' : 'n';
-    case 0x18: return alpha_upper ? 'O' : 'o';
-    case 0x19: return alpha_upper ? 'P' : 'p';
-    case 0x10: return alpha_upper ? 'Q' : 'q';
-    case 0x13: return alpha_upper ? 'R' : 'r';
-    case 0x1F: return alpha_upper ? 'S' : 's';
-    case 0x14: return alpha_upper ? 'T' : 't';
-    case 0x16: return alpha_upper ? 'U' : 'u';
-    case 0x2F: return alpha_upper ? 'V' : 'v';
-    case 0x11: return alpha_upper ? 'W' : 'w';
-    case 0x2D: return alpha_upper ? 'X' : 'x';
-    case 0x15: return alpha_upper ? 'Y' : 'y';
-    case 0x2C: return alpha_upper ? 'Z' : 'z';
-    case 0x39: return ' ';
-    case 0x1C: return '\n';
-    case 0x0E: return '\b';
-    case 0x0F: return '\t';
-    case 0x52: return '0';
-    case 0x4F: return '1';
-    case 0x50: return '2';
-    case 0x51: return '3';
-    case 0x4B: return '4';
-    case 0x4C: return '5';
-    case 0x4D: return '6';
-    case 0x47: return '7';
-    case 0x48: return '8'; 
-    case 0x49: return '9';
-    case 0x53: return '.'; 
-    case 0x37: return '*';  
-    case 0x4A: return '-';  
-    case 0x4E: return '+';  
-    default:
-        break;
-    }
-
-    if (!shift) {
-        switch (scancode) {
-        case 0x02: return '1';
-        case 0x03: return '2';
-        case 0x04: return '3';
-        case 0x05: return '4';
-        case 0x06: return '5';
-        case 0x07: return '6';
-        case 0x08: return '7';
-        case 0x09: return '8';
-        case 0x0A: return '9';
-        case 0x0B: return '0';
-        case 0x0C: return '-';
-        case 0x0D: return '=';
-        case 0x1A: return '[';
-        case 0x1B: return ']';
-        case 0x27: return ';';
-        case 0x28: return '\'';
-        case 0x29: return '`';
-        case 0x2B: return '\\';
-        case 0x33: return ',';
-        case 0x34: return '.';
-        case 0x35: return '/';
-        default:
-            return 0;
-        }
-    }
-
-    switch (scancode) {
-    case 0x02: return '!';
-    case 0x03: return '@';
-    case 0x04: return '#';
-    case 0x05: return '$';
-    case 0x06: return '%';
-    case 0x07: return '^';
-    case 0x08: return '&';
-    case 0x09: return '*';
-    case 0x0A: return '(';
-    case 0x0B: return ')';
-    case 0x0C: return '_';
-    case 0x0D: return '+';
-    case 0x1A: return '{';
-    case 0x1B: return '}';
-    case 0x27: return ':';
-    case 0x28: return '"';
-    case 0x29: return '~';
-    case 0x2B: return '|';
-    case 0x33: return '<';
-    case 0x34: return '>';
-    case 0x35: return '?';
-    default:
-        return 0;
-    }
-}
-
 static void keyboard_update_modifiers(uint16_t keycode, int pressed)
 {
-    uint8_t code = (uint8_t)(keycode & 0x00FFu);
-    switch (code) {
-    case 0x2A:
-    case 0x36:
-        if (pressed) {
-            g_keyboard_modifiers |= DRIVER_KBD_MOD_SHIFT;
-        } else {
-            g_keyboard_modifiers &= (uint8_t)~DRIVER_KBD_MOD_SHIFT;
+    uint8_t base = (uint8_t)(keycode & 0x00FFu);
+    int extended = (keycode & 0xFF00u) != 0;
+
+    if (extended) {
+        switch (keycode) {
+        case KEY_RIGHTCTRL:
+            if (pressed) g_keyboard_modifiers |= DRIVER_KBD_MOD_CTRL;
+            else g_keyboard_modifiers &= (uint8_t)~DRIVER_KBD_MOD_CTRL;
+            break;
+        case KEY_RIGHTALT:
+            if (pressed) g_keyboard_modifiers |= DRIVER_KBD_MOD_ALT;
+            else g_keyboard_modifiers &= (uint8_t)~DRIVER_KBD_MOD_ALT;
+            break;
         }
+        return;
+    }
+
+    switch (base) {
+    case KEY_LEFTSHIFT:
+    case KEY_RIGHTSHIFT:
+        if (pressed) g_keyboard_modifiers |= DRIVER_KBD_MOD_SHIFT;
+        else g_keyboard_modifiers &= (uint8_t)~DRIVER_KBD_MOD_SHIFT;
         break;
-    case 0x1D:
-        if (pressed) {
-            g_keyboard_modifiers |= DRIVER_KBD_MOD_CTRL;
-        } else {
-            g_keyboard_modifiers &= (uint8_t)~DRIVER_KBD_MOD_CTRL;
-        }
+    case KEY_LEFTCTRL:
+        if (pressed) g_keyboard_modifiers |= DRIVER_KBD_MOD_CTRL;
+        else g_keyboard_modifiers &= (uint8_t)~DRIVER_KBD_MOD_CTRL;
         break;
-    case 0x38:
-        if (pressed) {
-            g_keyboard_modifiers |= DRIVER_KBD_MOD_ALT;
-        } else {
-            g_keyboard_modifiers &= (uint8_t)~DRIVER_KBD_MOD_ALT;
-        }
+    case KEY_LEFTALT:
+        if (pressed) g_keyboard_modifiers |= DRIVER_KBD_MOD_ALT;
+        else g_keyboard_modifiers &= (uint8_t)~DRIVER_KBD_MOD_ALT;
         break;
-    case 0x3A:
-        if (pressed) {
-            g_keyboard_modifiers ^= DRIVER_KBD_MOD_CAPS;
-        }
-        break;
-    default:
+    case KEY_CAPSLOCK:
+        if (pressed) g_keyboard_modifiers ^= DRIVER_KBD_MOD_CAPS;
         break;
     }
 }
@@ -443,7 +330,7 @@ static void handle_keyboard_byte(uint8_t value)
     event.keycode = keycode;
     event.pressed = (uint8_t)(pressed ? 1 : 0);
     event.modifiers = g_keyboard_modifiers;
-    event.ascii = pressed ? (uint8_t)keyboard_scancode_to_ascii(keycode, g_keyboard_modifiers) : 0u;
+    event.ascii = pressed ? (uint8_t)keycode_to_ascii(keycode, g_keyboard_modifiers) : 0u;
     keyboard_queue_push(&event);
 }
 
@@ -644,7 +531,7 @@ void ps2_input_poll(void)
             event.keycode = keycode;
             event.pressed = (uint8_t)(pressed ? 1 : 0);
             event.modifiers = g_keyboard_modifiers;
-            event.ascii = pressed ? (uint8_t)keyboard_scancode_to_ascii(keycode, g_keyboard_modifiers) : 0u;
+            event.ascii = pressed ? (uint8_t)keycode_to_ascii(keycode, g_keyboard_modifiers) : 0u;
 
             if (g_keyboard_count >= PS2_QUEUE_SIZE) {
                 g_keyboard_tail = (g_keyboard_tail + 1u) % PS2_QUEUE_SIZE;

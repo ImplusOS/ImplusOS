@@ -48,7 +48,7 @@ sudo apt install -y build-essential nasm binutils gnu-efi \
 
 ```bash
 make                # Build everything
-make image_esp      # Create bootable ISO (Hybrid BIOS/UEFI)
+make image      # Create bootable ISO (Hybrid BIOS/UEFI)
 make run_uefi_usb   # Run in QEMU (UEFI USB boot)
 make run_uefi_cdrom # Run in QEMU (UEFI CD-ROM boot)
 make run_bios_usb   # Run in QEMU (BIOS USB boot)

@@ -68,6 +68,9 @@ typedef struct {
 typedef struct {
     bool (*read_sectors)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
     bool (*write_sectors)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
+    uint32_t (*get_device_count)(void);
+    bool (*select_device)(uint32_t index);
+    uint64_t (*get_total_bytes)(void);
 } driver_storage_t;
 
 typedef struct {

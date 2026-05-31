@@ -33,10 +33,65 @@ extern uint8_t  g_mass_storage_interface;
 extern uint16_t g_mass_storage_ep_in_mps;
 extern uint16_t g_mass_storage_ep_out_mps;
 
+typedef struct {
+    uint8_t  addr;
+    uint8_t  interface;
+    uint8_t  ep_in;
+    uint8_t  ep_out;
+    uint16_t ep_in_mps;
+    uint16_t ep_out_mps;
+    uint32_t block_size;
+    uint32_t max_lba;
+} usb_bot_device_t;
+
+#define MAX_BOT_DEVICES 4
+static usb_bot_device_t g_bot_devices[MAX_BOT_DEVICES];
+static uint32_t g_bot_device_count = 0;
+static uint32_t g_bot_current_device = 0;
+
 static uint32_t bot_tag        = 1;
 static uint32_t bot_block_size = 512;
 static uint32_t bot_max_lba    = 0;
 static uint8_t  bot_bounce_buffer[65536];
+
+void bot_add_device(uint8_t addr, uint8_t interface, uint8_t ep_in, uint8_t ep_out, uint16_t ep_in_mps, uint16_t ep_out_mps)
+{
+    if (g_bot_device_count < MAX_BOT_DEVICES) {
+        g_bot_devices[g_bot_device_count].addr = addr;
+        g_bot_devices[g_bot_device_count].interface = interface;
+        g_bot_devices[g_bot_device_count].ep_in = ep_in & 0x0F;
+        g_bot_devices[g_bot_device_count].ep_out = ep_out & 0x0F;
+        g_bot_devices[g_bot_device_count].ep_in_mps = ep_in_mps ? ep_in_mps : 512;
+        g_bot_devices[g_bot_device_count].ep_out_mps = ep_out_mps ? ep_out_mps : 512;
+        g_bot_device_count++;
+    }
+}
+
+uint32_t bot_get_device_count(void)
+{
+    return g_bot_device_count;
+}
+
+bool bot_select_device(uint32_t index)
+{
+    if (index >= g_bot_device_count) return false;
+    g_bot_current_device = index;
+    g_mass_storage_addr = g_bot_devices[index].addr;
+    g_mass_storage_interface = g_bot_devices[index].interface;
+    g_mass_storage_ep_in = g_bot_devices[index].ep_in;
+    g_mass_storage_ep_out = g_bot_devices[index].ep_out;
+    g_mass_storage_ep_in_mps = g_bot_devices[index].ep_in_mps;
+    g_mass_storage_ep_out_mps = g_bot_devices[index].ep_out_mps;
+    bot_block_size = g_bot_devices[index].block_size;
+    bot_max_lba = g_bot_devices[index].max_lba;
+    return true;
+}
+
+uint64_t bot_get_total_bytes(void)
+{
+    if (g_bot_device_count == 0) return 0;
+    return (uint64_t)(g_bot_devices[g_bot_current_device].max_lba + 1) * g_bot_devices[g_bot_current_device].block_size;
+}
 
 static void bot_clear_endpoint_halts(void);
 bool bot_test_unit_ready(void);
@@ -158,48 +213,52 @@ bool bot_read_capacity(void)
 
     if (bot_block_size == 0) bot_block_size = 512;
 
+    if (g_bot_device_count > 0) {
+        g_bot_devices[g_bot_current_device].max_lba = bot_max_lba;
+        g_bot_devices[g_bot_current_device].block_size = bot_block_size;
+    }
+
     return true;
 }
 
 bool bot_init(void)
 {
-    if (g_mass_storage_addr == 0 ||
-        g_mass_storage_ep_in == 0 ||
-        g_mass_storage_ep_out == 0) {
-        return false;
-    }
+    if (g_bot_device_count == 0) return false;
 
-    g_mass_storage_ep_in  &= 0x0F;
-    g_mass_storage_ep_out &= 0x0F;
+    for (uint32_t i = 0; i < g_bot_device_count; i++) {
+        bot_select_device(i);
 
-    if (g_mass_storage_ep_in_mps  == 0) g_mass_storage_ep_in_mps  = 512;
-    if (g_mass_storage_ep_out_mps == 0) g_mass_storage_ep_out_mps = 512;
-
-    bot_mass_storage_reset();
-    bot_clear_endpoint_halts();
-    bot_wait_ms(10);
-
-    if (!bot_retry_simple_command(bot_inquiry, 3, 20)) {
-        return false;
-    }
-
-    if (!bot_wait_ready(6, 10, 80)) {
         bot_mass_storage_reset();
         bot_clear_endpoint_halts();
-        if (!bot_wait_ready(8, 20, 120)) {
-            return false;
+        bot_wait_ms(10);
+
+        if (!bot_retry_simple_command(bot_inquiry, 3, 20)) {
+            continue;
+        }
+
+        if (!bot_wait_ready(6, 10, 80)) {
+            bot_mass_storage_reset();
+            bot_clear_endpoint_halts();
+            if (!bot_wait_ready(8, 20, 120)) {
+                continue;
+            }
+        }
+
+        if (!bot_retry_simple_command(bot_read_capacity, 4, 20)) {
+            continue;
+        }
+
+        if (!bot_wait_ready(4, 10, 40)) {
+            continue;
         }
     }
 
-    if (!bot_retry_simple_command(bot_read_capacity, 4, 20)) {
-        return false;
+    if (g_bot_device_count > 0) {
+        bot_select_device(0);
+        return true;
     }
 
-    if (!bot_wait_ready(4, 10, 40)) {
-        return false;
-    }
-
-    return true;
+    return false;
 }
 
 static bool bot_execute_command(void *cbw_cb, uint8_t cb_len, uint8_t dir_in,

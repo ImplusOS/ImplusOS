@@ -259,7 +259,6 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
             if (type == USB_DESC_INTERFACE && len >= 9) {
                 current_iface = conf_buf[pos + 2];
                 uint8_t iface_class = conf_buf[pos + 5];
-                uint8_t iface_subclass = conf_buf[pos + 6];
                 uint8_t iface_protocol = conf_buf[pos + 7];
 
                 if (iface_class == 9) {
@@ -306,12 +305,7 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
     req.wLength       = 0;
     if (usb_control_transfer(current_addr, 0, max_packet_size, &req, NULL)) {
         if (mass_iface != 0xFF && mass_ep_in != 0 && mass_ep_out != 0) {
-            g_mass_storage_addr = current_addr;
-            g_mass_storage_interface = mass_iface;
-            g_mass_storage_ep_in = mass_ep_in;
-            g_mass_storage_ep_out = mass_ep_out;
-            g_mass_storage_ep_in_mps = mass_ep_in_mps;
-            g_mass_storage_ep_out_mps = mass_ep_out_mps;
+            bot_add_device(current_addr, mass_iface, mass_ep_in, mass_ep_out, mass_ep_in_mps, mass_ep_out_mps);
         }
 
         if (kbd_iface != 0xFF && kbd_ep_in != 0) {
@@ -635,7 +629,7 @@ void usb_set_hc_type(usb_hc_type_t type) {
 
 static bool g_usb_initialized = false;
 
-static void usb_module_init_internal(void)
+static void usb_master_init(void)
 {
     if (g_usb_initialized) {
         return;
@@ -685,8 +679,8 @@ static void usb_module_init_internal(void)
 }
 
 static const usb_master_vtable_t g_usb_vtable = {
-    .input   = {
-        .init           = usb_module_init_internal,
+    .input = {
+        .init           = usb_master_init,
         .poll           = usb_hid_poll,
         .read_keyboard  = usb_hid_read_keyboard,
         .read_mouse     = usb_hid_read_mouse,
@@ -694,12 +688,15 @@ static const usb_master_vtable_t g_usb_vtable = {
         .drain_mouse    = usb_hid_drain_mouse,
     },
     .storage = {
-        .read_sectors   = bot_read_sectors,
-        .write_sectors  = bot_write_sectors,
+        .read_sectors     = bot_read_sectors,
+        .write_sectors    = bot_write_sectors,
+        .get_device_count = bot_get_device_count,
+        .select_device    = bot_select_device,
+        .get_total_bytes  = bot_get_total_bytes,
     },
-    .usb     = {
+    .usb = {
         .submit_interrupt_in_async = usb_submit_interrupt_in_async,
-        .check_interrupt_event     = usb_check_interrupt_event,
+        .check_interrupt_event      = usb_check_interrupt_event,
         .submit_interrupt_in_sync  = usb_submit_interrupt_in_sync,
     }
 };
@@ -707,12 +704,6 @@ static const usb_master_vtable_t g_usb_vtable = {
 static void usb_driver_shutdown(void)
 {
     g_usb_initialized = false;
-    g_mass_storage_addr = 0;
-    g_mass_storage_ep_in = 0;
-    g_mass_storage_ep_out = 0;
-    g_mass_storage_interface = 0;
-    g_mass_storage_ep_in_mps = 0;
-    g_mass_storage_ep_out_mps = 0;
     g_hid_kbd_addr = 0;
     g_hid_kbd_interface = 0;
     g_hid_kbd_ep_in = 0;

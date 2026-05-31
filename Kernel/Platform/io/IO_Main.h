@@ -49,6 +49,19 @@ typedef enum {
 } io_protocol_type_t;
 
 typedef struct {
+    const char *name;
+    const char *model;
+    io_protocol_type_t protocol;
+    bool (*init)(uint64_t partition_lba);
+    bool (*read)(uint32_t lba, uint8_t *buffer, uint32_t sectors);
+    bool (*write)(uint32_t lba, const uint8_t *buffer, uint32_t sectors);
+    bool (*is_working)(void);
+    uint32_t (*get_device_count)(void);
+    bool (*select_device)(uint32_t index);
+    uint64_t (*get_total_bytes)(void);
+} block_device_t;
+
+typedef struct {
     char disk_name[32];
     char manufacturer[64];
     char model[64];

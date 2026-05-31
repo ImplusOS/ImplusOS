@@ -19,8 +19,8 @@
 #define RECOVERY_MANIFEST_PATH      "/Recovery/MANIFEST.txt"
 #define RECOVERY_FONT_PATH          "/BootManager/Resource/Fonts/NotoSansJP-Regular.ttf"
 
-#define INSTALL_CHUNK_SECTORS   1024u
-#define INSTALL_SECTOR_SIZE     1024u
+#define INSTALL_CHUNK_SECTORS   512u
+#define INSTALL_SECTOR_SIZE     512u
 
 #define PROGRESS_UPDATE_SECTORS 1024u
 
@@ -680,5 +680,11 @@ static void run_recovery(void)
 void _start(void)
 {
     run_recovery();
-    while (1) process_yield();
+    while (1) {
+        int ch = read_key_input();
+        serial_write_string("Key pressed: ");
+        serial_write_string((char *)&ch);
+        serial_write_string("\n");
+        process_yield();
+    }
 }

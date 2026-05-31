@@ -89,21 +89,22 @@ void wm_kernel_on_timer(void)
         return;
     }
 
+    /* Poll and process PS/2 */
     driver_manager_input_ps2_poll();
-
     driver_keyboard_event_t kbd;
     while (driver_manager_input_ps2_read_keyboard(&kbd) > 0) {
         forward_keyboard_event(&kbd);
     }
-
     driver_mouse_event_t mouse;
     while (driver_manager_input_ps2_read_mouse(&mouse) > 0) {
         forward_mouse_event(&mouse);
     }
-    
+
+    /* Poll and process USB */
     driver_manager_input_usb_poll();
     driver_manager_input_usb_drain_keyboard(&kbd, &forward_keyboard_event);
     driver_manager_input_usb_drain_mouse(&mouse, &forward_mouse_event);
+
     network_stack_poll();
 
     __atomic_store_n(&g_wm.in_timer, 0u, __ATOMIC_RELEASE);

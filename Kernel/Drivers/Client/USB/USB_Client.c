@@ -46,6 +46,27 @@ bool usb_driver_client_write_sectors(uint32_t lba, const uint8_t *buffer, uint32
     return g_usb_vtable->storage.write_sectors(lba, buffer, sectors);
 }
 
+uint32_t usb_driver_client_get_device_count(void)
+{
+    if (!usb_driver_client_refresh()) return 0;
+    if (g_usb_vtable == NULL || g_usb_vtable->storage.get_device_count == NULL) return 0;
+    return g_usb_vtable->storage.get_device_count();
+}
+
+bool usb_driver_client_select_device(uint32_t index)
+{
+    if (!usb_driver_client_refresh()) return false;
+    if (g_usb_vtable == NULL || g_usb_vtable->storage.select_device == NULL) return false;
+    return g_usb_vtable->storage.select_device(index);
+}
+
+uint64_t usb_driver_client_get_total_bytes(void)
+{
+    if (!usb_driver_client_refresh()) return 0;
+    if (g_usb_vtable == NULL || g_usb_vtable->storage.get_total_bytes == NULL) return 0;
+    return g_usb_vtable->storage.get_total_bytes();
+}
+
 int32_t usb_driver_client_read_keyboard(driver_keyboard_event_t *out_event)
 {
     if (!usb_driver_client_refresh()) {

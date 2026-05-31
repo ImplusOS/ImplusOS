@@ -20,7 +20,7 @@ sudo apt install -y build-essential nasm binutils gnu-efi \
 make
 
 # Create bootable hybrid ISO (UEFI + BIOS)
-make image_esp
+make image
 
 # Run in QEMU
 make run_uefi_usb   # UEFI USB boot

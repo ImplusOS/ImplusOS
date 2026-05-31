@@ -6,28 +6,19 @@
 #include "Debug/printf/printf.h"
 #include <stddef.h>
  
-typedef struct {
-    const char *name;
-    const char *model;
-    io_protocol_type_t protocol;
-    bool (*init)(uint64_t partition_lba);
-    bool (*read)(uint32_t lba, uint8_t *buffer, uint32_t sectors);
-    bool (*write)(uint32_t lba, const uint8_t *buffer, uint32_t sectors);
-    bool (*is_working)(void);
-} block_device_t;
-
 static const block_device_t g_block_devices[] = {
-    { "ahci0", "AHCI/ATAPI device", IO_PROTOCOL_TYPE_AHCI, ahci_init, ahci_read, ahci_write, ahci_is_working },
-    { "ata0", "ATA disk", IO_PROTOCOL_TYPE_ATA, ata_init, ata_read, ata_write, ata_is_working },
-    { "usb0", "USB mass storage", IO_PROTOCOL_TYPE_USB_MASS_STORAGE, usb_ms_init, usb_ms_read, usb_ms_write, usb_ms_is_working },
+    { "ahci", "AHCI/ATAPI device", IO_PROTOCOL_TYPE_AHCI, ahci_init, ahci_read, ahci_write, ahci_is_working, ahci_get_device_count, ahci_select_device, ahci_get_total_bytes },
+    { "ata", "ATA disk", IO_PROTOCOL_TYPE_ATA, ata_init, ata_read, ata_write, ata_is_working, ata_get_device_count, ata_select_device, ata_get_total_bytes },
+    { "usb", "USB mass storage", IO_PROTOCOL_TYPE_USB_MASS_STORAGE, usb_ms_init, usb_ms_read, usb_ms_write, usb_ms_is_working, usb_ms_get_device_count, usb_ms_select_device, usb_ms_get_total_bytes },
 };
 
-#define IO_MAX_DISKS ((uint32_t)(sizeof(g_block_devices) / sizeof(g_block_devices[0])))
+#define IO_MAX_DISKS 16
 
 static const block_device_t *g_current_block_device = NULL;
 static io_protocol_type_t g_current_protocol = IO_PROTOCOL_TYPE_NONE;
 static uint32_t g_partition_lba = 0;
 static const block_device_t *g_detected_disks[IO_MAX_DISKS];
+static uint32_t g_detected_disks_indices[IO_MAX_DISKS];
 static uint32_t g_detected_disk_count = 0;
 static bool g_disk_scan_done = false;
 
@@ -132,8 +123,17 @@ static void disk_scan_devices(void) {
     for (size_t i = 0; i < sizeof(g_block_devices) / sizeof(g_block_devices[0]); ++i) {
         const block_device_t *device = &g_block_devices[i];
         if (device->init && device->init(0)) {
-            if (g_detected_disk_count < IO_MAX_DISKS) {
-                g_detected_disks[g_detected_disk_count++] = device;
+            uint32_t dev_count = 1;
+            if (device->get_device_count) {
+                dev_count = device->get_device_count();
+            }
+
+            for (uint32_t d = 0; d < dev_count; d++) {
+                if (g_detected_disk_count < IO_MAX_DISKS) {
+                    g_detected_disks[g_detected_disk_count] = device;
+                    g_detected_disks_indices[g_detected_disk_count] = d;
+                    g_detected_disk_count++;
+                }
             }
         }
     }
@@ -161,14 +161,30 @@ bool disk_get_info(uint32_t index, io_disk_info_t *out_info) {
     if (index >= g_detected_disk_count) return false;
 
     const block_device_t *device = g_detected_disks[index];
+    uint32_t dev_idx = g_detected_disks_indices[index];
+
+    if (device->select_device) {
+        device->select_device(dev_idx);
+    }
+
     copy_string(out_info->disk_name, sizeof(out_info->disk_name), device->name);
+    uint32_t len = 0;
+    while(out_info->disk_name[len]) len++;
+    if (len < sizeof(out_info->disk_name) - 1) {
+        out_info->disk_name[len] = (char)('0' + dev_idx);
+        out_info->disk_name[len+1] = '\0';
+    }
+
     copy_string(out_info->manufacturer, sizeof(out_info->manufacturer), "ImplusOS");
     copy_string(out_info->model, sizeof(out_info->model), device->model);
     out_info->protocol = device->protocol;
     out_info->total_bytes = 0;
+    if (device->get_total_bytes) {
+        out_info->total_bytes = device->get_total_bytes();
+    }
     out_info->sector_size = 512;
-    out_info->flags = 0;
-    if (device == g_current_block_device) {
+    out_info->flags = IO_DISK_FLAG_WRITABLE;
+    if (device == g_current_block_device && dev_idx == 0) {
         out_info->flags |= IO_DISK_FLAG_BOOT;
     }
     if (device->write) {
@@ -191,7 +207,12 @@ static bool disk_raw_io(uint32_t index,
     io_protocol_type_t saved_protocol = g_current_protocol;
     uint32_t saved_partition_lba = g_partition_lba;
     const block_device_t *device = g_detected_disks[index];
+    uint32_t dev_idx = g_detected_disks_indices[index];
     bool ok = false;
+
+    if (device->select_device) {
+        device->select_device(dev_idx);
+    }
 
     if (device->init && device->init(0)) {
         if (read_buffer && device->read) {

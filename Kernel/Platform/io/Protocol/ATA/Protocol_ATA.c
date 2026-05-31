@@ -57,13 +57,43 @@ typedef struct {
     uint16_t ctrl_io;
 } ata_channel_t;
 
+typedef struct {
+    const ata_channel_t *ch;
+    uint8_t devsel;
+    bool is_atapi;
+    uint64_t total_bytes;
+} ata_device_t;
+
+static ata_device_t g_ata_devices[4];
+static uint32_t g_ata_device_count = 0;
+static uint32_t g_ata_current_device = 0;
+
 static ata_channel_t g_primary = { ATA_PRI_DATA, ATA_PRI_CONTROL };
 static ata_channel_t g_secondary = { ATA_SEC_DATA, ATA_SEC_CONTROL };
 
 static void ata_delay(uint16_t ctrl_port);
-static bool ata_probe_device(uint8_t devsel);
+static void ata_set_channel(const ata_channel_t *ch);
+static bool ata_probe_device(uint8_t devsel, uint64_t *out_size);
 static bool ata_pio_read_chunk(uint32_t real_lba, uint8_t *buffer, uint8_t sector_count);
 static bool ata_pio_write_chunk(uint32_t real_lba, const uint8_t *buffer, uint8_t sector_count);
+
+uint32_t ata_get_device_count(void) {
+    return g_ata_device_count;
+}
+
+bool ata_select_device(uint32_t index) {
+    if (index >= g_ata_device_count) return false;
+    g_ata_current_device = index;
+    ata_set_channel(g_ata_devices[index].ch);
+    g_ata_devsel_value = g_ata_devices[index].devsel;
+    g_atapi = g_ata_devices[index].is_atapi;
+    return true;
+}
+
+uint64_t ata_get_total_bytes(void) {
+    if (g_ata_device_count == 0) return 0;
+    return g_ata_devices[g_ata_current_device].total_bytes;
+}
 
 static void ata_set_channel(const ata_channel_t *ch) {
     g_ata_data     = ch->cmd_io;
@@ -133,7 +163,54 @@ static int ata_poll(uint32_t timeout)
     return -1;
 }
 
-static int atapi_identify(void)
+static int atapi_read_capacity(uint64_t *out_size)
+{
+    uint8_t packet[12] = {0};
+    packet[0] = 0x25; // READ CAPACITY
+
+    outb(g_ata_hddevsel, g_ata_devsel_value);
+    ata_delay(g_ata_control);
+
+    uint32_t timeout = 1000000u;
+    while (inb(g_ata_status) & (ATA_SR_BSY | ATA_SR_DRQ)) {
+        if (--timeout == 0u) return -1;
+    }
+
+    outb(g_ata_feature, 0);
+    outb(g_ata_seccount, 0);
+    outb(g_ata_lba0, 0);
+    outb(g_ata_lba1, 8); // Expecting 8 bytes
+    outb(g_ata_lba2, 0);
+    outb(g_ata_command, 0xA0u);
+
+    if (ata_poll(1000000u) < 0) return -1;
+
+    const uint16_t *pktw = (const uint16_t *)packet;
+    for (int i = 0; i < 6; ++i) outw(g_ata_data, pktw[i]);
+
+    if (ata_poll(1000000u) < 0) return -1;
+
+    uint32_t data[2];
+    data[0] = inw(g_ata_data);
+    data[0] |= (uint32_t)inw(g_ata_data) << 16;
+    data[1] = inw(g_ata_data);
+    data[1] |= (uint32_t)inw(g_ata_data) << 16;
+
+    // Byte swap (big endian to little endian)
+    uint32_t max_lba = ((data[0] & 0xFF000000u) >> 24) |
+                       ((data[0] & 0x00FF0000u) >> 8) |
+                       ((data[0] & 0x0000FF00u) << 8) |
+                       ((data[0] & 0x000000FFu) << 24);
+    uint32_t block_size = ((data[1] & 0xFF000000u) >> 24) |
+                          ((data[1] & 0x00FF0000u) >> 8) |
+                          ((data[1] & 0x0000FF00u) << 8) |
+                          ((data[1] & 0x000000FFu) << 24);
+
+    if (out_size) *out_size = (uint64_t)(max_lba + 1) * block_size;
+    return 0;
+}
+
+static int atapi_identify(uint64_t *out_size)
 {
     outb(g_ata_hddevsel, g_ata_devsel_value);
     ata_delay(g_ata_control);
@@ -162,6 +239,8 @@ static int atapi_identify(void)
             for (int i = 0; i < 256; ++i) (void)inw(g_ata_data);
             g_atapi = true;
             g_atapi_sector_bytes = 2048u;
+            if (out_size) *out_size = 0;
+            atapi_read_capacity(out_size);
             return 0;
         }
         if (!(st & ATA_SR_BSY) && (st & ATA_SR_ERR)) {
@@ -172,7 +251,7 @@ static int atapi_identify(void)
     return -1;
 }
 
-static int ata_identify(void)
+static int ata_identify(uint64_t *out_size)
 {
     outb(g_ata_hddevsel, g_ata_devsel_value);
     ata_delay(g_ata_control);
@@ -198,6 +277,7 @@ static int ata_identify(void)
     if (word0 & 0x8000u) {
         g_atapi = true;
         g_atapi_sector_bytes = 2048u;
+        if (out_size) *out_size = 0;
         return 0;
     }
 
@@ -206,6 +286,8 @@ static int ata_identify(void)
     if (lba28 == 0) {
         return -1;
     }
+
+    if (out_size) *out_size = (uint64_t)lba28 * 512u;
 
     g_atapi = false;
     return 0;
@@ -289,7 +371,7 @@ static void ata_soft_reset(uint16_t ctrl_port) {
     for (int i = 0; i < 5000; i++) inb(ctrl_port);
 }
 
-static bool ata_probe_device(uint8_t devsel_value) {
+static bool ata_probe_device(uint8_t devsel_value, uint64_t *out_size) {
     g_ata_devsel_value = devsel_value;
     g_atapi = false;
 
@@ -324,14 +406,14 @@ static bool ata_probe_device(uint8_t devsel_value) {
                         (cl == 0x69u && ch == 0x96u));
 
     if (maybe_atapi) {
-        if (atapi_identify() == 0) return true;
+        if (atapi_identify(out_size) == 0) return true;
         ata_soft_reset(g_ata_control);
         outb(g_ata_hddevsel, g_ata_devsel_value);
         ata_delay(g_ata_control);
-        return (atapi_identify() == 0);
+        return (atapi_identify(out_size) == 0);
     }
 
-    if (ata_identify() == 0) {
+    if (ata_identify(out_size) == 0) {
         if (g_atapi) return true;
         return true;
     }
@@ -343,12 +425,13 @@ static bool ata_probe_device(uint8_t devsel_value) {
     while (inb(g_ata_status) & ATA_SR_BSY) {
         if (--timeout == 0u) return false;
     }
-    return (atapi_identify() == 0);
+    return (atapi_identify(out_size) == 0);
 }
 
 bool ata_init(uint64_t partition_lba) {
     (void)partition_lba;
     g_disk_io_working = false;
+    g_ata_device_count = 0;
 
     ide_configure_ports_from_pci();
 
@@ -360,65 +443,28 @@ bool ata_init(uint64_t partition_lba) {
         { &g_secondary, 0xB0u },
     };
 
-    int ata_slot   = -1;
-    int atapi_slot = -1;
-
     for (int i = 0; i < 4; i++) {
         ata_soft_reset(slots[i].ch->ctrl_io);
         ata_set_channel(slots[i].ch);
 
-        if (!ata_probe_device(slots[i].devsel)) {
+        uint64_t size = 0;
+        if (!ata_probe_device(slots[i].devsel, &size)) {
             continue;
         }
 
-        if (g_atapi) {
-            if (atapi_slot < 0) atapi_slot = i;
-            continue;
+        if (g_ata_device_count < 4) {
+            g_ata_devices[g_ata_device_count].ch = slots[i].ch;
+            g_ata_devices[g_ata_device_count].devsel = slots[i].devsel;
+            g_ata_devices[g_ata_device_count].is_atapi = g_atapi;
+            g_ata_devices[g_ata_device_count].total_bytes = size;
+            g_ata_device_count++;
         }
-
-        if (ata_slot < 0) ata_slot = i;
     }
 
-    if (ata_slot >= 0) {
-        ata_soft_reset(slots[ata_slot].ch->ctrl_io);
-        ata_set_channel(slots[ata_slot].ch);
-        ata_probe_device(slots[ata_slot].devsel);
-        
+    if (g_ata_device_count > 0) {
+        ata_select_device(0);
         g_disk_io_working = true;
-
-        uint8_t boot_buf[512] __attribute__((aligned(2))) = {0};
-        if (ata_read(0, boot_buf, 1)) {
-            if (boot_buf[510] == 0x55 && boot_buf[511] == 0xAA) {
-                return true;
-            }
-        }
-        g_disk_io_working = false;
-    }
-
-    if (atapi_slot >= 0) {
-        ata_soft_reset(slots[atapi_slot].ch->ctrl_io);
-        ata_set_channel(slots[atapi_slot].ch);
-        if (ata_probe_device(slots[atapi_slot].devsel)) {
-            g_atapi = true;
-            g_disk_io_working = true;
-            return true;
-        }
-    }
-    
-    if (ata_slot >= 0) {
-        ata_soft_reset(slots[ata_slot].ch->ctrl_io);
-        ata_set_channel(slots[ata_slot].ch);
-        if (ata_probe_device(slots[ata_slot].devsel)) {
-            g_disk_io_working = true;
-
-            uint8_t boot_buf[512] __attribute__((aligned(2))) = {0};
-            if (ata_read(0, boot_buf, 1)) {
-                if (boot_buf[510] == 0x55 && boot_buf[511] == 0xAA) {
-                    return true;
-                }
-            }
-            g_disk_io_working = false;
-        }
+        return true;
     }
     
     return false;
