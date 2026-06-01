@@ -1,9 +1,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "DeviceRegistry.h"
 #include "DriverSelect.h"
 #include "DriverBinary.h"
-#include "DriverManager.h"
 
 static driver_boot_framebuffer_t g_boot_framebuffer;
 
@@ -22,24 +22,18 @@ void driver_select_set_boot_framebuffer(const driver_boot_framebuffer_t *framebu
 }
 
 const driver_display_t *driver_select_pick_display_driver(void) {
-    const driver_display_t *drv;
-    const device_t *device;
-
-    device = driver_manager_find(DRIVER_MANAGER_KIND_DISPLAY,
-                                 "VirtIO_Driver.ELF");
-    drv = device ? (const driver_display_t *)device->ops : NULL;
-    if (drv) {
-        if (!drv->probe || drv->probe()) {
-            if (drv->init()) {
-                return drv;
-            }
+    for (uint32_t i = 0;; ++i) {
+        const device_t *device = device_registry_find_by_index(DEVICE_TYPE_DISPLAY, i);
+        const driver_display_t *drv;
+        if (device == NULL) {
+            break;
         }
-    }
 
-    device = driver_manager_find(DRIVER_MANAGER_KIND_DISPLAY,
-                                 "ImplusOS_Generic_Display_Driver.ELF");
-    drv = device ? (const driver_display_t *)device->ops : NULL;
-    if (drv) {
+        drv = (const driver_display_t *)device->ops;
+        if (drv == NULL || drv->init == NULL) {
+            continue;
+        }
+
         if (drv->set_framebuffer) {
             drv->set_framebuffer(&g_boot_framebuffer);
         }

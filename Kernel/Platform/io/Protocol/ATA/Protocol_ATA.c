@@ -166,7 +166,7 @@ static int ata_poll(uint32_t timeout)
 static int atapi_read_capacity(uint64_t *out_size)
 {
     uint8_t packet[12] = {0};
-    packet[0] = 0x25; // READ CAPACITY
+    packet[0] = 0x25;
 
     outb(g_ata_hddevsel, g_ata_devsel_value);
     ata_delay(g_ata_control);
@@ -179,7 +179,7 @@ static int atapi_read_capacity(uint64_t *out_size)
     outb(g_ata_feature, 0);
     outb(g_ata_seccount, 0);
     outb(g_ata_lba0, 0);
-    outb(g_ata_lba1, 8); // Expecting 8 bytes
+    outb(g_ata_lba1, 8);
     outb(g_ata_lba2, 0);
     outb(g_ata_command, 0xA0u);
 
@@ -195,8 +195,7 @@ static int atapi_read_capacity(uint64_t *out_size)
     data[0] |= (uint32_t)inw(g_ata_data) << 16;
     data[1] = inw(g_ata_data);
     data[1] |= (uint32_t)inw(g_ata_data) << 16;
-
-    // Byte swap (big endian to little endian)
+    
     uint32_t max_lba = ((data[0] & 0xFF000000u) >> 24) |
                        ((data[0] & 0x00FF0000u) >> 8) |
                        ((data[0] & 0x0000FF00u) << 8) |

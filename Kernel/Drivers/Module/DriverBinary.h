@@ -4,6 +4,15 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "kernel/interfaces/device.h"
+
+#define DRIVER_API_VERSION_MAJOR 1u
+#define DRIVER_API_VERSION_MINOR 1u
+
+#define DRIVER_DESCRIPTOR_MAGIC 0x44525641u
+#define DRIVER_DESCRIPTOR_VERSION 2u
+#define DRIVER_MAX_DEPS 4u
+
 typedef struct __attribute__((packed)) {
     uint16_t keycode;
     uint8_t pressed;
@@ -21,34 +30,74 @@ typedef struct __attribute__((packed)) {
 } driver_mouse_event_t;
 
 typedef struct {
-    void (*timer_msleep)(uint32_t ms);
-    uint32_t (*timer_hz)(void);
-    uint64_t (*timer_ticks)(void);
+    void (*msleep)(uint32_t ms);
+    uint32_t (*hz)(void);
+    uint64_t (*ticks)(void);
+} driver_api_timer_t;
 
+typedef struct {
     void *(*malloc)(uint64_t size);
     void (*free)(void *ptr);
-
     void *(*dma_alloc)(size_t size, uint64_t *phys_out);
     void (*dma_free)(void *ptr, size_t size);
     uint64_t (*virt_to_phys)(void *virt);
-
     void *(*memset)(void *s, int c, size_t n);
     void *(*memcpy)(void *dst, const void *src, size_t n);
+} driver_api_mem_t;
 
+typedef struct {
     uint8_t (*inb)(uint16_t port);
     void (*outb)(uint16_t port, uint8_t value);
     uint32_t (*inl)(uint16_t port);
     void (*outl)(uint16_t port, uint32_t value);
+} driver_api_io_t;
 
+typedef struct {
     bool (*disk_read)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
     bool (*disk_write)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
     uint32_t (*disk_get_partition_lba)(void);
-
     uint32_t (*pci_read_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset);
     void (*pci_write_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset, uint32_t value);
-
     void *(*map_mmio_virt)(uint64_t phys_addr);
+} driver_api_hw_t;
 
+typedef struct {
+    void (*write_char)(char c);
+    void (*write_string)(const char *str);
+    void (*write_uint32)(uint32_t val);
+} driver_api_debug_t;
+
+typedef struct {
+    uint16_t version_major;
+    uint16_t version_minor;
+    uint32_t reserved;
+
+    driver_api_timer_t timer;
+    driver_api_mem_t mem;
+    driver_api_io_t io;
+    driver_api_hw_t hw;
+    driver_api_debug_t dbg;
+
+    void (*timer_msleep)(uint32_t ms);
+    uint32_t (*timer_hz)(void);
+    uint64_t (*timer_ticks)(void);
+    void *(*malloc)(uint64_t size);
+    void (*free)(void *ptr);
+    void *(*dma_alloc)(size_t size, uint64_t *phys_out);
+    void (*dma_free)(void *ptr, size_t size);
+    uint64_t (*virt_to_phys)(void *virt);
+    void *(*memset)(void *s, int c, size_t n);
+    void *(*memcpy)(void *dst, const void *src, size_t n);
+    uint8_t (*inb)(uint16_t port);
+    void (*outb)(uint16_t port, uint8_t value);
+    uint32_t (*inl)(uint16_t port);
+    void (*outl)(uint16_t port, uint32_t value);
+    bool (*disk_read)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
+    bool (*disk_write)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
+    uint32_t (*disk_get_partition_lba)(void);
+    uint32_t (*pci_read_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset);
+    void (*pci_write_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset, uint32_t value);
+    void *(*map_mmio_virt)(uint64_t phys_addr);
     void (*serial_write_char)(char c);
     void (*serial_write_string)(const char *str);
     void (*serial_write_uint32)(uint32_t val);
@@ -131,6 +180,12 @@ typedef struct {
 } driver_nic_t;
 
 typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t reserved;
+    device_type_t kind;
+    uint32_t load_priority;
+    const char *deps[DRIVER_MAX_DEPS];
     const void *driver_api;
     void (*shutdown)(void);
 } driver_module_descriptor_t;

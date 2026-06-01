@@ -2,10 +2,6 @@
 
 #include <stdint.h>
 
-/*
- * Unified Keycodes based on PS/2 Scancode Set 1
- */
-
 #define KEY_ESC             0x01
 #define KEY_1               0x02
 #define KEY_2               0x03
@@ -92,7 +88,6 @@
 #define KEY_F11             0x57
 #define KEY_F12             0x58
 
-/* Extended keys (E0 prefix in PS/2) */
 #define KEY_KPENTER         0xE01C
 #define KEY_RIGHTCTRL       0xE01D
 #define KEY_KPSLASH         0xE035
@@ -111,10 +106,9 @@
 #define KEY_RIGHTMETA       0xE05C
 #define KEY_COMPOSE         0xE05D
 
-/* Japanese keys */
 #define KEY_KATAKANAHIRAGANA 0x70
 #define KEY_RO               0x73
 #define KEY_HENKAN           0x79
 #define KEY_MUHENKAN         0x7B
 #define KEY_YEN              0x7D
-#define KEY_HANKAKUZENKAKU   0x29 /* Same as KEY_GRAVE */
+#define KEY_HANKAKUZENKAKU   0x29

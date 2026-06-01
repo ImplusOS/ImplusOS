@@ -12,7 +12,7 @@ static uint8_t g_fat32_initialized = 0;
 static uint8_t g_fat32_init_failed = 0;
 
 static bool ensure_fat32_initialized() {
-    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_FAT32, "FAT32_Driver.ELF");
+    const device_t *device = driver_manager_find(DEVICE_TYPE_FILESYSTEM, "FAT32_Driver.ELF");
     const fat32_driver_t *driver = device ? (const fat32_driver_t *)device->ops : NULL;
 
     if (driver == NULL) {

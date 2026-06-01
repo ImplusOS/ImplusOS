@@ -169,19 +169,69 @@ static int parse_args(char *cmd, char *argv[ISH_MAX_ARGS])
     return argc;
 }
 
+static void append_path_component(char *out, int out_size, const char *component, int len)
+{
+    if (!out || out_size <= 0 || !component || len <= 0) return;
+    if (len == 1 && component[0] == '.') return;
+    if (len == 2 && component[0] == '.' && component[1] == '.') {
+        int cur_len = (int)strlen(out);
+        if (cur_len <= 1) {
+            strcpy(out, "/");
+            return;
+        }
+        if (out[cur_len - 1] == '/') out[--cur_len] = '\0';
+        char *last = out;
+        for (char *p = out + 1; *p; ++p) {
+            if (*p == '/') last = p;
+        }
+        if (last == out) out[1] = '\0';
+        else *last = '\0';
+        return;
+    }
+
+    int cur_len = (int)strlen(out);
+    if (cur_len == 0) {
+        strncpy(out, "/", (size_t)out_size);
+        cur_len = 1;
+    }
+    if (cur_len > 1 && out[cur_len - 1] != '/') {
+        strncat(out, "/", (size_t)(out_size - cur_len - 1));
+        cur_len = (int)strlen(out);
+    }
+    if (cur_len == 1 && out[0] == '/') {
+        cur_len = 1;
+    }
+    int copy_len = len;
+    int room = out_size - cur_len - 1;
+    if (copy_len > room) copy_len = room;
+    if (copy_len > 0) {
+        memcpy(out + cur_len, component, (size_t)copy_len);
+        out[cur_len + copy_len] = '\0';
+    }
+}
+
 static void resolve_path(const char *path, char *out, int out_size)
 {
-    if (path[0] == '/') {
-        strncpy(out, path, (size_t)(out_size - 1));
-        out[out_size - 1] = '\0';
+    if (!out || out_size <= 0) return;
+    out[0] = '\0';
+    const char *p = path ? path : "";
+    if (*p == '/') {
+        strcpy(out, "/");
+        while (*p == '/') p++;
     } else {
         strncpy(out, g_cwd, (size_t)(out_size - 1));
         out[out_size - 1] = '\0';
-        int len = (int)strlen(out);
-        if (len > 0 && out[len - 1] != '/') {
-            strncat(out, "/", (size_t)(out_size - len - 1));
-        }
-        strncat(out, path, (size_t)(out_size - (int)strlen(out) - 1));
+    }
+
+    while (*p) {
+        while (*p == '/') p++;
+        const char *start = p;
+        while (*p && *p != '/') p++;
+        append_path_component(out, out_size, start, (int)(p - start));
+    }
+
+    if (out[0] == '\0') {
+        strcpy(out, "/");
     }
 }
 
@@ -473,9 +523,39 @@ static int cmd_help(int argc, char **argv)
     shell_puts("  clear            Clear screen\n");
     shell_puts("  uname            Show system info\n");
     shell_puts("  uptime           Show uptime\n");
+    shell_puts("  Apps: editor, files, procman, store, nettest, vm, version\n");
     shell_puts("  help             This help\n");
     shell_puts("  exit             Exit shell\n");
     return 0;
+}
+
+typedef struct {
+    const char *name;
+    const char *path;
+} app_alias_t;
+
+static const app_alias_t g_app_aliases[] = {
+    {"shell",   "/Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF"},
+    {"version", "/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF"},
+    {"about",   "/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF"},
+    {"editor",  "/Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF"},
+    {"files",   "/Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF"},
+    {"filemanager", "/Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF"},
+    {"procman", "/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF"},
+    {"store",   "/Userland/UserApps/com_ImplusOS_ImplusStore/com_ImplusOS_ImplusStore.ELF"},
+    {"nettest", "/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF"},
+    {"network", "/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF"},
+    {"vm",      "/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF"},
+};
+
+static const char *find_app_alias(const char *name)
+{
+    for (uint32_t i = 0; i < sizeof(g_app_aliases) / sizeof(g_app_aliases[0]); ++i) {
+        if (strcmp(name, g_app_aliases[i].name) == 0) {
+            return g_app_aliases[i].path;
+        }
+    }
+    return (const char *)0;
 }
 
 static int execute_builtin(int argc, char **argv)
@@ -542,9 +622,15 @@ static void execute_command(char *cmd)
         return;
     }
 
-    char exec_path[ISH_MAX_PATH];
-    resolve_path(cmd, exec_path, ISH_MAX_PATH);
+    const char *alias_path = find_app_alias(argv[0]);
+    if (alias_path) {
+        execute_external(alias_path);
+        draw_present();
+        return;
+    }
 
+    char exec_path[ISH_MAX_PATH];
+    resolve_path(argv[0], exec_path, ISH_MAX_PATH);
     file_stat_t st;
     if (file_stat(exec_path, &st) == 0 && st.exists) {
         execute_external(exec_path);
@@ -558,6 +644,21 @@ static void execute_command(char *cmd)
             shell_puts(": command not found\n");
         }
     }
+    draw_present();
+}
+
+static void replace_current_command(const char *cmd)
+{
+    while (g_cmd_len > 0) {
+        g_cmd_len--;
+        shell_putchar('\b');
+    }
+    memset(g_cmd_buf, 0, sizeof(g_cmd_buf));
+    if (!cmd) return;
+    strncpy(g_cmd_buf, cmd, ISH_MAX_CMD_LEN - 1);
+    g_cmd_buf[ISH_MAX_CMD_LEN - 1] = '\0';
+    g_cmd_len = (int)strlen(g_cmd_buf);
+    shell_puts(g_cmd_buf);
     draw_present();
 }
 
@@ -630,6 +731,25 @@ void _start(void)
                     g_cmd_buf[g_cmd_len] = '\0';
                     shell_putchar('\b');
                     draw_present();
+                }
+                continue;
+            }
+
+            if (kbd.keycode == 0x48) {
+                if (g_history_count > 0 && g_history_pos > 0) {
+                    g_history_pos--;
+                    replace_current_command(g_history[g_history_pos % ISH_HISTORY_SIZE]);
+                }
+                continue;
+            }
+
+            if (kbd.keycode == 0x50) {
+                if (g_history_pos < g_history_count - 1) {
+                    g_history_pos++;
+                    replace_current_command(g_history[g_history_pos % ISH_HISTORY_SIZE]);
+                } else {
+                    g_history_pos = g_history_count;
+                    replace_current_command("");
                 }
                 continue;
             }

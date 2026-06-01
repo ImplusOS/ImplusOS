@@ -1,6 +1,7 @@
 #include "WindowManager_Kernel.h"
 #include "IPC/IPC_Main.h"
 #include "Drivers/Module/DriverManager.h"
+#include "Drivers/Module/InputManager.h"
 #include "Network/network_main.h"
 #include "Debug/serial/Serial.h"
 #include <string.h>
@@ -89,21 +90,11 @@ void wm_kernel_on_timer(void)
         return;
     }
 
-    /* Poll and process PS/2 */
-    driver_manager_input_ps2_poll();
+    input_manager_poll();
     driver_keyboard_event_t kbd;
-    while (driver_manager_input_ps2_read_keyboard(&kbd) > 0) {
-        forward_keyboard_event(&kbd);
-    }
     driver_mouse_event_t mouse;
-    while (driver_manager_input_ps2_read_mouse(&mouse) > 0) {
-        forward_mouse_event(&mouse);
-    }
-
-    /* Poll and process USB */
-    driver_manager_input_usb_poll();
-    driver_manager_input_usb_drain_keyboard(&kbd, &forward_keyboard_event);
-    driver_manager_input_usb_drain_mouse(&mouse, &forward_mouse_event);
+    input_manager_drain_keyboard(&kbd, &forward_keyboard_event);
+    input_manager_drain_mouse(&mouse, &forward_mouse_event);
 
     network_stack_poll();
 

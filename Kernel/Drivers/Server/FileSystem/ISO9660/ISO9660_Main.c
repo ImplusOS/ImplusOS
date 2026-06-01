@@ -768,6 +768,11 @@ static void iso9660_driver_shutdown(void) {
 }
 
 static const driver_module_descriptor_t g_iso9660_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_FILESYSTEM,
+    .load_priority = 100u,
+    .deps = { NULL },
     .driver_api = &g_iso9660_driver,
     .shutdown   = iso9660_driver_shutdown,
 };

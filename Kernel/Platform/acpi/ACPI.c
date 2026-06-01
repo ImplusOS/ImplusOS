@@ -117,7 +117,7 @@ void acpi_reboot(void)
 void acpi_shutdown(void)
 {
     
-    const device_t *display_device = driver_manager_find(DRIVER_MANAGER_KIND_DISPLAY, NULL);
+    const device_t *display_device = driver_manager_find(DEVICE_TYPE_DISPLAY, NULL);
     const driver_display_t *display = display_device ? (const driver_display_t *)display_device->ops : NULL;
     if (display) {
         uint32_t w = display->width();

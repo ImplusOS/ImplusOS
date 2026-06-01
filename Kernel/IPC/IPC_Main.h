@@ -4,7 +4,7 @@
 #include "kernel/status.h"
 
 #define IPC_MESSAGE_MAX_SIZE 256
-#define IPC_MAX_MESSAGES_PER_PROCESS 16
+#define IPC_MAX_MESSAGES_PER_PROCESS 500
 #define IPC_SIGNAL_SHUTDOWN 0x80000001
 
 typedef struct {

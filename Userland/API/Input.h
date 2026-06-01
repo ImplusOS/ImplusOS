@@ -7,6 +7,10 @@
 #define INPUT_KBD_MOD_ALT   (1u << 2)
 #define INPUT_KBD_MOD_CAPS  (1u << 3)
 
+#define INPUT_MOUSE_BTN_LEFT   (1u << 0)
+#define INPUT_MOUSE_BTN_RIGHT  (1u << 1)
+#define INPUT_MOUSE_BTN_MIDDLE (1u << 2)
+
 typedef struct __attribute__((packed)) {
     uint16_t keycode;
     uint8_t pressed;

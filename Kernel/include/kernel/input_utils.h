@@ -8,8 +8,7 @@ static inline char keycode_to_ascii(uint16_t keycode, uint8_t modifiers) {
     int shift = (modifiers & DRIVER_KBD_MOD_SHIFT) != 0;
     int caps = (modifiers & DRIVER_KBD_MOD_CAPS) != 0;
     int alpha_upper = shift ^ caps;
-
-    /* Base scancode (low byte for Set 1) */
+    
     uint8_t base = (uint8_t)(keycode & 0xFFu);
     int extended = (keycode & 0xFF00u) != 0;
 

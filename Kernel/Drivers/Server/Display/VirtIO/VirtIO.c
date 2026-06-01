@@ -818,6 +818,11 @@ static void virtio_gpu_driver_shutdown(void)
 }
 
 static const driver_module_descriptor_t g_virtio_display_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_DISPLAY,
+    .load_priority = 20u,
+    .deps = { "PCI_Driver.ELF", NULL },
     .driver_api = &g_virtio_display_driver,
     .shutdown = virtio_gpu_driver_shutdown,
 };

@@ -592,6 +592,11 @@ static void ps2_driver_shutdown(void)
 }
 
 static const driver_module_descriptor_t g_ps2_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_INPUT,
+    .load_priority = 40u,
+    .deps = { NULL },
     .driver_api = &g_ps2_input_driver,
     .shutdown = ps2_driver_shutdown,
 };

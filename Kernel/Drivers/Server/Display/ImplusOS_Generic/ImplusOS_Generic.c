@@ -294,6 +294,11 @@ static void generic_fb_driver_shutdown(void)
 }
 
 static const driver_module_descriptor_t g_generic_fb_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_DISPLAY,
+    .load_priority = 90u,
+    .deps = { NULL },
     .driver_api = &g_generic_fb_driver,
     .shutdown = generic_fb_driver_shutdown,
 };

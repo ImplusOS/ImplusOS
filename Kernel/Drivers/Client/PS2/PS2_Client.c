@@ -11,7 +11,7 @@ static uint8_t g_ps2_initialized = 0;
 
 static bool ensure_ps2_initialized(void)
 {
-    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_INPUT, "PS2_Driver.ELF");
+    const device_t *device = driver_manager_find(DEVICE_TYPE_INPUT, "PS2_Driver.ELF");
     const driver_input_t *driver = device ? (const driver_input_t *)device->ops : NULL;
 
     if (driver == NULL) {

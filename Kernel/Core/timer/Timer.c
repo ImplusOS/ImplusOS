@@ -10,6 +10,7 @@
 #include "Core/window/WindowManager_Kernel.h"
 #include "Debug/serial/Serial.h"
 #include "Drivers/Module/DriverManager.h"
+#include "Drivers/Module/InputManager.h"
 #include "Network/network_main.h"
 #include "smp/SMP_Main.h"
 #include "Drivers/RTC/RTC.h"
@@ -83,7 +84,7 @@ static void timer_irq_handler(void) {
             for (uint64_t i = 0; i < diff; i++) {
                 g_tick_count++;
                 
-                driver_manager_input_usb_schedule_poll();
+                input_manager_schedule_poll();
                 network_stack_on_timer_tick();
 
                 wm_kernel_on_timer();

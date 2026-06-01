@@ -5,6 +5,7 @@
 #include "Display_Main.h"
 #include "Drivers/Server/Display/Display_Driver.h"
 #include "Drivers/Module/DriverBinary.h"
+#include "Drivers/Module/DeviceRegistry.h"
 #include "Drivers/Module/DriverManager.h"
 #include "Drivers/Module/DriverSelect.h"
 #include "MemoryManagement/Memory_Main.h"
@@ -67,14 +68,16 @@ static bool display_refresh_driver(void)
         return false;
     }
 
-    if (g_active_display_driver ==
-        driver_manager_get_display_driver("VirtIO_Driver.ELF")) {
-        g_active_display_module_name = "VirtIO_Driver.ELF";
-    } else if (g_active_display_driver ==
-               driver_manager_get_display_driver("ImplusOS_Generic_Display_Driver.ELF")) {
-        g_active_display_module_name = "ImplusOS_Generic_Display_Driver.ELF";
-    } else {
-        g_active_display_module_name = NULL;
+    g_active_display_module_name = NULL;
+    for (uint32_t i = 0;; ++i) {
+        const device_t *dev = device_registry_find_by_index(DEVICE_TYPE_DISPLAY, i);
+        if (dev == NULL) {
+            break;
+        }
+        if (dev->ops == g_active_display_driver) {
+            g_active_display_module_name = dev->name;
+            break;
+        }
     }
 
     g_fb_width = 0;

@@ -8,7 +8,7 @@
 
 static const pci_driver_t *get_pci_driver(void)
 {
-    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_PCI, NULL);
+    const device_t *device = driver_manager_find(DEVICE_TYPE_PCI, NULL);
     return device ? (const pci_driver_t *)device->ops : NULL;
 }
 

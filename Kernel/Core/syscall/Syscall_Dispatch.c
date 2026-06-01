@@ -3,6 +3,7 @@
 #include "kernel/status.h"
 #include "kernel/system_info.h"
 #include "Drivers/Module/DriverManager.h"
+#include "Drivers/Module/InputManager.h"
 #include "Core/process/ProcessManager.h"
 #include "Core/sysinfo/SystemInfo.h"
 #include "IPC/IPC_Main.h"
@@ -205,9 +206,9 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
     }
 #endif
 
-    if (driver_manager_input_usb_check_poll()) {
+    if (input_manager_check_poll()) {
         uint64_t poll_flags = irq_save_disable();
-        driver_manager_input_usb_poll();
+        input_manager_poll();
         irq_restore(poll_flags);
     }
 
@@ -219,8 +220,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
 
     if (num == SYSCALL_INPUT_READ_KEYBOARD || num == SYSCALL_INPUT_READ_MOUSE) {
         uint64_t poll_flags = irq_save_disable();
-        driver_manager_input_ps2_poll();
-        driver_manager_input_usb_poll();
+        input_manager_poll();
         irq_restore(poll_flags);
     }
 
@@ -656,10 +656,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             }
             int32_t rc = 0;
             if (!wm_kernel_is_running()) {
-                rc = driver_manager_input_usb_read_keyboard(event_out);
-                if (rc == 0) {
-                    rc = driver_manager_input_ps2_read_keyboard(event_out);
-                }
+                rc = input_manager_read_keyboard(event_out);
             }
             set_syscall_i32(saved_rsp, rc);
             break;
@@ -673,10 +670,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             }
             int32_t rc = 0;
             if (!wm_kernel_is_running()) {
-                rc = driver_manager_input_usb_read_mouse(event_out);
-                if (rc == 0) {
-                    rc = driver_manager_input_ps2_read_mouse(event_out);
-                }
+                rc = input_manager_read_mouse(event_out);
             }
             set_syscall_i32(saved_rsp, rc);
             break;

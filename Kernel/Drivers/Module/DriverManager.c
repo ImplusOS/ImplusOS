@@ -1,5 +1,10 @@
 #include "DriverManager.h"
 
+#include "BlockManager.h"
+#include "DeviceRegistry.h"
+#include "DisplayManager.h"
+#include "InputManager.h"
+#include "NicManager.h"
 #include "kernel/boot_info.h"
 #include "DriverModule.h"
 #include "Debug/serial/Serial.h"
@@ -7,20 +12,9 @@
 #include "Core/vfs/VFS.h"
 #include "Drivers/Client/NIC/NIC.h"
 #include "Drivers/Client/PS2/PS2_Input.h"
-#include "Drivers/Client/USB/USB_Driver_API.h"
 
 #include <stddef.h>
 #include <string.h>
-
-typedef struct {
-    uint8_t attached;
-    driver_manager_kind_t kind;
-    char module_name[LOADED_FILE_NAME_MAX];
-    const void *driver_api;
-    device_t device;
-} driver_manager_entry_t;
-
-static driver_manager_entry_t g_driver_entries[MAX_LOADED_FILES];
 
 static bool driver_manager_streq(const char *lhs, const char *rhs)
 {
@@ -30,79 +24,44 @@ static bool driver_manager_streq(const char *lhs, const char *rhs)
     return strcmp(lhs, rhs) == 0;
 }
 
+static void driver_manager_device_detached(const char *name, device_type_t type)
+{
+    if (type == DEVICE_TYPE_DISPLAY) {
+        display_manager_on_device_detached(name);
+    }
+}
+
 void driver_manager_init(void)
 {
-    driver_manager_detach_all();
+    device_registry_init();
+    device_registry_set_detach_callback(driver_manager_device_detached);
 }
 
 bool driver_manager_attach(const char *module_name,
                            driver_manager_kind_t kind,
                            const void *driver_api)
 {
+    device_t dev;
+
     if (module_name == NULL || module_name[0] == '\0' || driver_api == NULL) {
         return false;
     }
 
-    for (uint32_t i = 0; i < MAX_LOADED_FILES; ++i) {
-        driver_manager_entry_t *entry = &g_driver_entries[i];
-        if (entry->attached != 0u &&
-            driver_manager_streq(entry->module_name, module_name)) {
-            entry->kind = kind;
-            entry->driver_api = driver_api;
-            entry->device.type = (device_type_t)kind;
-            entry->device.ops = driver_api;
-            entry->device.private = NULL;
-            entry->device.name = entry->module_name;
-            return true;
-        }
-    }
-
-    for (uint32_t i = 0; i < MAX_LOADED_FILES; ++i) {
-        driver_manager_entry_t *entry = &g_driver_entries[i];
-        if (entry->attached != 0u) {
-            continue;
-        }
-
-        memset(entry, 0, sizeof(*entry));
-        entry->attached = 1u;
-        entry->kind = kind;
-        entry->driver_api = driver_api;
-        strncpy(entry->module_name, module_name, sizeof(entry->module_name) - 1u);
-        entry->module_name[sizeof(entry->module_name) - 1u] = '\0';
-        entry->device.type = (device_type_t)kind;
-        entry->device.ops = driver_api;
-        entry->device.private = NULL;
-        entry->device.name = entry->module_name;
-        return true;
-    }
-
-    return false;
+    dev.type = kind;
+    dev.ops = driver_api;
+    dev.priv = NULL;
+    dev.name = module_name;
+    return device_registry_add(&dev);
 }
 
 bool driver_manager_detach(const char *module_name)
 {
-    if (module_name == NULL || module_name[0] == '\0') {
-        return false;
-    }
-
-    for (uint32_t i = 0; i < MAX_LOADED_FILES; ++i) {
-        driver_manager_entry_t *entry = &g_driver_entries[i];
-        if (entry->attached == 0u ||
-            !driver_manager_streq(entry->module_name, module_name)) {
-            continue;
-        }
-
-        memset(entry, 0, sizeof(*entry));
-        display_driver_detached(module_name);
-        return true;
-    }
-
-    return false;
+    return device_registry_remove(module_name);
 }
 
 void driver_manager_detach_all(void)
 {
-    memset(g_driver_entries, 0, sizeof(g_driver_entries));
+    device_registry_clear();
 }
 
 const void *driver_manager_get_by_module_name(const char *module_name)
@@ -111,11 +70,15 @@ const void *driver_manager_get_by_module_name(const char *module_name)
         return NULL;
     }
 
-    for (uint32_t i = 0; i < MAX_LOADED_FILES; ++i) {
-        const driver_manager_entry_t *entry = &g_driver_entries[i];
-        if (entry->attached != 0u &&
-            driver_manager_streq(entry->module_name, module_name)) {
-            return entry->driver_api;
+    for (device_type_t type = DEVICE_TYPE_PCI; type <= DEVICE_TYPE_FILESYSTEM; ++type) {
+        for (uint32_t index = 0;; ++index) {
+            const device_t *dev = device_registry_find_by_index(type, index);
+            if (dev == NULL) {
+                break;
+            }
+            if (driver_manager_streq(dev->name, module_name)) {
+                return dev->ops;
+            }
         }
     }
 
@@ -124,18 +87,7 @@ const void *driver_manager_get_by_module_name(const char *module_name)
 
 static const device_t *driver_manager_get_device_by_kind(driver_manager_kind_t kind)
 {
-    if (kind == DRIVER_MANAGER_KIND_UNKNOWN) {
-        return NULL;
-    }
-
-    for (uint32_t i = 0; i < MAX_LOADED_FILES; ++i) {
-        const driver_manager_entry_t *entry = &g_driver_entries[i];
-        if (entry->attached != 0u && entry->kind == kind) {
-            return &entry->device;
-        }
-    }
-
-    return NULL;
+    return device_registry_find(kind, NULL);
 }
 
 static const device_t *driver_manager_get_device_named(driver_manager_kind_t kind,
@@ -145,18 +97,7 @@ static const device_t *driver_manager_get_device_named(driver_manager_kind_t kin
         return NULL;
     }
 
-    for (uint32_t i = 0; i < MAX_LOADED_FILES; ++i) {
-        const driver_manager_entry_t *entry = &g_driver_entries[i];
-        if (entry->attached == 0u ||
-            entry->kind != kind ||
-            !driver_manager_streq(entry->module_name, module_name)) {
-            continue;
-        }
-
-        return &entry->device;
-    }
-
-    return NULL;
+    return device_registry_find(kind, module_name);
 }
 
 const device_t *driver_manager_find(driver_manager_kind_t kind,
@@ -189,35 +130,36 @@ const void *driver_manager_get_named(driver_manager_kind_t kind,
 
 const pci_driver_t *driver_manager_get_pci_driver(void)
 {
-    return (const pci_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_PCI);
+    return (const pci_driver_t *)driver_manager_get_by_kind(DEVICE_TYPE_PCI);
 }
 
 const iso9660_driver_t *driver_manager_get_iso9660_driver(void)
 {
-    return (const iso9660_driver_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_ISO9660);
+    return (const iso9660_driver_t *)driver_manager_get_named(DEVICE_TYPE_FILESYSTEM,
+                                                              "ISO9660_Driver.ELF");
 }
 
 const driver_input_t *driver_manager_get_ps2_driver(void)
 {
-    return (const driver_input_t *)driver_manager_get_named(DRIVER_MANAGER_KIND_INPUT,
+    return (const driver_input_t *)driver_manager_get_named(DEVICE_TYPE_INPUT,
                                                             "PS2_Driver.ELF");
 }
 
 const usb_master_vtable_t *driver_manager_get_usb_driver(void)
 {
-    return (const usb_master_vtable_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_USB);
+    return (const usb_master_vtable_t *)driver_manager_get_by_kind(DEVICE_TYPE_USB);
 }
 
 const driver_display_t *driver_manager_get_display_driver(const char *module_name)
 {
-    const device_t *device = driver_manager_find(DRIVER_MANAGER_KIND_DISPLAY,
+    const device_t *device = driver_manager_find(DEVICE_TYPE_DISPLAY,
                                                  module_name);
     return device ? (const driver_display_t *)device->ops : NULL;
 }
 
 const driver_nic_t *driver_manager_get_nic_driver(void)
 {
-    return (const driver_nic_t *)driver_manager_get_by_kind(DRIVER_MANAGER_KIND_NIC);
+    return (const driver_nic_t *)driver_manager_get_by_kind(DEVICE_TYPE_NIC);
 }
 
 bool driver_manager_unload_module(const char *module_name)
@@ -322,162 +264,163 @@ bool driver_manager_fs_get_case_sensitive_lookup(void)
 
 bool driver_manager_display_init(void)
 {
-    return display_init();
+    return display_manager_init();
 }
 
 bool driver_manager_display_is_ready(void)
 {
-    return display_is_ready();
+    return display_manager_is_ready();
 }
 
 uint32_t driver_manager_display_width(void)
 {
-    return display_width();
+    return display_manager_width();
 }
 
 uint32_t driver_manager_display_height(void)
 {
-    return display_height();
+    return display_manager_height();
 }
 
 void driver_manager_display_draw_pixel(uint32_t x, uint32_t y, uint32_t color)
 {
-    display_draw_pixel(x, y, color);
+    display_manager_draw_pixel(x, y, color);
 }
 
 uint32_t driver_manager_display_get_pixel(uint32_t x, uint32_t y)
 {
-    return display_get_pixel(x, y);
+    return display_manager_get_pixel(x, y);
 }
 
 void driver_manager_display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color)
 {
-    display_fill_rect(x, y, w, h, color);
+    display_manager_fill_rect(x, y, w, h, color);
 }
 
 void driver_manager_display_present(void)
 {
-    display_present();
+    display_manager_present();
 }
 
 void *driver_manager_display_get_framebuffer(void)
 {
-    return display_get_framebuffer();
+    return display_manager_get_framebuffer();
 }
 
 bool driver_manager_input_ps2_init(void)
 {
-    return ps2_input_init();
+    input_manager_init();
+    return true;
 }
 
 void driver_manager_input_ps2_poll(void)
 {
-    ps2_input_poll();
+    input_manager_poll();
 }
 
 int32_t driver_manager_input_ps2_read_keyboard(driver_keyboard_event_t *out_event)
 {
-    return ps2_input_read_keyboard(out_event);
+    return input_manager_read_keyboard(out_event);
 }
 
 int32_t driver_manager_input_ps2_read_mouse(driver_mouse_event_t *out_event)
 {
-    return ps2_input_read_mouse(out_event);
+    return input_manager_read_mouse(out_event);
 }
 
 void driver_manager_input_usb_init(void)
 {
-    usb_driver_client_init();
+    input_manager_init();
 }
 
 bool driver_manager_input_usb_read_sectors(uint32_t lba, uint8_t *buffer, uint32_t sectors)
 {
-    return usb_driver_client_read_sectors(lba, buffer, sectors);
+    return block_manager_read_sectors(lba, buffer, sectors);
 }
 
 bool driver_manager_input_usb_write_sectors(uint32_t lba, const uint8_t *buffer, uint32_t sectors)
 {
-    return usb_driver_client_write_sectors(lba, buffer, sectors);
+    return block_manager_write_sectors(lba, buffer, sectors);
 }
 
 int32_t driver_manager_input_usb_read_keyboard(driver_keyboard_event_t *out_event)
 {
-    return usb_driver_client_read_keyboard(out_event);
+    return input_manager_read_keyboard(out_event);
 }
 
 int32_t driver_manager_input_usb_read_mouse(driver_mouse_event_t *out_event)
 {
-    return usb_driver_client_read_mouse(out_event);
+    return input_manager_read_mouse(out_event);
 }
 
 void driver_manager_input_usb_poll(void)
 {
-    usb_driver_client_poll();
+    input_manager_poll();
 }
 
 void driver_manager_input_usb_drain_keyboard(driver_keyboard_event_t *tmp,
                                              void (*forward)(driver_keyboard_event_t *))
 {
-    usb_driver_client_drain_keyboard(tmp, forward);
+    input_manager_drain_keyboard(tmp, forward);
 }
 
 void driver_manager_input_usb_drain_mouse(driver_mouse_event_t *tmp,
                                           void (*forward)(driver_mouse_event_t *))
 {
-    usb_driver_client_drain_mouse(tmp, forward);
+    input_manager_drain_mouse(tmp, forward);
 }
 
 void driver_manager_input_usb_schedule_poll(void)
 {
-    usb_driver_client_schedule_poll();
+    input_manager_schedule_poll();
 }
 
 bool driver_manager_input_usb_check_poll(void)
 {
-    return usb_driver_client_check_poll();
+    return input_manager_check_poll();
 }
 
 bool driver_manager_nic_init(void)
 {
-    return nic_init();
+    return nic_manager_init();
 }
 
 bool driver_manager_nic_is_ready(void)
 {
-    return nic_is_ready();
+    return nic_manager_is_ready();
 }
 
 uint16_t driver_manager_nic_mtu(void)
 {
-    return nic_mtu();
+    return nic_manager_mtu();
 }
 
 void driver_manager_nic_get_mac(uint8_t mac_out[6])
 {
-    nic_get_mac(mac_out);
+    nic_manager_get_mac(mac_out);
 }
 
 bool driver_manager_nic_send_frame(const uint8_t *frame, uint16_t frame_len)
 {
-    return nic_send_frame(frame, frame_len);
+    return nic_manager_send_frame(frame, frame_len);
 }
 
 void driver_manager_nic_poll(void)
 {
-    nic_poll();
+    nic_manager_poll();
 }
 
 void driver_manager_nic_set_rx_callback(driver_nic_rx_callback_t cb)
 {
-    nic_set_rx_callback(cb);
+    nic_manager_set_rx_callback(cb);
 }
 
 void driver_manager_nic_schedule_poll(void)
 {
-    nic_schedule_poll();
+    nic_manager_schedule_poll();
 }
 
 bool driver_manager_nic_check_poll(void)
 {
-    return nic_check_poll();
+    return nic_manager_check_poll();
 }

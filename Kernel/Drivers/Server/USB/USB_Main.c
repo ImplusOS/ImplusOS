@@ -665,17 +665,6 @@ static void usb_master_init(void)
     usb_hid_init();
     usb_core_init();
     bot_init();
-    
-    if (g_hid_kbd_addr) {
-        g_api->serial_write_string("USB: HID keyboard found\n");
-    } else {
-        g_api->serial_write_string("USB: HID keyboard NOT found\n");
-    }
-    if (g_hid_mouse_addr) {
-        g_api->serial_write_string("USB: HID mouse found\n");
-    } else {
-        g_api->serial_write_string("USB: HID mouse NOT found\n");
-    }
 }
 
 static const usb_master_vtable_t g_usb_vtable = {
@@ -723,6 +712,11 @@ static void usb_driver_shutdown(void)
 }
 
 static const driver_module_descriptor_t g_usb_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_USB,
+    .load_priority = 30u,
+    .deps = { "PCI_Driver.ELF", NULL },
     .driver_api = &g_usb_vtable,
     .shutdown = usb_driver_shutdown,
 };

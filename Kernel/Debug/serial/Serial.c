@@ -48,41 +48,28 @@ void serial_write_string(const char* str) {
     }
 }
 
-void serial_write_uint64(uint64_t value) {
-    char hex[] = "0123456789ABCDEF";
+static void serial_write_hex(uint64_t value, uint8_t nibbles) {
+    static const char hex[] = "0123456789ABCDEF";
     serial_write_string("0x");
-    for (int i = 60; i >= 0; i -= 4) {
+    for (int i = (int)((nibbles - 1u) * 4u); i >= 0; i -= 4) {
         serial_write_char(hex[(value >> i) & 0xF]);
     }
+}
+
+void serial_write_uint64(uint64_t value) {
+    serial_write_hex(value, 16u);
 }
 
 void serial_write_uint32(uint32_t value) {
-    char hex[] = "0123456789ABCDEF";
-    serial_write_string("0x");
-    for (int i = 28; i >= 0; i -= 4) {
-        serial_write_char(hex[(value >> i) & 0xF]);
-    }
+    serial_write_hex(value, 8u);
 }
 
 void serial_write_uint16(uint16_t value) {
-    char hex[] = "0123456789ABCDEF";
-    serial_write_string("0x");
-    for (int i = 12; i >= 0; i -= 4) {
-        serial_write_char(hex[(value >> i) & 0xF]);
-    }
+    serial_write_hex(value, 4u);
 }
 
 void serial_write_uint8(uint8_t value) {
-    char hex[] = "0123456789ABCDEF";
-    serial_write_string("0x");
-    serial_write_char(hex[(value >> 4) & 0xF]);
-    serial_write_char(hex[value & 0xF]);
-}
-
-void panic(const char *msg) {
-    serial_write_string("PANIC: ");
-    serial_write_string(msg);
-    while (1);
+    serial_write_hex(value, 2u);
 }
 
 void serial_write_dec16(uint16_t v) {

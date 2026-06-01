@@ -34,13 +34,48 @@ typedef struct {
     const driver_module_descriptor_t *descriptor;
     void *load_base;
     uint32_t load_page_count;
-    driver_manager_kind_t kind;
+    device_type_t kind;
 } module_state_t;
 
 static module_state_t g_modules[MAX_LOADED_FILES];
 static uint32_t g_module_count = 0;
 
 static const driver_binary_t g_driver_api = {
+    .version_major = DRIVER_API_VERSION_MAJOR,
+    .version_minor = DRIVER_API_VERSION_MINOR,
+    .timer = {
+        .msleep = timer_msleep,
+        .hz = timer_hz,
+        .ticks = timer_ticks,
+    },
+    .mem = {
+        .malloc = malloc,
+        .free = free,
+        .dma_alloc = dma_alloc,
+        .dma_free = dma_free,
+        .virt_to_phys = virt_to_phys,
+        .memset = memset,
+        .memcpy = memcpy,
+    },
+    .io = {
+        .inb = inb,
+        .outb = outb,
+        .inl = inl,
+        .outl = outl,
+    },
+    .hw = {
+        .disk_read = disk_read,
+        .disk_write = disk_write,
+        .disk_get_partition_lba = disk_get_partition_lba,
+        .pci_read_config = pci_read_config,
+        .pci_write_config = pci_write_config,
+        .map_mmio_virt = map_mmio_virt,
+    },
+    .dbg = {
+        .write_char = serial_write_char,
+        .write_string = serial_write_string,
+        .write_uint32 = serial_write_uint32,
+    },
     .timer_msleep = timer_msleep,
     .timer_hz = timer_hz,
     .timer_ticks = timer_ticks,
@@ -66,69 +101,6 @@ static const driver_binary_t g_driver_api = {
     .serial_write_uint32 = serial_write_uint32,
 };
 
-static bool str_equal(const char *a, const char *b)
-{
-    if (a == NULL || b == NULL) {
-        return false;
-    }
-
-    while (*a != '\0' && *b != '\0') {
-        if (*a != *b) {
-            return false;
-        }
-        ++a;
-        ++b;
-    }
-
-    return (*a == '\0' && *b == '\0');
-}
-
-static void str_copy(char *dst, uint32_t dst_size, const char *src)
-{
-    if (dst == NULL || dst_size == 0u) {
-        return;
-    }
-
-    uint32_t i = 0;
-    if (src != NULL) {
-        while (src[i] != '\0' && i + 1u < dst_size) {
-            dst[i] = src[i];
-            ++i;
-        }
-    }
-
-    dst[i] = '\0';
-}
-
-static driver_manager_kind_t driver_module_detect_kind(const char *name)
-{
-    if (name == NULL) {
-        return DRIVER_MANAGER_KIND_UNKNOWN;
-    }
-
-    if (strcmp(name, "PCI_Driver.ELF") == 0) {
-        return DRIVER_MANAGER_KIND_PCI;
-    }
-    if (strcmp(name, "FAT32_Driver.ELF") == 0) {
-        return DRIVER_MANAGER_KIND_FAT32;
-    }
-    if (strcmp(name, "ISO9660_Driver.ELF") == 0) {
-        return DRIVER_MANAGER_KIND_ISO9660;
-    }
-    if (strcmp(name, "VirtIO_Driver.ELF") == 0 ||
-        strcmp(name, "ImplusOS_Generic_Display_Driver.ELF") == 0) {
-        return DRIVER_MANAGER_KIND_DISPLAY;
-    }
-    if (strcmp(name, "PS2_Driver.ELF") == 0) {
-        return DRIVER_MANAGER_KIND_INPUT;
-    }
-    if (strcmp(name, "USB_Driver.ELF") == 0) {
-        return DRIVER_MANAGER_KIND_USB;
-    }
-
-    return DRIVER_MANAGER_KIND_UNKNOWN;
-}
-
 static module_state_t *driver_module_find_state(const char *name)
 {
     if (name == NULL || name[0] == '\0') {
@@ -136,35 +108,11 @@ static module_state_t *driver_module_find_state(const char *name)
     }
 
     for (uint32_t i = 0; i < g_module_count; ++i) {
-        if (g_modules[i].present != 0u && str_equal(g_modules[i].name, name)) {
+        if (g_modules[i].present != 0u && strcmp(g_modules[i].name, name) == 0) {
             return &g_modules[i];
         }
     }
 
-    return NULL;
-}
-
-static uint32_t driver_module_dependency_count(const char *name)
-{
-    if (name == NULL) {
-        return 0u;
-    }
-    if (strcmp(name, "VirtIO_Driver.ELF") == 0 ||
-        strcmp(name, "USB_Driver.ELF") == 0) {
-        return 1u;
-    }
-    return 0u;
-}
-
-static const char *driver_module_dependency_name(const char *name, uint32_t index)
-{
-    if (index != 0u || name == NULL) {
-        return NULL;
-    }
-    if (strcmp(name, "VirtIO_Driver.ELF") == 0 ||
-        strcmp(name, "USB_Driver.ELF") == 0) {
-        return "PCI_Driver.ELF";
-    }
     return NULL;
 }
 
@@ -176,10 +124,15 @@ static bool driver_module_has_loaded_dependents(const char *name)
             continue;
         }
 
-        uint32_t dep_count = driver_module_dependency_count(state->name);
-        for (uint32_t dep_index = 0; dep_index < dep_count; ++dep_index) {
-            const char *dependency = driver_module_dependency_name(state->name, dep_index);
-            if (dependency != NULL && strcmp(dependency, name) == 0) {
+        if (state->descriptor == NULL) {
+            continue;
+        }
+        for (uint32_t dep_index = 0; dep_index < DRIVER_MAX_DEPS; ++dep_index) {
+            const char *dependency = state->descriptor->deps[dep_index];
+            if (dependency == NULL) {
+                break;
+            }
+            if (strcmp(dependency, name) == 0) {
                 return true;
             }
         }
@@ -203,7 +156,7 @@ void driver_module_manager_init(const BOOT_INFO *boot_info)
         g_modules[i].descriptor = NULL;
         g_modules[i].load_base = NULL;
         g_modules[i].load_page_count = 0u;
-        g_modules[i].kind = DRIVER_MANAGER_KIND_UNKNOWN;
+        g_modules[i].kind = DEVICE_TYPE_UNKNOWN;
         g_modules[i].name[0] = '\0';
     }
 
@@ -240,8 +193,9 @@ void driver_module_manager_init(const BOOT_INFO *boot_info)
         state->present = 1u;
         state->file_data = kernel_buf;
         state->file_size = file->Size;
-        state->kind = driver_module_detect_kind(file->Name);
-        str_copy(state->name, LOADED_FILE_NAME_MAX, file->Name);
+        state->kind = DEVICE_TYPE_UNKNOWN;
+        strncpy(state->name, file->Name, LOADED_FILE_NAME_MAX - 1u);
+        state->name[LOADED_FILE_NAME_MAX - 1u] = '\0';
         ++g_module_count;
     }
 }
@@ -301,26 +255,12 @@ void *driver_module_manager_get_driver(const char *name)
 #define DRIVER_MODULE_MAX_FILE_SIZE  (2ULL * 1024ULL * 1024ULL)
 #define DRIVER_MODULE_MAX_IMAGE_SIZE (4ULL * 1024ULL * 1024ULL)
 
-typedef struct {
-    const char *name;
-    uint32_t priority;
-} driver_priority_t;
-
-static const driver_priority_t g_driver_priority[] = {
-    {"PCI_Driver.ELF", 10u},
-    {"VirtIO_Driver.ELF", 20u},
-    {"USB_Driver.ELF", 30u},
-    {"PS2_Driver.ELF", 40u},
-    {"FAT32_Driver.ELF", 100u},
-    {"ISO9660_Driver.ELF", 100u},
-};
-
-static uint32_t get_driver_priority(const char *name)
+static uint32_t get_driver_priority(const module_state_t *state)
 {
-    for (uint32_t i = 0; i < sizeof(g_driver_priority) / sizeof(g_driver_priority[0]); ++i) {
-        if (strcmp(name, g_driver_priority[i].name) == 0) {
-            return g_driver_priority[i].priority;
-        }
+    if (state != NULL &&
+        state->descriptor != NULL &&
+        state->descriptor->magic == DRIVER_DESCRIPTOR_MAGIC) {
+        return state->descriptor->load_priority;
     }
     return 50u;
 }
@@ -332,7 +272,7 @@ static void driver_module_sort(void)
         uint32_t j = i;
 
         while (j > 0u &&
-               get_driver_priority(g_modules[j - 1u].name) > get_driver_priority(key.name)) {
+               get_driver_priority(&g_modules[j - 1u]) > get_driver_priority(&key)) {
             g_modules[j] = g_modules[j - 1u];
             --j;
         }
@@ -347,14 +287,6 @@ static bool driver_module_activate(module_state_t *state)
         return false;
     }
 
-
-    for (uint32_t i = 0; i < driver_module_dependency_count(state->name); ++i) {
-        const char *dependency = driver_module_dependency_name(state->name, i);
-        if (dependency == NULL || !driver_module_manager_reload_by_name(dependency)) {
-            return false;
-        }
-    }
-
     uint64_t entry = 0;
     if (!driver_module_manager_load_by_name(state->name,
                                             DRIVER_MODULE_MAX_FILE_SIZE,
@@ -365,13 +297,23 @@ static bool driver_module_activate(module_state_t *state)
 
     driver_module_init_fn_t init_fn = (driver_module_init_fn_t)(uintptr_t)entry;
     const driver_module_descriptor_t *descriptor = init_fn(&g_driver_api);
-    if (descriptor == NULL || descriptor->driver_api == NULL) {
+    if (descriptor == NULL ||
+        descriptor->magic != DRIVER_DESCRIPTOR_MAGIC ||
+        descriptor->version < DRIVER_DESCRIPTOR_VERSION ||
+        descriptor->driver_api == NULL ||
+        descriptor->kind == DEVICE_TYPE_UNKNOWN) {
         return false;
+    }
+
+    for (uint32_t i = 0; i < DRIVER_MAX_DEPS && descriptor->deps[i] != NULL; ++i) {
+        if (!driver_module_manager_reload_by_name(descriptor->deps[i])) {
+            return false;
+        }
     }
 
     state->descriptor = descriptor;
     state->vtable = (void *)descriptor->driver_api;
-    state->kind = driver_module_detect_kind(state->name);
+    state->kind = descriptor->kind;
     return driver_manager_attach(state->name, state->kind, descriptor->driver_api);
 }
 

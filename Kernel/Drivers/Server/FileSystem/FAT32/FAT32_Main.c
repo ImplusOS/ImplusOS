@@ -1982,6 +1982,11 @@ static void fat32_driver_shutdown(void)
 }
 
 static const driver_module_descriptor_t g_fat32_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_FILESYSTEM,
+    .load_priority = 100u,
+    .deps = { NULL },
     .driver_api = &g_fat32_driver,
     .shutdown = fat32_driver_shutdown,
 };

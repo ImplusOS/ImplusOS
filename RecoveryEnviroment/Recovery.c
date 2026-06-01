@@ -682,9 +682,6 @@ void _start(void)
     run_recovery();
     while (1) {
         int ch = read_key_input();
-        serial_write_string("Key pressed: ");
-        serial_write_string((char *)&ch);
-        serial_write_string("\n");
         process_yield();
     }
 }

@@ -65,6 +65,8 @@ static start_menu_app_t g_start_apps[] = {
     {"File Manager",   "/Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF", "📁", NULL, 0, 0, false},
     {"Editor",         "/Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF", "📝", NULL, 0, 0, false},
     {"Process Manager","/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF", "📊", NULL, 0, 0, false},
+    {"Implus Store",   "/Userland/UserApps/com_ImplusOS_ImplusStore/com_ImplusOS_ImplusStore.ELF", "🛍️", NULL, 0, 0, false},
+    {"Network Test",   "/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF", "🌐", NULL, 0, 0, false},
     {"Virtual Machine","/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF", "🖥️", NULL, 0, 0, false},
     {"Example App",    "/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF", "🚀", NULL, 0, 0, false},
     {"System Info",    "/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF", "ℹ️", NULL, 0, 0, false},
@@ -2411,6 +2413,15 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
                 }
             }
         }
+
+        if (srv->focused_id) {
+            wm_window_t *focused = slot_find_by_id(srv, srv->focused_id);
+            if (focused) {
+                me->x = (uint16_t)((int32_t)mx - (int32_t)focused->x);
+                me->y = (uint16_t)((int32_t)my - (int32_t)focused->y - (int32_t)WM_TITLE_HEIGHT);
+            }
+        }
+
         wm_server_route_mouse(srv, msg);
         break;
     }

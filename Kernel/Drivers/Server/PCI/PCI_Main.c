@@ -173,6 +173,11 @@ static void pci_driver_shutdown(void)
 }
 
 static const driver_module_descriptor_t g_pci_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_PCI,
+    .load_priority = 10u,
+    .deps = { NULL },
     .driver_api = &g_pci_driver,
     .shutdown = pci_driver_shutdown,
 };

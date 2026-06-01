@@ -6,6 +6,7 @@
 #include "Input.h"
 #include "../../../../libc/include/string.h"
 #include "../../../../libc/include/stdlib.h"
+#include "../../../../libc/include/stdio.h"
 
 #define IED_MAX_LINES    512
 #define IED_MAX_LINE_LEN 256
@@ -25,6 +26,13 @@ static int  g_scroll_top = 0;
 static int  g_visible_rows = 0;
 static char g_filepath[IED_MAX_PATH] = {0};
 static int  g_modified = 0;
+static char g_status[128] = "Ctrl+S saves to /Userland/editor.txt. Ctrl+L reloads it. Ctrl+Q quits.";
+
+static void editor_set_status(const char *status)
+{
+    strncpy(g_status, status ? status : "", sizeof(g_status) - 1);
+    g_status[sizeof(g_status) - 1] = '\0';
+}
 
 static void editor_render(void)
 {
@@ -55,6 +63,7 @@ static void editor_render(void)
     status[spos] = '\0';
 
     window_draw_text(g_win, 4, (uint32_t)(g_win_h - g_char_h - 2), status, 0xFFBAC2DE, 14.0f);
+    window_draw_text(g_win, 220, (uint32_t)(g_win_h - g_char_h - 2), g_status, 0xFF89B4FA, 12.0f);
 
     g_visible_rows = (g_win_h - g_char_h - 4) / g_char_h;
     for (int row = 0; row < g_visible_rows; row++) {
@@ -87,7 +96,10 @@ static void editor_render(void)
 static void editor_load(const char *path)
 {
     int32_t fd = file_open(path, 0);
-    if (fd < 0) return;
+    if (fd < 0) {
+        editor_set_status("Could not open file.");
+        return;
+    }
 
     g_line_count = 1;
     memset(g_lines, 0, sizeof(g_lines));
@@ -114,15 +126,26 @@ done:
     g_line_count = line + 1;
     file_close(fd);
     strncpy(g_filepath, path, IED_MAX_PATH - 1);
+    g_filepath[IED_MAX_PATH - 1] = '\0';
+    g_cursor_row = 0;
+    g_cursor_col = 0;
+    g_scroll_top = 0;
     g_modified = 0;
+    editor_set_status("Loaded file.");
 }
 
 static void editor_save(void)
 {
-    if (g_filepath[0] == '\0') return;
+    if (g_filepath[0] == '\0') {
+        strncpy(g_filepath, "/Userland/editor.txt", IED_MAX_PATH - 1);
+        g_filepath[IED_MAX_PATH - 1] = '\0';
+    }
 
     int32_t fd = file_creat(g_filepath);
-    if (fd < 0) return;
+    if (fd < 0) {
+        editor_set_status("Save failed.");
+        return;
+    }
 
     for (int i = 0; i < g_line_count; i++) {
         int len = (int)strlen(g_lines[i]);
@@ -135,6 +158,7 @@ static void editor_save(void)
     }
     file_close(fd);
     g_modified = 0;
+    editor_set_status("Saved.");
 }
 
 static void editor_insert_char(char c)
@@ -224,6 +248,7 @@ void _start(void)
 
     memset(g_lines, 0, sizeof(g_lines));
     g_line_count = 1;
+    editor_load("/Userland/editor.txt");
 
     editor_render();
 
@@ -239,6 +264,12 @@ void _start(void)
 
             if ((mod & INPUT_KBD_MOD_CTRL) && (c == 's' || c == 'S' || kbd.keycode == 0x1F)) {
                 editor_save();
+                editor_render();
+                continue;
+            }
+
+            if ((mod & INPUT_KBD_MOD_CTRL) && (c == 'l' || c == 'L' || kbd.keycode == 0x26)) {
+                editor_load(g_filepath[0] ? g_filepath : "/Userland/editor.txt");
                 editor_render();
                 continue;
             }

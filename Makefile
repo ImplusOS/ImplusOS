@@ -153,6 +153,7 @@ app_build: $(USERLAND_INIT_OBJS)
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_shell
 	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_version
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_exampleApp
+	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_ImplusStore
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_NetworkTest
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_editor
 	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_filemanager
@@ -363,8 +364,6 @@ $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 	mkdir -p $(dir $@)
 	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
 
-BOOT_RESOURCE_DIR := BootManager/Resource
-
 $(BUILD_DIR)/RecoveryEnviroment/%.o: RecoveryEnviroment/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -IUserland -IUserland/API -c $< -o $@
@@ -372,6 +371,8 @@ $(BUILD_DIR)/RecoveryEnviroment/%.o: RecoveryEnviroment/%.c
 $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	mkdir -p $(dir $@)
 	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
+
+BOOT_RESOURCE_DIR := BootManager/Resource
 
 image: install_payload recovery_build
 	@mkdir -p $(IMAGE_DIR)
