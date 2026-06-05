@@ -21,7 +21,7 @@ static bool driver_manager_streq(const char *lhs, const char *rhs)
     if (lhs == NULL || rhs == NULL) {
         return false;
     }
-    return strcmp(lhs, rhs) == 0;
+    return strcasecmp(lhs, rhs) == 0;
 }
 
 static void driver_manager_device_detached(const char *name, device_type_t type)

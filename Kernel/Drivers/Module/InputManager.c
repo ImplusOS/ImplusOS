@@ -1,6 +1,7 @@
 #include "InputManager.h"
 
 #include "DeviceRegistry.h"
+#include "Debug/serial/Serial.h"
 
 #define INPUT_MAX_DRIVERS 8u
 
@@ -32,7 +33,6 @@ void input_manager_init(void)
         if (dev == 0) {
             break;
         }
-
         input_manager_add_driver((const driver_input_t *)dev->ops);
     }
 
@@ -42,11 +42,8 @@ void input_manager_init(void)
         if (dev == 0) {
             break;
         }
-
         usb = (const usb_master_vtable_t *)dev->ops;
-        if (usb != 0) {
-            input_manager_add_driver(&usb->input);
-        }
+        g_drivers[g_driver_count++] = &usb->input;
     }
 }
 

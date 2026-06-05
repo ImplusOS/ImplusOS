@@ -67,34 +67,32 @@ static spinlock_t g_swap_lock;
 #define SWAP_SLOT_COUNT 128
 static swap_slot_t g_swap_slots[SWAP_SLOT_COUNT];
 
+#include "interfaces/hal_cpu.h"
+
 static inline uint64_t read_cr3(void)
 {
-    uint64_t value;
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(value));
-    return value;
+    return hal_cpu_read_cr(3);
 }
 
 static inline void write_cr3(uint64_t value)
 {
-    __asm__ volatile ("mov %0, %%cr3" :: "r"(value) : "memory");
+    hal_cpu_write_cr(3, value);
 }
 
 static inline void enable_paging(void)
 {
-    uint64_t cr4;
-    __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
+    uint64_t cr4 = hal_cpu_read_cr(4);
     cr4 |= (1ULL << 5);
-    __asm__ volatile ("mov %0, %%cr4" :: "r"(cr4));
+    hal_cpu_write_cr(4, cr4);
 
-    uint64_t cr0;
-    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+    uint64_t cr0 = hal_cpu_read_cr(0);
     cr0 |= (1ULL << 31);
-    __asm__ volatile ("mov %0, %%cr0" :: "r"(cr0));
+    hal_cpu_write_cr(0, cr0);
 }
 
 static inline void invlpg_addr(uint64_t addr)
 {
-    __asm__ volatile ("invlpg (%0)" :: "r"(addr) : "memory");
+    hal_mmu_invalidate_tlb(addr);
 }
 
 #include "smp/SMP_Main.h"
@@ -575,11 +573,10 @@ void *map_mmio_virt(uint64_t phys_addr)
 
 void init_paging(void)
 {
-    uint32_t efer_low, efer_high;
     uint32_t msr = 0xC0000080;
-    __asm__ volatile ("rdmsr" : "=a"(efer_low), "=d"(efer_high) : "c"(msr));
-    efer_low |= (1 << 11); 
-    __asm__ volatile ("wrmsr" :: "c"(msr), "a"(efer_low), "d"(efer_high));
+    uint64_t efer = hal_cpu_read_msr(msr);
+    efer |= (1 << 11); 
+    hal_cpu_write_msr(msr, efer);
 
     memset(g_kernel_pml4, 0, sizeof(g_kernel_pml4));
     memset(g_kernel_pdpt, 0, sizeof(g_kernel_pdpt));

@@ -1,4 +1,5 @@
 #include "IDT_Main.h"
+#include "interfaces/hal_cpu.h"
 
 #include "Platform/io/IO_Main.h"
 #include "MemoryManagement/Memory_Main.h"
@@ -89,12 +90,9 @@ static void panic_exception(const char *name,
                             uint64_t rbp,
                             uint64_t cr2)
 {
-    uint64_t cr0 = 0;
-    uint64_t cr3 = 0;
-    uint64_t cr4 = 0;
-    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
-    __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
+    uint64_t cr0 = hal_cpu_read_cr(0);
+    uint64_t cr3 = hal_cpu_read_cr(3);
+    uint64_t cr4 = hal_cpu_read_cr(4);
 
     serial_write_string("\n[OS] [PANIC] Fatal exception\n");
     serial_write_string("[OS] [PANIC] name: ");
@@ -134,7 +132,7 @@ static void panic_exception(const char *name,
                         PANIC_STACK_DUMP_QWORDS * (uint32_t)sizeof(uint64_t));
 
     while (1) {
-        __asm__ volatile ("hlt");
+        hal_cpu_halt();
     }
 }
 

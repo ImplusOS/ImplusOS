@@ -2,6 +2,7 @@
 #include "../../../BootManager/ISO9660.h"
 #include <stdint.h>
 #include <stddef.h>
+#include "interfaces/hal_cpu.h"
 
 #define SECTOR_SIZE 512u
 #define ISO_SECTOR_SIZE 2048u
@@ -101,18 +102,18 @@ static int iso_find_path(uint8_t drive, uint32_t root_lba, uint32_t root_size, c
 
 void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     if (!params || params->signature != BIOS_BOOT_PARAMS_SIGNATURE) {
-        for (;;) __asm__ volatile("hlt");
+        for (;;) hal_cpu_halt();
     }
 
     uint8_t drive = params->boot_drive;
     if (read_absolute(drive, 64, g_sector) != 0) {
-        for (;;) __asm__ volatile("hlt");
+        for (;;) hal_cpu_halt();
     }
 
     ISO9660_PVD *pvd = (ISO9660_PVD *)g_sector;
     if (pvd->type != 1 || pvd->identifier[0] != 'C' || pvd->identifier[1] != 'D' ||
         pvd->identifier[2] != '0' || pvd->identifier[3] != '0' || pvd->identifier[4] != '1') {
-        for (;;) __asm__ volatile("hlt");
+        for (;;) hal_cpu_halt();
     }
 
     uint32_t root_lba = pvd->root_dir_record.extent_lba_le;
@@ -120,7 +121,7 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
 
     uint32_t bm_lba, bm_size;
     if (iso_find_path(drive, root_lba, root_size, "/BootManager/BootManager_BIOS.BIN", &bm_lba, &bm_size) != 0) {
-        for (;;) __asm__ volatile("hlt");
+        for (;;) hal_cpu_halt();
     }
 
     uint8_t *dst = (uint8_t *)0x10000;
@@ -130,7 +131,7 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     while (remaining > 0) {
         for (int b = 0; b < 4; ++b) {
             if (read_absolute(drive, (uint64_t)cur_lba * 4 + b, g_sector + b * 512) != 0) {
-                for (;;) __asm__ volatile("hlt");
+                for (;;) hal_cpu_halt();
             }
         }
         uint32_t copy = (remaining < ISO_SECTOR_SIZE) ? remaining : ISO_SECTOR_SIZE;
@@ -143,5 +144,5 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     void (*entry)(BIOS_BOOT_PARAMS *) = (void (*)(BIOS_BOOT_PARAMS *))0x10000;
     entry(params);
 
-    for (;;) __asm__ volatile("hlt");
+    for (;;) hal_cpu_halt();
 }

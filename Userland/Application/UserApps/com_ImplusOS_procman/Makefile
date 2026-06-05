@@ -1,5 +1,18 @@
-CC := x86_64-elf-gcc
-LD := x86_64-elf-ld
+ARCH ?= x86_64
+
+ifeq ($(ARCH),arm64)
+    CC := aarch64-elf-gcc
+    CXX := aarch64-elf-g++
+    LD := aarch64-elf-ld
+    AR := aarch64-elf-ar
+    ARCH_CFLAGS := -mstrict-align -mno-outline-atomics
+else
+    CC := x86_64-elf-gcc
+    CXX := x86_64-elf-g++
+    LD := x86_64-elf-ld
+    AR := x86_64-elf-ar
+    ARCH_CFLAGS := -mcmodel=large -mno-red-zone
+endif
 
 APP_NAME := com_ImplusOS_procman
 SRC_DIR  := .
@@ -14,7 +27,7 @@ include ../../../AppCommon.mk
 OBJS := $(APP_OBJS) $(COMMON_OBJS)
 
 CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
-          -mcmodel=large -mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
+          $(ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
           -I../../../../libc/include -I../../../../libc/include/sys \
 		  -I../../../../Userland \
 		  -I../../../../Userland/API \

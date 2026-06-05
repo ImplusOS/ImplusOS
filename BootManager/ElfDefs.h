@@ -7,7 +7,10 @@
 #define PT_LOAD   1
 #define ET_DYN    3
 #define SHT_RELA  4
+#define EM_X86_64 62
+#define EM_AARCH64 183
 #define R_X86_64_RELATIVE 8
+#define R_AARCH64_RELATIVE 1027
 
 typedef struct {
     unsigned char e_ident[EI_NIDENT];

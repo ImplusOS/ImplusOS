@@ -1,6 +1,9 @@
 #include "XHCI.h"
 #include "Drivers/Module/DriverBinary.h"
 #include "../USB_Main.h"
+#ifndef IMPLUS_DRIVER_MODULE
+#include "interfaces/hal_cpu.h"
+#endif
 #include <stddef.h>
 
 extern const driver_binary_t *g_api;
@@ -31,11 +34,18 @@ static volatile uint64_t *g_dcbaa      = NULL;
 static uint64_t           g_dcbaa_phys = 0;
 
 #ifdef IMPLUS_DRIVER_MODULE
+#define hal_cpu_pause               g_api->hal.cpu_pause
+#define hal_cpu_enable_interrupts   g_api->hal.cpu_enable_interrupts
+#define hal_cpu_halt                g_api->hal.cpu_halt
+#define hal_cpu_disable_interrupts  g_api->hal.cpu_disable_interrupts
+#define hal_cpu_memory_barrier      g_api->hal.cpu_memory_barrier
+#define hal_cpu_save_interrupts     g_api->hal.cpu_save_interrupts
+#define hal_cpu_restore_interrupts  g_api->hal.cpu_restore_interrupts
 typedef struct { volatile uint32_t value; } spinlock_t;
 static inline void spinlock_init(spinlock_t *l) { l->value = 0; }
 static inline void spinlock_lock(spinlock_t *l) {
     while (__sync_lock_test_and_set(&l->value, 1)) {
-        while (l->value) { __asm__ volatile("pause"); }
+        while (l->value) { hal_cpu_pause(); }
     }
 }
 static inline void spinlock_unlock(spinlock_t *l) { __sync_lock_release(&l->value); }
@@ -99,7 +109,7 @@ static inline void xhci_relax_poll(uint32_t *spins)
     if ((*spins & 0x3FFu) == 0) {
         xhci_delay_ms(1);
     } else {
-        __asm__ volatile("pause" ::: "memory");
+        hal_cpu_pause();
     }
     (*spins)++;
 }
@@ -177,23 +187,32 @@ static inline bool xhci_interrupt_pending(void)
 
 static void xhci_wait_for_work(uint64_t rflags, uint32_t *idle_spins)
 {
-    if ((rflags & (1ull << 9)) == 0) {
-        __asm__ volatile("pause" ::: "memory");
+    #if defined(__aarch64__)
+        if ((rflags & (1ull << 7)) != 0) {
+            hal_cpu_pause();
+            return;
+        }
+    #else
+        if ((rflags & (1ull << 9)) == 0) {
+            hal_cpu_pause();
         return;
-    }
-
+        }
+    #endif
+    
     if (xhci_interrupt_pending()) {
-        __asm__ volatile("pause" ::: "memory");
+        hal_cpu_pause();
         return;
     }
 
     if ((*idle_spins & 0x7u) != 0) {
-        __asm__ volatile("pause" ::: "memory");
+        hal_cpu_pause();
         (*idle_spins)++;
         return;
     }
 
-    __asm__ volatile("sti; hlt; cli" ::: "memory");
+    hal_cpu_enable_interrupts();
+    hal_cpu_halt();
+    hal_cpu_disable_interrupts();
     (*idle_spins)++;
 }
 
@@ -245,9 +264,15 @@ void xhci_delay_ms(uint32_t ms) {
 bool xhci_is_ready(void) { return g_ready; }
 
 static inline uint64_t xhci_read_tsc(void) {
+#if defined(__aarch64__)
+    uint64_t val;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(val));
+    return val;
+#else
     uint32_t lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | (uint64_t)lo;
+#endif
 }
 
 static void xhci_calibrate_tsc(void) {
@@ -266,7 +291,7 @@ static void xhci_tsc_busy_ms(uint32_t ms) {
     uint64_t t0 = xhci_read_tsc();
     uint64_t span = (uint64_t)ms * g_tsc_per_ms;
     while (xhci_read_tsc() - t0 < span)
-        __asm__ volatile("pause" ::: "memory");
+        hal_cpu_pause();
 }
 
 static inline uint64_t pci_read_bar_fixed(uint8_t bus, uint8_t dev,
@@ -319,24 +344,24 @@ static bool xhci_take_ownership(void)
 
         if (id == 1u) {
             ext[1] = 0;
-            __asm__ volatile("mfence" ::: "memory");
+            hal_cpu_memory_barrier();
 
             uint32_t val = ext[0];
             val |= (1u << 24);
             ext[0] = val;
-            __asm__ volatile("mfence" ::: "memory");
+            hal_cpu_memory_barrier();
 
             int timeout = 1000000;
             while ((ext[0] & (1u << 16)) && --timeout)
-                __asm__ volatile("pause");
+                hal_cpu_pause();
 
             if (timeout == 0) {
                 ext[0] = (ext[0] & ~(1u << 16)) | (1u << 24);
-                __asm__ volatile("mfence" ::: "memory");
+                hal_cpu_memory_barrier();
             }
 
             ext[1] = 0;
-            __asm__ volatile("mfence" ::: "memory");
+            hal_cpu_memory_barrier();
             return true;
         }
 
@@ -363,7 +388,7 @@ static bool xhci_setup_scratchpads(uint32_t num_sp, uint32_t page_bytes)
     }
 
     g_dcbaa[0] = table_phys;
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
     return true;
 }
 
@@ -386,7 +411,7 @@ static bool init_xfer_ring(uint8_t slot_idx, uint8_t ep_idx)
         (6u << 10) |
         (1u << 1)  |
         1u;
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     r->enq   = 0;
     r->cycle = 1;
@@ -398,16 +423,16 @@ static bool xfer_enqueue(xhci_xfer_ring_t *r, xhci_trb_t *trb)
     volatile xhci_trb_t *slot = &r->ring[r->enq];
     slot->parameter = trb->parameter;
     slot->status    = trb->status;
-    __asm__ volatile("sfence" ::: "memory");
+    hal_cpu_memory_barrier();
     slot->control   = (trb->control & ~1u) | r->cycle;
-    __asm__ volatile("sfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     r->enq++;
     if (r->enq >= TRANSFER_RING_SIZE - 1) {
         volatile xhci_trb_t *link = &r->ring[TRANSFER_RING_SIZE - 1];
         uint32_t lctrl = link->control;
         link->control = (lctrl & ~1u) | (1u << 1) | r->cycle;
-        __asm__ volatile("sfence" ::: "memory");
+        hal_cpu_memory_barrier();
         r->enq    = 0;
         r->cycle ^= 1;
     }
@@ -427,7 +452,7 @@ static bool xhci_wait_event(uint32_t expected_type,
     uint64_t rflags;
     uint32_t idle_spins = 0;
     
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+    rflags = hal_cpu_save_interrupts();
 
     while (1) {
         if (xhci_read_tsc() - tsc_abs0 >= (uint64_t)timeout_ms * tsc_per_ms) {
@@ -442,7 +467,7 @@ static bool xhci_wait_event(uint32_t expected_type,
                 if (status_out) *status_out = (state == 1u) ? 1u : 0u;
                 result = (state == 1u);
                 spinlock_unlock(&g_xhci_lock);
-                if (rflags & (1ull << 9)) __asm__ volatile("sti" ::: "memory");
+                hal_cpu_restore_interrupts(rflags);
                 return result;
             }
         } else if (expected_type == 33u) {
@@ -451,7 +476,7 @@ static bool xhci_wait_event(uint32_t expected_type,
                 result = (g_cmd_cc == 1u || g_cmd_cc == 13u);
                 g_cmd_ready = false;
                 spinlock_unlock(&g_xhci_lock);
-                if (rflags & (1ull << 9)) __asm__ volatile("sti" ::: "memory");
+                hal_cpu_restore_interrupts(rflags);
                 return result;
             }
         }
@@ -514,9 +539,7 @@ static bool xhci_wait_event(uint32_t expected_type,
         }
     }
 
-    if (rflags & (1ull << 9)) {
-        __asm__ volatile("sti" ::: "memory");
-    }
+    hal_cpu_restore_interrupts(rflags);
 
     return result;
 }
@@ -526,7 +549,7 @@ static bool xhci_issue_command(xhci_trb_t *cmd,
                                 uint32_t *cc_out)
 {
     uint64_t rflags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+    rflags = hal_cpu_save_interrupts();
     spinlock_lock(&g_xhci_lock);
 
     cmd->control &= ~1u;
@@ -535,18 +558,18 @@ static bool xhci_issue_command(xhci_trb_t *cmd,
     volatile xhci_trb_t *slot = &g_cmd_ring[g_cmd_enq];
     slot->parameter = cmd->parameter;
     slot->status    = cmd->status;
-    __asm__ volatile("sfence" ::: "memory");
+    hal_cpu_memory_barrier();
     slot->control   = (cmd->control & ~1u) | g_cmd_cycle;
-    __asm__ volatile("sfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     g_cmd_enq++;
     if (g_cmd_enq >= CMD_RING_SIZE - 1) {
         volatile xhci_trb_t *link = &g_cmd_ring[CMD_RING_SIZE - 1];
         link->parameter = g_cmd_ring_phys;
         link->status    = 0;
-        __asm__ volatile("sfence" ::: "memory");
+        hal_cpu_memory_barrier();
         link->control   = (6u << 10) | (1u << 1) | g_cmd_cycle;
-        __asm__ volatile("sfence" ::: "memory");
+        hal_cpu_memory_barrier();
         g_cmd_enq    = 0;
         g_cmd_cycle ^= 1;
     }
@@ -554,9 +577,7 @@ static bool xhci_issue_command(xhci_trb_t *cmd,
     ring_doorbell(0, 0);
     spinlock_unlock(&g_xhci_lock);
     
-    if (rflags & (1ull << 9)) {
-        __asm__ volatile("sti" ::: "memory");
-    }
+    hal_cpu_restore_interrupts(rflags);
 
     return xhci_wait_event(33u, expected_slot, 0u, cc_out, 500u);
 }
@@ -766,7 +787,7 @@ void xhci_init(void)
         return;
     }
     g_api->memset((void *)g_dcbaa, 0, 4096);
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     uint32_t sp_lo   = (g_cap->hcsparams2 >> 27) & 0x1Fu;
     uint32_t sp_hi   = (g_cap->hcsparams2 >> 21) & 0x1Fu;
@@ -789,7 +810,7 @@ void xhci_init(void)
         return;
     }
     g_api->memset((void *)g_cmd_ring, 0, 4096);
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     g_cmd_ring[CMD_RING_SIZE - 1].parameter = g_cmd_ring_phys;
     g_cmd_ring[CMD_RING_SIZE - 1].status    = 0;
@@ -812,14 +833,14 @@ void xhci_init(void)
     }
     g_api->memset((void *)g_evt_ring, 0, 4096);
     g_api->memset((void *)g_erst,     0, 4096);
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     g_erst->base = g_evt_ring_phys;
     g_erst->size = EVT_RING_SIZE;
 
     g_evt_deq   = 0;
     g_evt_cycle = 1;
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     (void)g_intr->iman;
     g_intr->erstsz = 1;
@@ -834,7 +855,7 @@ void xhci_init(void)
 
     g_intr->iman  |= XHCI_IMAN_IE;
     g_op->usbcmd  |= XHCI_CMD_INTE | XHCI_CMD_HSEE;
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     (void)g_op->usbsts;
 
@@ -908,7 +929,7 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
     }
 
     g_dcbaa[slot_id] = g_dev_ctx_phys[si];
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     uint32_t ctx_size = xhci_get_ctx_size();
     volatile uint32_t *ic_ptr   = (volatile uint32_t *)g_inp_ctx[si];
@@ -959,7 +980,7 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
         ep0_ctx[2] = (uint32_t)(g_xfer[si][1].phys & 0xFFFFFFFFu) | 1u;
         ep0_ctx[3] = (uint32_t)(g_xfer[si][1].phys >> 32);
         ep0_ctx[4] = 8;
-        __asm__ volatile("sfence" ::: "memory");
+        hal_cpu_memory_barrier();
 
         xhci_trb_t cmd = {0};
         cmd.parameter = g_inp_ctx_phys[si];
@@ -991,7 +1012,7 @@ static bool xhci_address_device(uint8_t port, uint8_t speed, uint8_t dev_addr)
     ep0_ctx[2] = (uint32_t)(g_xfer[si][1].phys & 0xFFFFFFFFu) | 1u;
     ep0_ctx[3] = (uint32_t)(g_xfer[si][1].phys >> 32);
     ep0_ctx[4] = 8;
-    __asm__ volatile("sfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     bool ok = false;
     for (int retry = 0; retry < 3; retry++) {
@@ -1045,7 +1066,7 @@ bool xhci_evaluate_ep0_mps(uint8_t addr, uint16_t new_mps)
     ep0_ctx[2] = (uint32_t)(g_xfer[si][1].phys & 0xFFFFFFFFu) | 1u;
     ep0_ctx[3] = (uint32_t)(g_xfer[si][1].phys >> 32);
     ep0_ctx[4] = 8;
-    __asm__ volatile("sfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     xhci_trb_t cmd = {0};
     cmd.parameter = g_inp_ctx_phys[si];
@@ -1116,7 +1137,7 @@ static bool xhci_configure_ep(uint8_t addr, uint8_t ep_addr, uint8_t ep_type,
         max_esit_payload = max_packet_size;
     }
     ep_ctx[4] = 8 | (max_esit_payload << 16);
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
 
     xhci_trb_t cmd = {0};
     cmd.parameter = g_inp_ctx_phys[si];
@@ -1154,7 +1175,7 @@ bool xhci_submit_control(uint8_t addr, uint8_t endpoint,
     uint16_t wlen   = setup->wLength;
 
     uint64_t rflags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+    rflags = hal_cpu_save_interrupts();
     spinlock_lock(&g_xhci_lock);
 
     xhci_trb_t setup_trb = {0};
@@ -1178,7 +1199,7 @@ bool xhci_submit_control(uint8_t addr, uint8_t endpoint,
         }
         if (!data_buf) {
             spinlock_unlock(&g_xhci_lock);
-            if (rflags & (1ull << 9)) __asm__ volatile("sti" ::: "memory");
+            hal_cpu_restore_interrupts(rflags);
             return false;
         }
 
@@ -1207,9 +1228,7 @@ bool xhci_submit_control(uint8_t addr, uint8_t endpoint,
     ring_doorbell(slot_id, 1);
 
     spinlock_unlock(&g_xhci_lock);
-    if (rflags & (1ull << 9)) {
-        __asm__ volatile("sti" ::: "memory");
-    }
+    hal_cpu_restore_interrupts(rflags);
 
     uint32_t cc = 0;
     bool ok = xhci_wait_event(32u, slot_id, 1u, &cc, 5000u);
@@ -1282,21 +1301,19 @@ bool xhci_submit_bulk(uint8_t addr, uint8_t endpoint,
     }
 
     uint64_t rflags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+    rflags = hal_cpu_save_interrupts();
     spinlock_lock(&g_xhci_lock);
 
     xhci_trb_t trb = {0};
     trb.parameter = dma_phys;
     trb.status    = length;
-    trb.control   = (1u << 10) | TRB_CTRL_IOC | TRB_CTRL_ISP;
+    trb.control   = (1u << 10) | TRB_CTRL_IOC | TRB_CTRL_ISP | (dir_in ? TRB_CTRL_DIR_IN : 0u);
     xfer_enqueue(r, &trb);
 
     ring_doorbell(slot_id, ep_idx);
 
     spinlock_unlock(&g_xhci_lock);
-    if (rflags & (1ull << 9)) {
-        __asm__ volatile("sti" ::: "memory");
-    }
+    hal_cpu_restore_interrupts(rflags);
 
     uint32_t cc = 0;
     bool ok = xhci_wait_event(32u, slot_id, ep_idx, &cc, 5000u);
@@ -1344,7 +1361,7 @@ bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
     xhci_xfer_ring_t *r = &g_xfer[si][ep_idx];
     
     uint64_t rflags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+    rflags = hal_cpu_save_interrupts();
     spinlock_lock(&g_xhci_lock);
 
     xhci_trb_t trb = {0};
@@ -1356,9 +1373,7 @@ bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
     ring_doorbell(slot_id, ep_idx);
 
     spinlock_unlock(&g_xhci_lock);
-    if (rflags & (1ull << 9)) {
-        __asm__ volatile("sti" ::: "memory");
-    }
+    hal_cpu_restore_interrupts(rflags);
 
     return true;
 }
@@ -1366,10 +1381,10 @@ bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
 static void xhci_drain_event_ring(void)
 {
     uint64_t rflags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+    rflags = hal_cpu_save_interrupts();
     spinlock_lock(&g_xhci_lock);
 
-    __asm__ volatile("lfence" ::: "memory");
+    hal_cpu_memory_barrier();
     
     for (;;) {
         volatile xhci_trb_t *trb = &g_evt_ring[g_evt_deq];
@@ -1406,9 +1421,7 @@ static void xhci_drain_event_ring(void)
     }
 
     spinlock_unlock(&g_xhci_lock);
-    if (rflags & (1ull << 9)) {
-        __asm__ volatile("sti" ::: "memory");
-    }
+    hal_cpu_restore_interrupts(rflags);
 }
 
 int xhci_check_interrupt_event(uint8_t addr, uint8_t ep_num)

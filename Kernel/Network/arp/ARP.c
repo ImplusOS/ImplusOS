@@ -300,7 +300,11 @@ bool arp_resolve(uint32_t ipv4_addr, uint8_t mac_out[6], uint32_t timeout_ms)
             next_retry = now + retry_ticks;
         }
 
+#if defined(__aarch64__)
+        __asm__ volatile("yield" ::: "memory");
+#else
         __asm__ volatile("pause" ::: "memory");
+#endif
     }
     
     return false;

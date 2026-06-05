@@ -25,7 +25,7 @@ bool device_registry_add(const device_t *dev)
 
     for (uint32_t i = 0; i < DEVICE_REGISTRY_MAX; ++i) {
         registry_entry_t *entry = &g_entries[i];
-        if (entry->used != 0u && strcmp(entry->name_buf, dev->name) == 0) {
+        if (entry->used != 0u && strcasecmp(entry->name_buf, dev->name) == 0) {
             entry->dev = *dev;
             entry->dev.name = entry->name_buf;
             return true;
@@ -58,7 +58,7 @@ bool device_registry_remove(const char *name)
 
     for (uint32_t i = 0; i < DEVICE_REGISTRY_MAX; ++i) {
         registry_entry_t *entry = &g_entries[i];
-        if (entry->used == 0u || strcmp(entry->name_buf, name) != 0) {
+        if (entry->used == 0u || strcasecmp(entry->name_buf, name) != 0) {
             continue;
         }
 
@@ -83,7 +83,7 @@ const device_t *device_registry_find(device_type_t type, const char *name)
         if (entry->used == 0u || entry->dev.type != type) {
             continue;
         }
-        if (name != 0 && strcmp(entry->name_buf, name) != 0) {
+        if (name != 0 && strcasecmp(entry->name_buf, name) != 0) {
             continue;
         }
         return &entry->dev;

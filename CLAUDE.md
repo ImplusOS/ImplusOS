@@ -14,8 +14,7 @@ ImplusOS/
 ├── BootLoader/           UEFI and BIOS bootloader entry points (x86_64/UEFI/, x86_64/BIOS/)
 ├── BootManager/          Secondary boot stage logic (UEFI and BIOS)
 ├── Kernel/               Kernel source (all subsystems)
-│   ├── Arch/x86_64/      Architecture-specific (GDT, IDT, mmu/paging, SMP, virt/VMX)
-│   ├── Arch/arm64/       ARM64 stubs (placeholder)
+│   ├── Arch/             Architecture-specific (x86_64, arm64)
 │   ├── Boot/             Boot-time progress bar
 │   ├── Core/             kernel_main and core subsystems (process, syscall, vfs, window, timer, sync, elf)
 │   ├── Debug/            Serial output, printf, panic handler
@@ -48,7 +47,7 @@ ImplusOS/
 ### Toolchain Requirements
 
 ```bash
-sudo apt install -y build-essential nasm binutils gnu-efi \
+sudo apt install -y build-essential nasm binutils \
   gcc-x86-64-elf g++-x86-64-elf parted qemu-system-x86 \
   dosfstools xorriso mtools util-linux gdb
 ```
@@ -84,7 +83,7 @@ sudo apt install -y build-essential nasm binutils gnu-efi \
 
 - Kernel: `x86_64-elf-gcc` with `-ffreestanding -fno-pic -mcmodel=large -mno-red-zone -nostdlib`
 - Userland: `x86_64-elf-gcc` with `-ffreestanding -fno-pic -mcmodel=large -mno-red-zone -nostdlib`
-- Bootloader: `x86_64-elf-gcc` with gnu-efi includes, `-fpic -fshort-wchar`
+- Bootloader: `x86_64-elf-gcc` with EDK2 includes, `-fpic -fshort-wchar`
 - Assembly: `nasm -f elf64`
 - Kernel linker: `x86_64-elf-ld -nostdlib -e kernel_main -T Arch/x86_64/linker/linker.ld`
 - Userland linker: `x86_64-elf-ld -nostdlib -T Userland/Userland.ld`

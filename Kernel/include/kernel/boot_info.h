@@ -33,7 +33,7 @@ typedef struct {
 
 #pragma pack(push, 1)
 typedef struct {
-    uint64_t               MemoryMap;
+    void               *MemoryMap;
     UINTN                  MemoryMapSize;
     UINTN                  MemoryMapDescriptorSize;
     UINT32                 MemoryMapDescriptorVersion;

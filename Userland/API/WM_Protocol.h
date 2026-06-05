@@ -42,6 +42,9 @@
 #define WM_UPDATE_CLOCK         70
 #define WM_SHOW_NOTIFICATION    80
 
+#define WM_SET_THEME            90
+#define WM_RELOAD_BACKGROUND    91
+
 
 #define WM_STATUS_OK             0
 #define WM_STATUS_INVALID_ARG  (-22)

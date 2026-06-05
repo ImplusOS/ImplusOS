@@ -163,8 +163,28 @@ os_status_t sysinfo_get_cpu_info(system_cpu_info_t *out_info)
         return OS_STATUS_INVALID_ARG;
     }
     
+#if defined(__aarch64__)
+    uint64_t midr;
+    __asm__ volatile("mrs %0, MIDR_EL1" : "=r"(midr));
+    out_info->vendor[0] = 'A';
+    out_info->vendor[1] = 'R';
+    out_info->vendor[2] = 'M';
+    out_info->vendor[3] = '\0';
+    out_info->stepping = (uint32_t)(midr & 0xFu);
+    out_info->model = (uint32_t)((midr >> 4) & 0xFFFu);
+    out_info->family = (uint32_t)((midr >> 16) & 0xFu);
+    out_info->logical_cores = 1;
+    out_info->physical_cores = 1;
+    out_info->brand[0] = 'A';
+    out_info->brand[1] = 'A';
+    out_info->brand[2] = 'r';
+    out_info->brand[3] = 'c';
+    out_info->brand[4] = 'h';
+    out_info->brand[5] = '6';
+    out_info->brand[6] = '4';
+    out_info->brand[7] = '\0';
+#else
     uint32_t eax, ebx, ecx, edx;
-
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
     
     ((uint32_t *)out_info->vendor)[0] = ebx;
@@ -200,6 +220,7 @@ os_status_t sysinfo_get_cpu_info(system_cpu_info_t *out_info)
             *brand_ptr++ = edx;
         }
     }
+#endif
     
     out_info->frequency_mhz = 2400;
     

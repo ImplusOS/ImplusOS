@@ -1,6 +1,13 @@
-#include <efi.h>
-#include <efilib.h>
+#include "../EDK2Compat.h"
 #include <stdint.h>
+#include <Library/UefiLib.h> 
+#include <Protocol/LoadedImage.h>
+#include <Protocol/SimpleFileSystem.h>
+#include <Protocol/GraphicsOutput.h>
+#include <Protocol/BlockIo.h>
+#include <Protocol/DevicePath.h>
+#include <Library/DevicePathLib.h>
+#include <Guid/FileInfo.h>
 #include "../BootManager_libc/include/string.h"
 #include "../BootManager_libc/include/stdlib.h"
 #include "../Handoff.h"
@@ -33,7 +40,10 @@
 #define STBTT__NOTUSED(v) (void)sizeof(v)
 #define STB_TRUETYPE_NO_MATH
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
 #include "../../Thirdparty/stb_truetype.h"
+#pragma clang diagnostic pop
 
 #ifndef ACPI_TABLE_GUID
 #define ACPI_TABLE_GUID \
@@ -58,6 +68,7 @@
 #include "../ISO9660.h"
 #include "../BootInfo.h"
 #include "../ElfDefs.h"
+#include "../Core/ElfLoader.h"
 
 #define FAT32_BOOT_BLOCK_MAX 4096u
 
@@ -239,41 +250,10 @@ typedef struct {
 
 #define ISO_TO_ATA(iso_lba) ((UINT64)(iso_lba) * 4ULL)
 
-static UINT16 ReadLe16(const UINT8 *p) {
-    if (!p) return 0;
-    return (UINT16)p[0] | ((UINT16)p[1] << 8);
-}
-
-static UINT32 ReadLe32(const UINT8 *p) {
-    if (!p) return 0;
-    return (UINT32)p[0] |
-           ((UINT32)p[1] << 8) |
-           ((UINT32)p[2] << 16) |
-           ((UINT32)p[3] << 24);
-}
-
-
 static void AppendString(char *dst, const char *src) {
     while (*dst) dst++;
     while (*src) *dst++ = *src++;
     *dst = 0;
-}
-
-static void TrimString(char *str) {
-    if (!str || !*str) return;
-    char *start = str;
-    while (*start == ' ') start++;
-    if (start != str) {
-        char *dst = str;
-        while (*start) *dst++ = *start++;
-        *dst = 0;
-    }
-    int len = 0;
-    while (str[len]) len++;
-    while (len > 0 && str[len - 1] == ' ') {
-        str[len - 1] = 0;
-        len--;
-    }
 }
 
 static BOOLEAN GuidsAreEqual(EFI_GUID *g1, EFI_GUID *g2) {
@@ -298,110 +278,6 @@ static BOOTLOADER_HANDOFF *FindBootloaderHandoff(EFI_SYSTEM_TABLE *ST) {
         }
     }
     return NULL;
-}
-
-static char *GetSmbiosString(UEFI_SMBIOS_HEADER *hdr, UINT8 index, UINT8 *end) {
-    if (index == 0) return NULL;
-    char *str = (char *)hdr + hdr->Length;
-    for (int i = 1; i < index; i++) {
-        while ((UINT8 *)str < end && *str != 0) str++;
-        str++;
-        if ((UINT8 *)str >= end || *str == 0) return NULL;
-    }
-    if ((UINT8 *)str >= end) return NULL;
-    return str;
-}
-
-static void DiscoverSMBIOS(EFI_SYSTEM_TABLE *ST, char *CPUName, char *Manufacturer, char *ProductName) {
-    EFI_GUID smbios_guid  = SMBIOS_TABLE_GUID;
-    EFI_GUID smbios3_guid = SMBIOS3_TABLE_GUID;
-    void    *smbios       = NULL;
-    BOOLEAN  is_smbios3   = FALSE;
-
-    for (UINTN i = 0; i < ST->NumberOfTableEntries; i++) {
-        if (GuidsAreEqual(&ST->ConfigurationTable[i].VendorGuid, &smbios3_guid)) {
-            smbios     = ST->ConfigurationTable[i].VendorTable;
-            is_smbios3 = TRUE;
-            break;
-        }
-        if (GuidsAreEqual(&ST->ConfigurationTable[i].VendorGuid, &smbios_guid)) {
-            smbios = ST->ConfigurationTable[i].VendorTable;
-        }
-    }
-
-    if (!smbios) return;
-
-    UINT8  *table_addr  = NULL;
-    UINT32  table_len   = 0;
-    UINT32  num_structs = 0;
-
-    if (is_smbios3) {
-        SMBIOS3_EPS *eps3 = (SMBIOS3_EPS *)smbios;
-        if (eps3->AnchorString[0] != '_' || eps3->AnchorString[1] != 'S' ||
-            eps3->AnchorString[2] != 'M' || eps3->AnchorString[3] != '3' ||
-            eps3->AnchorString[4] != '_') return;
-        table_addr  = (UINT8 *)(UINTN)eps3->StructureTableAddress;
-        table_len   = eps3->StructureTableMaximumSize;
-        num_structs = 0xFFFFFFFF;
-    } else {
-        SMBIOS_EPS *eps = (SMBIOS_EPS *)smbios;
-        if (eps->AnchorString[0] != '_' || eps->AnchorString[1] != 'S' ||
-            eps->AnchorString[2] != 'M' || eps->AnchorString[3] != '_') return;
-        table_addr  = (UINT8 *)(UINTN)eps->StructureTableAddress;
-        table_len   = eps->StructureTableLength;
-        num_structs = eps->NumberOfSMBIOSStructures;
-    }
-
-    if (!table_addr || table_len == 0) return;
-
-    UINT8  *ptr          = table_addr;
-    UINT8  *end          = table_addr + table_len;
-    UINT32  struct_count = 0;
-
-    while (ptr + sizeof(UEFI_SMBIOS_HEADER) <= end && struct_count < num_structs) {
-        UEFI_SMBIOS_HEADER *hdr = (UEFI_SMBIOS_HEADER *)ptr;
-        if (hdr->Type == 127) break;
-        if (hdr->Length < sizeof(UEFI_SMBIOS_HEADER)) break;
-
-        if (hdr->Type == 1 && hdr->Length >= 6) {
-            UINT8  mfg_idx  = ptr[0x04];
-            UINT8  prod_idx = ptr[0x05];
-            char  *mfg  = GetSmbiosString(hdr, mfg_idx,  end);
-            char  *prod = GetSmbiosString(hdr, prod_idx, end);
-            if (mfg && Manufacturer[0] == 0) {
-                UINTN len = 0;
-                while (mfg[len] && len < 63 && (UINT8 *)&mfg[len] < end) len++;
-                memcpy(Manufacturer, mfg, len);
-                Manufacturer[len] = 0;
-                TrimString(Manufacturer);
-            }
-            if (prod && ProductName[0] == 0) {
-                UINTN len = 0;
-                while (prod[len] && len < 63 && (UINT8 *)&prod[len] < end) len++;
-                memcpy(ProductName, prod, len);
-                ProductName[len] = 0;
-                TrimString(ProductName);
-            }
-        } else if (hdr->Type == 4 && hdr->Length >= 0x11) {
-            UINT8  proc_idx = ptr[0x10];
-            char  *proc     = GetSmbiosString(hdr, proc_idx, end);
-            if (proc && CPUName[0] == 0) {
-                UINTN len = 0;
-                while (proc[len] && len < 63 && (UINT8 *)&proc[len] < end) len++;
-                memcpy(CPUName, proc, len);
-                CPUName[len] = 0;
-                TrimString(CPUName);
-            }
-        }
-
-        ptr += hdr->Length;
-        while (ptr + 1 < end) {
-            if (ptr[0] == 0 && ptr[1] == 0) { ptr += 2; break; }
-            ptr++;
-        }
-        if (ptr >= end) break;
-        struct_count++;
-    }
 }
 
 static UINT64 ParseElToritoCatalog(EFI_BLOCK_IO_PROTOCOL *Bio, EFI_SYSTEM_TABLE *ST) {
@@ -599,96 +475,6 @@ static EFI_FILE_PROTOCOL *OpenFsRootFromHandle(EFI_HANDLE Handle, EFI_SYSTEM_TAB
     Status = uefi_call_wrapper(Fs->OpenVolume, 2, Fs, &Root);
     if (EFI_ERROR(Status)) return NULL;
     return Root;
-}
-
-static EFI_STATUS FindISOPath(EFI_SYSTEM_TABLE *ST, const char *IsoPath,
-                               UINT32 *LbaOut, UINT32 *SizeOut, BOOLEAN *IsDirOut) {
-    UINTN       Count   = 0;
-    EFI_HANDLE *Handles = NULL;
-    EFI_STATUS  Status  = uefi_call_wrapper(ST->BootServices->LocateHandleBuffer, 5,
-        ByProtocol, &gEfiBlockIoProtocolGuid, NULL, &Count, &Handles);
-    if (EFI_ERROR(Status) || !Handles) return Status;
-
-    EFI_STATUS Result = EFI_NOT_FOUND;
-    for (UINTN i = 0; i < Count; i++) {
-        EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
-        uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
-            Handles[i], &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
-        if (!Bio || !Bio->Media) continue;
-
-        UINT32 BS = Bio->Media->BlockSize;
-        if (BS < 512 || BS > 4096) continue;
-
-        UINT8 *SectorBuf = NULL;
-        Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, 2048, (VOID **)&SectorBuf);
-        if (EFI_ERROR(Status)) continue;
-
-        UINT64 Lba16 = (16ULL * 2048ULL) / (UINT64)BS;
-        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, Lba16, 2048, SectorBuf);
-        if (!EFI_ERROR(Status) &&
-            SectorBuf[1] == 'C' && SectorBuf[2] == 'D' &&
-            SectorBuf[3] == '0' && SectorBuf[4] == '0' && SectorBuf[5] == '1') {
-            ISO9660_PVD *Pvd    = (ISO9660_PVD *)SectorBuf;
-            UINT32       CurLba = Pvd->root_dir_record.extent_lba_le;
-            UINT32       CurSize = Pvd->root_dir_record.data_length_le;
-            BOOLEAN      CurIsDir = TRUE;
-
-            const char *p = IsoPath;
-            while (*p == '/') p++;
-            BOOLEAN FoundPath = TRUE;
-
-            while (*p) {
-                char Component[128];
-                int n = 0;
-                while (p[n] && p[n] != '/' && n < 127) { Component[n] = p[n]; n++; }
-                Component[n] = 0;
-
-                UINT32  Sectors   = (CurSize + 2047) / 2048;
-                BOOLEAN FoundComp = FALSE;
-                for (UINT32 s = 0; s < Sectors; s++) {
-                    Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
-                        ((UINT64)(CurLba + s) * 2048ULL) / (UINT64)BS, 2048, SectorBuf);
-                    if (EFI_ERROR(Status)) break;
-
-                    UINT8 *ptr = SectorBuf;
-                    while (ptr < SectorBuf + 2048 && *ptr != 0) {
-                        ISO9660_DIR_RECORD *rec = (ISO9660_DIR_RECORD *)ptr;
-                        if (rec->length == 0 || ptr + rec->length > SectorBuf + 2048) break;
-                        if (rec->name_length > 0 && rec->name[0] != 0 && rec->name[0] != 1) {
-                            char EntryName[256];
-                            IsoGetDirectoryRecordName(rec, ptr + rec->length, EntryName, sizeof(EntryName));
-                            if (strcasecmp((const char *)EntryName, Component) == 0) {
-                                CurLba   = rec->extent_lba_le;
-                                CurSize  = rec->data_length_le;
-                                CurIsDir = (rec->flags & 2) != 0;
-                                FoundComp = TRUE;
-                                break;
-                            }
-                        }
-                        ptr += rec->length;
-                    }
-                    if (FoundComp) break;
-                }
-
-                if (!FoundComp) { FoundPath = FALSE; break; }
-                p += n;
-                while (*p == '/') p++;
-            }
-
-            if (FoundPath) {
-                if (LbaOut)   *LbaOut   = CurLba;
-                if (SizeOut)  *SizeOut  = CurSize;
-                if (IsDirOut) *IsDirOut = CurIsDir;
-                Result = EFI_SUCCESS;
-            }
-        }
-
-        uefi_call_wrapper(ST->BootServices->FreePool, 1, SectorBuf);
-        if (!EFI_ERROR(Result)) break;
-    }
-
-    uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
-    return Result;
 }
 
 static EFI_STATUS LoadFromISO(EFI_SYSTEM_TABLE *ST, const char *IsoPath, VOID **Buffer, UINTN *Size) {
@@ -993,102 +779,75 @@ static EFI_STATUS LoadFileToMemoryBelow4G(
     return EFI_SUCCESS;
 }
 
+typedef struct {
+    EFI_SYSTEM_TABLE *ST;
+    UINT64           fallback_span;
+} UEFI_ELF_ALLOC_CTX;
+
+static void *UefiElfAllocAt(uint64_t address, size_t pages, void *ctx)
+{
+    UEFI_ELF_ALLOC_CTX *AllocCtx = (UEFI_ELF_ALLOC_CTX *)ctx;
+    EFI_PHYSICAL_ADDRESS Requested = (EFI_PHYSICAL_ADDRESS)address;
+    EFI_STATUS Status = uefi_call_wrapper(
+        AllocCtx->ST->BootServices->AllocatePages, 4,
+        AllocateAddress, EfiLoaderData, (UINTN)pages, &Requested);
+    if (EFI_ERROR(Status)) return NULL;
+    return (void *)(UINTN)Requested;
+}
+
+static void *UefiElfAllocAny(size_t pages, uint64_t *phys_out, void *ctx)
+{
+    UEFI_ELF_ALLOC_CTX *AllocCtx = (UEFI_ELF_ALLOC_CTX *)ctx;
+    UINT64 Span = (UINT64)pages * EFI_PAGE_SIZE;
+    AllocCtx->fallback_span = Span;
+    for (EFI_PHYSICAL_ADDRESS Candidate = 0x01000000ULL;
+         Candidate + Span <= 0x80000000ULL;
+         Candidate += 0x00200000ULL) {
+        EFI_PHYSICAL_ADDRESS Requested = Candidate;
+        EFI_STATUS Status = uefi_call_wrapper(
+            AllocCtx->ST->BootServices->AllocatePages, 4,
+            AllocateAddress, EfiLoaderData, (UINTN)pages, &Requested);
+        if (!EFI_ERROR(Status)) {
+            if (phys_out) *phys_out = (uint64_t)Requested;
+            return (void *)(UINTN)Requested;
+        }
+    }
+    return NULL;
+}
+
+static void UefiElfFree(uint64_t address, size_t pages, void *ctx)
+{
+    UEFI_ELF_ALLOC_CTX *AllocCtx = (UEFI_ELF_ALLOC_CTX *)ctx;
+    uefi_call_wrapper(AllocCtx->ST->BootServices->FreePages, 2,
+                      (EFI_PHYSICAL_ADDRESS)address, (UINTN)pages);
+}
+
 EFI_STATUS LoadKernelELF(
     EFI_SYSTEM_TABLE *ST,
     VOID             *KernelImage,
     UINTN             KernelImageSize,
     UINT64           *EntryPoint
 ) {
-    Elf64_Ehdr *Ehdr = (Elf64_Ehdr *)KernelImage;
-
-    if (Ehdr->e_ident[0] != 0x7F || Ehdr->e_ident[1] != 'E' ||
-        Ehdr->e_ident[2] != 'L'  || Ehdr->e_ident[3] != 'F') {
+    UEFI_ELF_ALLOC_CTX AllocCtx = { .ST = ST, .fallback_span = 0 };
+    boot_elf_load_request_t Req = {
+        .image = KernelImage,
+        .image_size = (size_t)KernelImageSize,
+#if defined(__aarch64__)
+        .arch = BOOT_ELF_ARCH_AARCH64,
+#else
+        .arch = BOOT_ELF_ARCH_X86_64,
+#endif
+        .dynamic_anywhere = 1,
+        .alloc_pages_at = UefiElfAllocAt,
+        .alloc_pages_any = UefiElfAllocAny,
+        .free_pages = UefiElfFree,
+        .ctx = &AllocCtx,
+    };
+    boot_elf_load_result_t Result;
+    if (boot_elf_load64(&Req, &Result) != 0) {
         return EFI_LOAD_ERROR;
     }
-
-    if (Ehdr->e_phoff >= KernelImageSize ||
-        Ehdr->e_phoff + (Ehdr->e_phnum * sizeof(Elf64_Phdr)) > KernelImageSize) {
-        return EFI_LOAD_ERROR;
-    }
-
-    Elf64_Phdr *Phdrs = (Elf64_Phdr *)((UINT8 *)KernelImage + Ehdr->e_phoff);
-
-    UINT64 MinAddr     = 0xFFFFFFFFFFFFFFFF;
-    UINT64 MaxAddr     = 0;
-    UINTN  LoadedCount = 0;
-
-    for (UINTN i = 0; i < Ehdr->e_phnum; i++) {
-        if (Phdrs[i].p_type != PT_LOAD) continue;
-        if (Phdrs[i].p_vaddr < MinAddr) MinAddr = Phdrs[i].p_vaddr;
-        if (Phdrs[i].p_vaddr + Phdrs[i].p_memsz > MaxAddr) MaxAddr = Phdrs[i].p_vaddr + Phdrs[i].p_memsz;
-        LoadedCount++;
-    }
-
-    if (LoadedCount == 0 || MaxAddr <= MinAddr) return EFI_LOAD_ERROR;
-
-    UINTN  TotalPages  = EFI_SIZE_TO_PAGES(MaxAddr - MinAddr);
-    UINT64 KernelSpan  = (UINT64)TotalPages * EFI_PAGE_SIZE;
-    EFI_PHYSICAL_ADDRESS KernelBaseAddr = MinAddr;
-    EFI_STATUS Status = uefi_call_wrapper(
-        ST->BootServices->AllocatePages, 4,
-        AllocateAddress, EfiLoaderData, TotalPages, &KernelBaseAddr);
-
-    if (EFI_ERROR(Status) && Ehdr->e_type == ET_DYN) {
-        KernelBaseAddr = 0;
-        for (EFI_PHYSICAL_ADDRESS Candidate = 0x01000000ULL;
-             Candidate + KernelSpan <= 0x80000000ULL;
-             Candidate += 0x00200000ULL) {
-            EFI_PHYSICAL_ADDRESS Requested = Candidate;
-            Status = uefi_call_wrapper(
-                ST->BootServices->AllocatePages, 4,
-                AllocateAddress, EfiLoaderData, TotalPages, &Requested);
-            if (!EFI_ERROR(Status)) {
-                KernelBaseAddr = Requested;
-                break;
-            }
-        }
-    }
-
-    if (EFI_ERROR(Status) || KernelBaseAddr == 0) {
-        return EFI_ERROR(Status) ? Status : EFI_LOAD_ERROR;
-    }
-
-    for (UINTN i = 0; i < Ehdr->e_phnum; i++) {
-        Elf64_Phdr *Ph = &Phdrs[i];
-        if (Ph->p_type != PT_LOAD) continue;
-
-        if (Ph->p_offset >= KernelImageSize ||
-            Ph->p_offset + Ph->p_filesz > KernelImageSize ||
-            Ph->p_memsz < Ph->p_filesz) {
-            uefi_call_wrapper(ST->BootServices->FreePages, 2, KernelBaseAddr, TotalPages);
-            return EFI_LOAD_ERROR;
-        }
-
-        EFI_PHYSICAL_ADDRESS Dest = KernelBaseAddr + (Ph->p_vaddr - MinAddr);
-        memcpy((VOID *)(UINTN)Dest, (UINT8 *)KernelImage + Ph->p_offset, Ph->p_filesz);
-        memset((VOID *)(UINTN)(Dest + Ph->p_filesz), 0, Ph->p_memsz - Ph->p_filesz);
-    }
-
-    UINT64 LoadBias = KernelBaseAddr - MinAddr;
-
-    if (Ehdr->e_shoff != 0 && Ehdr->e_shnum != 0) {
-        Elf64_Shdr *Shdrs = (Elf64_Shdr *)((UINT8 *)KernelImage + Ehdr->e_shoff);
-        for (UINTN i = 0; i < Ehdr->e_shnum; i++) {
-            if (Shdrs[i].sh_type == SHT_RELA) {
-                Elf64_Rela *Relas     = (Elf64_Rela *)((UINT8 *)KernelImage + Shdrs[i].sh_offset);
-                UINTN       RelasCount = Shdrs[i].sh_size / sizeof(Elf64_Rela);
-                for (UINTN j = 0; j < RelasCount; j++) {
-                    UINT32 type = (UINT32)(Relas[j].r_info & 0xFFFFFFFF);
-                    if (type == R_X86_64_RELATIVE) {
-                        UINT64 *Target = (UINT64 *)(UINTN)(KernelBaseAddr + (Relas[j].r_offset - MinAddr));
-                        *Target = LoadBias + Relas[j].r_addend;
-                    }
-                }
-            }
-        }
-    }
-
-    *EntryPoint = KernelBaseAddr + (Ehdr->e_entry - MinAddr);
+    *EntryPoint = Result.entry;
     return EFI_SUCCESS;
 }
 
@@ -1388,7 +1147,7 @@ void DrawTextGraySmallCenterBottom(
 
 typedef void (*KernelEntryFn)(BOOT_INFO *);
 
-EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
+EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     InitializeLib(ImageHandle, ST);
     bootmanager_libc_init(ST);
 
@@ -1554,14 +1313,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
         Status = LoadFromISO(ST, "Kernel/Kernel_Main.ELF", &KernelBuffer, &KernelSize);
     }
 
-    if (EFI_ERROR(Status)) {
-        while (1) __asm__ volatile("cli; hlt");
-    }
-
     Status = LoadKernelELF(ST, KernelBuffer, KernelSize, &KernelEntry);
-    if (EFI_ERROR(Status) || KernelEntry == 0) {
-        while (1) __asm__ volatile("cli; hlt");
-    }
 
     uefi_call_wrapper(ST->BootServices->FreePages, 2,
         (EFI_PHYSICAL_ADDRESS)(UINTN)KernelBuffer, EFI_SIZE_TO_PAGES(KernelSize));
@@ -1571,17 +1323,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     } else {
         Status = PreloadDriversFromISO(ST, &BootInfo);
     }
-    if (EFI_ERROR(Status)) {
-        while (1) __asm__ volatile("cli; hlt");
-    }
-
     Status = ExitBootServicesComplete(ImageHandle, ST, &BootInfo);
-    if (EFI_ERROR(Status)) {
-        while (1) __asm__ volatile("cli; hlt");
-    }
 
     KernelEntryFn Entry = (KernelEntryFn)KernelEntry;
     Entry(&BootInfo);
 
     return EFI_SUCCESS;
 }
+

@@ -512,18 +512,16 @@ static inline uint64_t vmx_vmread(uint64_t field)
     return value;
 }
 
+#include "interfaces/hal_cpu.h"
+
 static inline uint64_t vmx_rdmsr(uint32_t msr)
 {
-    uint32_t lo, hi;
-    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-    return ((uint64_t)hi << 32) | lo;
+    return hal_cpu_read_msr(msr);
 }
 
 static inline void vmx_wrmsr(uint32_t msr, uint64_t value)
 {
-    uint32_t lo = (uint32_t)value;
-    uint32_t hi = (uint32_t)(value >> 32);
-    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
+    hal_cpu_write_msr(msr, value);
 }
 
 #endif  

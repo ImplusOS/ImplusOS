@@ -11,7 +11,7 @@ endif
 ifeq ($(ARCH),arm64)
 CC := aarch64-elf-gcc
 LD := aarch64-elf-ld
-DRIVER_ARCH_CFLAGS :=
+DRIVER_ARCH_CFLAGS := -mstrict-align -mno-outline-atomics
 endif
 
 DRIVER_BASE_CFLAGS := \

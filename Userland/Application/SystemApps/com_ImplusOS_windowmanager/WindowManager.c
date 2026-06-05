@@ -69,6 +69,7 @@ static start_menu_app_t g_start_apps[] = {
     {"Network Test",   "/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF", "🌐", NULL, 0, 0, false},
     {"Virtual Machine","/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF", "🖥️", NULL, 0, 0, false},
     {"Example App",    "/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF", "🚀", NULL, 0, 0, false},
+    {"Settings",       "/Userland/UserApps/com_ImplusOS_settings/com_ImplusOS_settings.ELF", "⚙️", NULL, 0, 0, false},
     {"System Info",    "/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF", "ℹ️", NULL, 0, 0, false},
 };
 #define START_APPS_COUNT (sizeof(g_start_apps) / sizeof(g_start_apps[0]))
@@ -89,28 +90,20 @@ static uint32_t parse_hex_color(const char *str) {
 
 static uint32_t *app_icon_load_from_file(const char *path, uint32_t *out_w, uint32_t *out_h) {
     if (!path || !out_w || !out_h) return NULL;
-    
     int32_t fd = file_open(path, 0);
     if (fd < 0) return NULL;
-    
     int32_t file_size = file_seek(fd, 0, 2);
     if (file_size < 0) { file_close(fd); return NULL; }
     file_seek(fd, 0, 0);
-    
     uint8_t *file_data = (uint8_t *)malloc((size_t)file_size);
     if (!file_data) { file_close(fd); return NULL; }
-    
     int64_t bytes_read = file_read(fd, file_data, (uint32_t)file_size);
     file_close(fd);
-    
     if (bytes_read != file_size) { free(file_data); return NULL; }
-    
     int w, h, channels;
     uint8_t *pixels = stbi_load_from_memory(file_data, (int)file_size, &w, &h, &channels, 4);
     free(file_data);
-
     if (!pixels) return NULL;
-    
     uint32_t px_count = (uint32_t)w * (uint32_t)h;
     uint32_t *out = (uint32_t *)malloc(px_count * sizeof(uint32_t));
     if (!out) { STBI_FREE(pixels); return NULL; }
@@ -122,7 +115,6 @@ static uint32_t *app_icon_load_from_file(const char *path, uint32_t *out_w, uint
         out[i] = ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
     }
     STBI_FREE(pixels);
-
     *out_w = (uint32_t)w;
     *out_h = (uint32_t)h;
     return out;
@@ -132,10 +124,8 @@ static uint32_t *app_icon_scale(uint32_t *src_pixels, uint32_t src_w, uint32_t s
                                 uint32_t dst_w, uint32_t dst_h) {
     if (!src_pixels || src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0) return NULL;
     if (src_w == dst_w && src_h == dst_h) return src_pixels;
-    
     uint32_t *dst = (uint32_t *)malloc(dst_w * dst_h * sizeof(uint32_t));
     if (!dst) return NULL;
-    
     for (uint32_t y = 0; y < dst_h; y++) {
         uint32_t src_y = (y * src_h) / dst_h;
         for (uint32_t x = 0; x < dst_w; x++) {
@@ -143,7 +133,6 @@ static uint32_t *app_icon_scale(uint32_t *src_pixels, uint32_t src_w, uint32_t s
             dst[y * dst_w + x] = src_pixels[src_y * src_w + src_x];
         }
     }
-    
     free(src_pixels);
     return dst;
 }
@@ -151,11 +140,9 @@ static uint32_t *app_icon_scale(uint32_t *src_pixels, uint32_t src_w, uint32_t s
 static void wm_scan_app_icons(void) {
     for (uint32_t i = 0; i < START_APPS_COUNT; i++) {
         start_menu_app_t *app = &g_start_apps[i];
-        
         char icon_path[256];
         const char *app_path = app->path;
         const char *app_name = NULL;
-        
         if (strncmp(app_path, "/Userland/SystemApps/", 21) == 0
             || strncmp(app_path, "/Userland/Application/SystemApps/", 33) == 0) {
             const char *prefix = (strncmp(app_path, "/Userland/SystemApps/", 21) == 0)
@@ -193,10 +180,8 @@ static void wm_scan_app_icons(void) {
                 } else continue;
             } else continue;
         } else continue;
-        
         uint32_t icon_w = 0, icon_h = 0;
         uint32_t *pixels = app_icon_load_from_file(icon_path, &icon_w, &icon_h);
-
         if (pixels && icon_w > 0 && icon_h > 0) {
             uint32_t target_size = 32;
             if (icon_w != target_size || icon_h != target_size) {
@@ -213,28 +198,12 @@ static void wm_scan_app_icons(void) {
 }
 
 static const char k_cursor_map[WM_CURSOR_H][WM_CURSOR_W + 1] = {
-    "B.............",
-    "BB............",
-    "BFB...........",
-    "BFFB..........",
-    "BFFFB.........",
-    "BFFFFB........",
-    "BFFFFFB.......",
-    "BFFFFFFB......",
-    "BFFFFFFFB.....",
-    "BFFFFFFFFB....",
-    "BFFFFFFFFFB...",
-    "BFFFFFFFFFFB..",
-    "BFFFFFFBBBBBB.",
-    "BFFFBFFFB.....",
-    "BFFB.BFFB.....",
-    "BFB..BFFB.....",
-    "BB....BFFB....",
-    "B.....BFFB....",
-    ".......BFFB...",
-    ".......BFFB...",
-    "........BB....",
-    "..............",
+    "B.............", "BB............", "BFB...........", "BFFB..........",
+    "BFFFB.........", "BFFFFB........", "BFFFFFB.......", "BFFFFFFB......",
+    "BFFFFFFFB.....", "BFFFFFFFFB....", "BFFFFFFFFFB...", "BFFFFFFFFFFB..",
+    "BFFFFFFBBBBBB.", "BFFFBFFFB.....", "BFFB.BFFB.....", "BFB..BFFB.....",
+    "BB....BFFB....", "B.....BFFB....", ".......BFFB...", ".......BFFB...",
+    "........BB....", "..............",
 };
 
 static const uint8_t k_corner_skip[WM_CORNER_RADIUS] = {4, 2, 1, 0, 0, 0, 0, 0};
@@ -253,18 +222,15 @@ static int utf8_decode(const char **s) {
     if (c == 0) return 0;
     if (c < 0x80) { *s = (const char *)str; return c; }
     if ((c & 0xE0) == 0xC0) {
-        int c2 = *str++;
-        *s = (const char *)str;
+        int c2 = *str++; *s = (const char *)str;
         return ((c & 0x1F) << 6) | (c2 & 0x3F);
     }
     if ((c & 0xF0) == 0xE0) {
-        int c2 = *str++; int c3 = *str++;
-        *s = (const char *)str;
+        int c2 = *str++; int c3 = *str++; *s = (const char *)str;
         return ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
     }
     if ((c & 0xF8) == 0xF0) {
-        int c2 = *str++; int c3 = *str++; int c4 = *str++;
-        *s = (const char *)str;
+        int c2 = *str++; int c3 = *str++; int c4 = *str++; *s = (const char *)str;
         return ((c & 0x07) << 18) | ((c2 & 0x3F) << 12) | ((c3 & 0x3F) << 6) | (c4 & 0x3F);
     }
     *s = (const char *)str;
@@ -272,13 +238,17 @@ static int utf8_decode(const char **s) {
 }
 
 static inline uint32_t alpha_blend(uint32_t bg, uint32_t fg) {
-    uint32_t a = (fg >> 24) & 0xFF;
-    if (a == 0xFF) return fg;
-    if (a == 0x00) return bg;
-    uint32_t inv = 255u - a;
-    uint32_t rb = ((fg & 0xFF00FF) * a + (bg & 0xFF00FF) * inv + 0x800080) >> 8;
-    uint32_t g  = ((fg & 0x00FF00) * a + (bg & 0x00FF00) * inv + 0x008000) >> 8;
-    return 0xFF000000u | (rb & 0xFF00FF) | (g & 0x00FF00);
+    uint32_t a = (fg >> 24);
+    if (a == 255) return fg;
+    if (a == 0) return bg;
+    uint32_t inv = 255 - a;
+    uint32_t fg_rb = fg & 0x00FF00FF;
+    uint32_t fg_g  = fg & 0x0000FF00;
+    uint32_t bg_rb = bg & 0x00FF00FF;
+    uint32_t bg_g  = bg & 0x0000FF00;
+    uint32_t rb = ((fg_rb * a + bg_rb * inv) >> 8) & 0x00FF00FF;
+    uint32_t g  = ((fg_g  * a + bg_g  * inv) >> 8) & 0x0000FF00;
+    return 0xFF000000u | rb | g;
 }
 
 static inline void shadow_put(wm_compositor_t *c, uint32_t idx, uint32_t color) {
@@ -291,40 +261,29 @@ static inline void shadow_put_blend(wm_compositor_t *c, uint32_t idx, uint32_t c
     c->shadow[idx] = alpha_blend(c->shadow[idx], color);
 }
 
-static inline void shadow_put_alpha(wm_compositor_t *c, uint32_t idx, uint32_t color, float alpha) {
-    if (alpha >= 0.999f) {
+static inline void shadow_put_alpha(wm_compositor_t *c, uint32_t idx, uint32_t color, uint32_t alpha_255) {
+    if (alpha_255 == 255) {
         uint32_t a = (color >> 24);
-        if (a == 0xFF) {
-            if (idx < c->shadow_bytes / sizeof(uint32_t)) c->shadow[idx] = color;
-        } else if (a > 0) {
-            shadow_put_blend(c, idx, color);
-        }
-    } else if (alpha > 0.001f) {
+        if (a == 255) c->shadow[idx] = color;
+        else if (a > 0) c->shadow[idx] = alpha_blend(c->shadow[idx], color);
+    } else if (alpha_255 > 0) {
         uint32_t a = (color >> 24);
-        a = (uint32_t)(a * alpha);
+        a = (a * alpha_255) >> 8;
         if (a > 0) {
             color = (color & 0x00FFFFFF) | (a << 24);
-            shadow_put_blend(c, idx, color);
+            c->shadow[idx] = alpha_blend(c->shadow[idx], color);
         }
     }
 }
 
-static inline void shadow_put_black_alpha(wm_compositor_t *c, uint32_t idx, uint32_t alpha) {
+static inline void shadow_put_black_alpha(wm_compositor_t *c, uint32_t idx, uint32_t alpha_255) {
     uint32_t max = c->shadow_bytes / sizeof(uint32_t);
-    if (idx >= max) return;
+    if (idx >= max || alpha_255 == 0) return;
     uint32_t bg = c->shadow[idx];
-    uint32_t inv = 255u - alpha;
-    uint32_t rb = ((bg & 0xFF00FF) * inv + 0x800080) >> 8;
-    uint32_t gg = ((bg & 0x00FF00) * inv + 0x008000) >> 8;
+    uint32_t inv = 255 - alpha_255;
+    uint32_t rb = ((bg & 0xFF00FF) * inv) >> 8;
+    uint32_t gg = ((bg & 0x00FF00) * inv) >> 8;
     c->shadow[idx] = 0xFF000000u | (rb & 0xFF00FF) | (gg & 0x00FF00);
-}
-
-static inline void shadow_put_blend_clip(wm_compositor_t *c,
-        uint32_t x, uint32_t y,
-        uint32_t cx0, uint32_t cy0, uint32_t cx1, uint32_t cy1,
-        uint32_t color) {
-    if (x >= cx0 && x < cx1 && y >= cy0 && y < cy1)
-        shadow_put_blend(c, y * c->fb_width + x, color);
 }
 
 static inline void shadow_put_clip(wm_compositor_t *c,
@@ -338,22 +297,24 @@ static inline void shadow_put_clip(wm_compositor_t *c,
 }
 
 static inline uint32_t color_lerp(uint32_t c0, uint32_t c1, uint32_t t, uint32_t denom) {
-    if (denom == 0) return c0;
-    int32_t r0 = (int32_t)((c0 >> 16) & 0xFF), g0 = (int32_t)((c0 >> 8) & 0xFF), b0 = (int32_t)(c0 & 0xFF);
-    int32_t r1 = (int32_t)((c1 >> 16) & 0xFF), g1 = (int32_t)((c1 >> 8) & 0xFF), b1 = (int32_t)(c1 & 0xFF);
-    int32_t r = r0 + (r1 - r0) * (int32_t)t / (int32_t)denom;
-    int32_t g = g0 + (g1 - g0) * (int32_t)t / (int32_t)denom;
-    int32_t b = b0 + (b1 - b0) * (int32_t)t / (int32_t)denom;
-    return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    if (denom == 0 || t == 0) return c0;
+    if (t >= denom) return c1;
+    uint32_t factor = (t << 8) / denom;
+    uint32_t inv = 256 - factor;
+    uint32_t c0_rb = c0 & 0x00FF00FF, c0_g = c0 & 0x0000FF00;
+    uint32_t c1_rb = c1 & 0x00FF00FF, c1_g = c1 & 0x0000FF00;
+    uint32_t rb = ((c0_rb * inv + c1_rb * factor) >> 8) & 0x00FF00FF;
+    uint32_t g  = ((c0_g  * inv + c1_g  * factor) >> 8) & 0x0000FF00;
+    return 0xFF000000u | rb | g;
 }
 
 static void comp_draw_png_icon(wm_compositor_t *comp,
         uint32_t dst_x, uint32_t dst_y,
         uint32_t dst_w, uint32_t dst_h,
         uint32_t src_w, uint32_t src_h,
-        uint32_t *pixels, float alpha,
+        uint32_t *pixels, uint32_t alpha_255,
         uint32_t cx0, uint32_t cy0, uint32_t cx1, uint32_t cy1) {
-    if (!comp || !comp->shadow || !pixels) return;
+    if (!comp || !comp->shadow || !pixels || alpha_255 == 0) return;
     if (dst_w == 0 || dst_h == 0 || src_w == 0 || src_h == 0) return;
 
     uint32_t fbw = comp->fb_width;
@@ -369,8 +330,8 @@ static void comp_draw_png_icon(wm_compositor_t *comp,
                 if (px >= cx0 && px < cx1 && px < fbw) {
                     uint32_t src_x = (x * src_w) / dst_w;
                     uint32_t pixel = pixels[src_y * src_w + src_x];
-                    uint32_t pa = (pixel >> 24) & 0xFF;
-                    pa = (uint32_t)(pa * alpha);
+                    uint32_t pa = (pixel >> 24);
+                    pa = (pa * alpha_255) >> 8;
                     if (pa > 0) {
                         pixel = (pixel & 0x00FFFFFF) | (pa << 24);
                         shadow_put_blend(comp, row_off + px, pixel);
@@ -453,8 +414,9 @@ static glyph_cache_entry_t* get_glyph(int codepoint, float font_size, float scal
 static void comp_draw_text(wm_compositor_t *comp,
         uint32_t x0, uint32_t y0,
         const char *text, uint32_t color, float font_size,
-        uint32_t max_w, float alpha) {
-    if (!g_state.font_loaded || !comp->shadow) return;
+        uint32_t max_w, uint32_t alpha_255,
+        uint32_t cx0, uint32_t cy0, uint32_t cx1, uint32_t cy1) {
+    if (!g_state.font_loaded || !comp->shadow || alpha_255 == 0) return;
     float scale = stbtt_ScaleForPixelHeight(&g_font_info, font_size);
     int ascent, descent, lineGap;
     stbtt_GetFontVMetrics(&g_font_info, &ascent, &descent, &lineGap);
@@ -483,14 +445,15 @@ static void comp_draw_text(wm_compositor_t *comp,
             uint32_t cb =  color        & 0xFF;
             for (int row = 0; row < h; row++) {
                 uint32_t py = (uint32_t)(y + cy0v + row);
-                if (py >= comp->fb_height) continue;
+                if (py < cy0 || py >= cy1 || py >= comp->fb_height) continue;
                 uint32_t row_off = py * comp->fb_width;
                 for (int col = 0; col < w; col++) {
                     uint32_t px = (uint32_t)(x + cx0v + col);
-                    if (px >= comp->fb_width || px >= x0 + max_w) continue;
+                    if (px < cx0 || px >= cx1 || px >= comp->fb_width || px >= x0 + max_w) continue;
                     uint8_t a = entry->bitmap[row * w + col];
                     if (a == 0) continue;
-                    a = (uint8_t)(a * alpha);
+                    a = (uint8_t)((a * alpha_255) >> 8);
+                    if (a == 0) continue;
                     uint32_t c_out = ((uint32_t)a << 24) | (cr << 16) | (cg << 8) | cb;
                     shadow_put_blend(comp, row_off + px, c_out);
                 }
@@ -759,7 +722,6 @@ void wm_server_lower(wm_server_t *srv, uint32_t id) {
     zlist_push_bottom(srv, win);
     wm_mark_window_dirty(&g_state.compositor, win);
     wm_mark_taskbar_dirty(&g_state.compositor);
-
 }
 
 void wm_server_set_focus(wm_server_t *srv, uint32_t id) {
@@ -805,7 +767,6 @@ void wm_server_route_mouse(wm_server_t *srv, ipc_message_t *msg) {
         ipc_send_message(win->owner_pid, msg->data, msg->size);
 }
 
-
 bool wm_compositor_init(wm_compositor_t *comp, uint32_t width, uint32_t height) {
     comp->fb_width  = width;
     comp->fb_height = height;
@@ -825,44 +786,16 @@ bool wm_compositor_init(wm_compositor_t *comp, uint32_t width, uint32_t height) 
     return true;
 }
 
-
 static inline bool corner_skip(uint32_t row, uint32_t col) {
     if (row >= WM_CORNER_RADIUS || col >= WM_CORNER_RADIUS) return false;
     return col < k_corner_skip[row];
 }
 
-static inline bool rounded_rect_skip(uint32_t row, uint32_t col,
-        uint32_t w, uint32_t h, uint32_t radius) {
-    if (w == 0 || h == 0 || radius == 0) return false;
-    if (radius * 2 > w) radius = w / 2;
-    if (radius * 2 > h) radius = h / 2;
-    if (radius == 0) return false;
-    uint32_t rc = w - 1 - col;
-    uint32_t br = h - 1 - row;
-    if (row < radius && col < radius) {
-        uint32_t dx = radius - col - 1, dy = radius - row - 1;
-        return dx * dx + dy * dy > radius * radius;
-    }
-    if (row < radius && rc < radius) {
-        uint32_t dx = radius - rc - 1, dy = radius - row - 1;
-        return dx * dx + dy * dy > radius * radius;
-    }
-    if (br < radius && col < radius) {
-        uint32_t dx = radius - col - 1, dy = radius - br - 1;
-        return dx * dx + dy * dy > radius * radius;
-    }
-    if (br < radius && rc < radius) {
-        uint32_t dx = radius - rc - 1, dy = radius - br - 1;
-        return dx * dx + dy * dy > radius * radius;
-    }
-    return false;
-}
-
 static void shadow_fill_rounded_rect_clip(wm_compositor_t *comp,
         uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t radius,
         uint32_t cx0, uint32_t cy0, uint32_t cx1, uint32_t cy1,
-        uint32_t color, float alpha) {
-    if (!comp || !comp->shadow || w == 0 || h == 0) return;
+        uint32_t color, uint32_t alpha_255) {
+    if (!comp || !comp->shadow || w == 0 || h == 0 || alpha_255 == 0) return;
     uint32_t dw      = comp->fb_width;
     uint32_t start_r = (y > cy0) ? y : cy0;
     uint32_t end_r   = (y + h < cy1) ? y + h : cy1;
@@ -871,13 +804,40 @@ static void shadow_fill_rounded_rect_clip(wm_compositor_t *comp,
     uint32_t end_c   = (x + w < cx1) ? x + w : cx1;
     if (end_c > dw) end_c = dw;
 
-    for (uint32_t r = start_r; r < end_r; ++r)
+    if (radius * 2 > w) radius = w / 2;
+    if (radius * 2 > h) radius = h / 2;
+    uint32_t r2 = radius * radius;
+
+    for (uint32_t r = start_r; r < end_r; ++r) {
+        uint32_t row_off = r * dw;
+        uint32_t rr = r - y;
+        uint32_t br = h - 1 - rr;
+        bool in_top_r = (rr < radius);
+        bool in_bot_r = (br < radius);
+        uint32_t dy = in_top_r ? (radius - rr - 1) : (in_bot_r ? (radius - br - 1) : 0);
+        uint32_t dy2 = dy * dy;
+
         for (uint32_t c = start_c; c < end_c; ++c) {
-            if (rounded_rect_skip(r - y, c - x, w, h, radius)) continue;
-            shadow_put_alpha(comp, r * dw + c, color, alpha);
+            uint32_t cc = c - x;
+            uint32_t rc = w - 1 - cc;
+            bool in_left_c = (cc < radius);
+            bool in_right_c = (rc < radius);
+
+            if ((in_top_r || in_bot_r) && (in_left_c || in_right_c)) {
+                uint32_t dx = in_left_c ? (radius - cc - 1) : (radius - rc - 1);
+                if (dx * dx + dy2 > r2) continue;
+            }
+            shadow_put_alpha(comp, row_off + c, color, alpha_255);
         }
+    }
 }
 
+static uint32_t g_color_bg_top = COLOR_BG_TOP;
+static uint32_t g_color_bg_mid = COLOR_BG_MID;
+static uint32_t g_color_bg_bot = COLOR_BG_BOT;
+static uint32_t g_color_accent = COLOR_ACCENT;
+static uint32_t g_color_titlebar_top = COLOR_TITLEBAR_TOP;
+static uint32_t g_color_titlebar_bot = COLOR_TITLEBAR_BOT;
 
 static void generate_background(wm_compositor_t *comp) {
     if (!comp->background) return;
@@ -886,26 +846,23 @@ static void generate_background(wm_compositor_t *comp) {
     uint32_t desk_h = (h > WM_TASKBAR_HEIGHT) ? h - WM_TASKBAR_HEIGHT : h;
 
     for (uint32_t y = 0; y < h; ++y) {
-        uint32_t base = color_lerp(COLOR_BG_TOP, COLOR_BG_MID, y, h > 1 ? h - 1 : 1);
+        uint32_t base = color_lerp(g_color_bg_top, g_color_bg_mid, y, h > 1 ? h - 1 : 1);
         if (y >= desk_h)
-            base = color_lerp(COLOR_BG_MID, COLOR_BG_BOT, y - desk_h,
+            base = color_lerp(g_color_bg_mid, g_color_bg_bot, y - desk_h,
                               (h - desk_h) > 1 ? (h - desk_h) - 1 : 1);
         for (uint32_t x = 0; x < w; ++x) {
             uint32_t row_mix = (x * 96u) / (w > 0 ? w : 1u);
-            comp->background[y * w + x] = color_lerp(base, COLOR_BG_BOT, row_mix, 96u);
+            comp->background[y * w + x] = color_lerp(base, g_color_bg_bot, row_mix, 96u);
         }
     }
 
-    int32_t fd = file_open(
-        "/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Background.png", 0);
+    int32_t fd = file_open("/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Background.png", 0);
     uint8_t *img_data   = NULL;
     int      img_w = 0, img_h = 0, img_channels = 0;
 
     if (fd >= 0) {
         file_stat_t st;
-        if (file_stat(
-                "/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Background.png",
-                &st) == 0 && st.size > 0) {
+        if (file_stat("/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Background.png", &st) == 0 && st.size > 0) {
             uint8_t *file_buf = (uint8_t *)malloc(st.size);
             if (file_buf) {
                 int64_t total_read = 0;
@@ -994,11 +951,10 @@ void wm_compositor_mark_dirty(wm_compositor_t *comp,
     }
 }
 
-
 static void comp_draw_window_shadow(wm_compositor_t *comp, wm_window_t *win,
-        uint32_t wx, uint32_t wy, float alpha,
+        uint32_t wx, uint32_t wy, uint32_t alpha_255,
         uint32_t cx0, uint32_t cy0, uint32_t cx1, uint32_t cy1) {
-    if (!win || !win->visible || win->is_system) return;
+    if (!win || !win->visible || win->is_system || alpha_255 == 0) return;
     uint32_t dw = comp->fb_width;
     uint32_t dh = comp->fb_height;
     uint32_t sw = win->w;
@@ -1006,10 +962,8 @@ static void comp_draw_window_shadow(wm_compositor_t *comp, wm_window_t *win,
 
     for (uint32_t layer = 0; layer < WM_SHADOW_SIZE; ++layer) {
         uint32_t factor = (WM_SHADOW_SIZE - layer);
-        
-        uint32_t a_val = (uint32_t)(1.0f * (float)(factor * factor)
-                         / (float)(WM_SHADOW_SIZE * WM_SHADOW_SIZE) * 18.0f);
-        a_val = (uint32_t)((float)a_val * alpha);
+        uint32_t a_val = (factor * factor * 18) / (WM_SHADOW_SIZE * WM_SHADOW_SIZE);
+        a_val = (a_val * alpha_255) >> 8;
         if (a_val == 0) continue;
         int32_t shift_y = (int32_t)(layer / 2 + 2);
         int32_t sx = (int32_t)wx - (int32_t)layer;
@@ -1025,22 +979,29 @@ static void comp_draw_window_shadow(wm_compositor_t *comp, wm_window_t *win,
 
         for (uint32_t r = start_r; r < end_r; ++r) {
             uint32_t row_off = r * dw;
-            for (uint32_t c = start_c; c < end_c; ++c) {
-                if (c >= wx && c < wx + sw && r >= wy && r < wy + sh) continue;
-                shadow_put_black_alpha(comp, row_off + c, a_val);
+            bool in_y = (r >= wy && r < wy + sh);
+            if (in_y) {
+                uint32_t l_end = (wx < end_c) ? wx : end_c;
+                for (uint32_t c = start_c; c < l_end; ++c) shadow_put_black_alpha(comp, row_off + c, a_val);
+                uint32_t r_start = (wx + sw > start_c) ? wx + sw : start_c;
+                for (uint32_t c = r_start; c < end_c; ++c) shadow_put_black_alpha(comp, row_off + c, a_val);
+            } else {
+                for (uint32_t c = start_c; c < end_c; ++c) {
+                    shadow_put_black_alpha(comp, row_off + c, a_val);
+                }
             }
         }
     }
 }
 
-
 static void comp_draw_default_icon(wm_compositor_t *comp,
-        uint32_t x, uint32_t y, uint32_t sz, float alpha) {
+        uint32_t x, uint32_t y, uint32_t sz, uint32_t alpha_255) {
     if (!comp || sz < 4) return;
     uint32_t dw  = comp->fb_width;
     uint32_t qs  = (sz / 2) - 1;   
     uint32_t gap = 2;
     if (qs == 0) return;
+    uint32_t a_val = (alpha_255 * 216) >> 8;
     
     uint32_t qx[4] = { x,          x + qs + gap, x,          x + qs + gap };
     uint32_t qy[4] = { y,          y,             y + qs + gap, y + qs + gap };
@@ -1051,12 +1012,11 @@ static void comp_draw_default_icon(wm_compositor_t *comp,
             for (uint32_t c = 0; c < qs; c++) {
                 uint32_t px = qx[q] + c;
                 if (px >= comp->fb_width) continue;
-                shadow_put_alpha(comp, py * dw + px, 0xFFFFFFFF, alpha * 0.85f);
+                shadow_put_alpha(comp, py * dw + px, 0xFFFFFFFF, a_val);
             }
         }
     }
 }
-
 
 static void comp_draw_win_logo(wm_compositor_t *comp,
         uint32_t x, uint32_t y, uint32_t sz,
@@ -1078,7 +1038,6 @@ static void comp_draw_win_logo(wm_compositor_t *comp,
     }
 }
 
-
 static void comp_apply_blur_rect(wm_compositor_t *comp,
         uint32_t bx0, uint32_t by0, uint32_t bx1, uint32_t by1,
         uint32_t radius) {
@@ -1088,41 +1047,51 @@ static void comp_apply_blur_rect(wm_compositor_t *comp,
     uint32_t  dw  = comp->fb_width;
     uint32_t *pixels = comp->shadow;
     uint32_t  max_dim = w > h ? w : h;
-    uint32_t *temp    = (uint32_t*)malloc(max_dim * sizeof(uint32_t));
+    
+    static uint32_t *temp = NULL;
+    static uint32_t temp_cap = 0;
+    if (max_dim > temp_cap) {
+        temp_cap = max_dim;
+        temp = (uint32_t*)realloc_sized(temp, 0, temp_cap * sizeof(uint32_t));
+    }
     if (!temp) return;
 
+    int32_t max_w = (int32_t)dw - 1;
     for (uint32_t y = by0; y < by1; ++y) {
         uint32_t sum_r=0, sum_g=0, sum_b=0, count=0;
         int32_t r_start = (int32_t)bx0 - (int32_t)radius;
         int32_t r_end   = (int32_t)bx0 + (int32_t)radius;
         if (r_start < 0) r_start = 0;
-        if (r_end >= (int32_t)dw) r_end = (int32_t)dw - 1;
+        if (r_end > max_w) r_end = max_w;
+        uint32_t row_off = y * dw;
         for (int32_t i = r_start; i <= r_end; ++i) {
-            uint32_t c = pixels[y * dw + i];
+            uint32_t c = pixels[row_off + i];
             sum_r += (c>>16)&0xFF; sum_g += (c>>8)&0xFF; sum_b += c&0xFF; count++;
         }
         for (uint32_t x = bx0; x < bx1; ++x) {
             temp[x - bx0] = 0xFF000000u | ((sum_r/count)<<16) | ((sum_g/count)<<8) | (sum_b/count);
             if (x == bx1-1) break;
             int32_t right_add = (int32_t)x + 1 + (int32_t)radius;
-            if (right_add < (int32_t)dw) {
-                uint32_t c = pixels[y * dw + right_add];
+            if (right_add <= max_w) {
+                uint32_t c = pixels[row_off + right_add];
                 sum_r += (c>>16)&0xFF; sum_g += (c>>8)&0xFF; sum_b += c&0xFF; count++;
             }
             int32_t left_sub = (int32_t)x - (int32_t)radius;
             if (left_sub >= 0) {
-                uint32_t c = pixels[y * dw + left_sub];
+                uint32_t c = pixels[row_off + left_sub];
                 sum_r -= (c>>16)&0xFF; sum_g -= (c>>8)&0xFF; sum_b -= c&0xFF; count--;
             }
         }
-        for (uint32_t x = bx0; x < bx1; ++x) pixels[y * dw + x] = temp[x - bx0];
+        for (uint32_t x = bx0; x < bx1; ++x) pixels[row_off + x] = temp[x - bx0];
     }
+    
+    int32_t max_h = (int32_t)comp->fb_height - 1;
     for (uint32_t x = bx0; x < bx1; ++x) {
         uint32_t sum_r=0, sum_g=0, sum_b=0, count=0;
         int32_t r_start = (int32_t)by0 - (int32_t)radius;
         int32_t r_end   = (int32_t)by0 + (int32_t)radius;
         if (r_start < 0) r_start = 0;
-        if (r_end >= (int32_t)comp->fb_height) r_end = (int32_t)comp->fb_height - 1;
+        if (r_end > max_h) r_end = max_h;
         for (int32_t i = r_start; i <= r_end; ++i) {
             uint32_t c = pixels[i * dw + x];
             sum_r += (c>>16)&0xFF; sum_g += (c>>8)&0xFF; sum_b += c&0xFF; count++;
@@ -1131,7 +1100,7 @@ static void comp_apply_blur_rect(wm_compositor_t *comp,
             temp[y - by0] = 0xFF000000u | ((sum_r/count)<<16) | ((sum_g/count)<<8) | (sum_b/count);
             if (y == by1-1) break;
             int32_t right_add = (int32_t)y + 1 + (int32_t)radius;
-            if (right_add < (int32_t)comp->fb_height) {
+            if (right_add <= max_h) {
                 uint32_t c = pixels[right_add * dw + x];
                 sum_r += (c>>16)&0xFF; sum_g += (c>>8)&0xFF; sum_b += c&0xFF; count++;
             }
@@ -1143,7 +1112,6 @@ static void comp_apply_blur_rect(wm_compositor_t *comp,
         }
         for (uint32_t y = by0; y < by1; ++y) pixels[y * dw + x] = temp[y - by0];
     }
-    free(temp);
 }
 
 static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
@@ -1152,6 +1120,9 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
     uint32_t dw  = comp->fb_width;
     bool     foc = win->has_focus;
     float    alpha = win->anim_alpha;
+    uint32_t alpha_255 = (uint32_t)(alpha * 255.0f);
+    if (alpha_255 == 0) return;
+    uint32_t alpha_127 = alpha_255 >> 1;
 
     float    scale   = 0.94f + 0.06f * alpha;
     uint32_t win_w   = (uint32_t)(win->w * scale);
@@ -1173,14 +1144,14 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
         if (end_c > dw) end_c = dw;
         for (uint32_t r = start_r; r < end_r; ++r)
             for (uint32_t c = start_c; c < end_c; ++c)
-                shadow_put_alpha(comp, r * dw + c, win->bg_color, alpha);
+                shadow_put_alpha(comp, r * dw + c, win->bg_color, alpha_255);
         return;
     }
 
-    comp_draw_window_shadow(comp, win, wx, wy, alpha, cx0, cy0, cx1, cy1);
+    comp_draw_window_shadow(comp, win, wx, wy, alpha_255, cx0, cy0, cx1, cy1);
 
-    uint32_t tb_color_top = foc ? COLOR_TITLEBAR_TOP : COLOR_TITLEBAR_UNFOCUS;
-    uint32_t tb_color_bot = foc ? COLOR_TITLEBAR_BOT : COLOR_TITLEBAR_UNFOCUS_BOT;
+    uint32_t tb_color_top = foc ? g_color_titlebar_top : COLOR_TITLEBAR_UNFOCUS;
+    uint32_t tb_color_bot = foc ? g_color_titlebar_bot : COLOR_TITLEBAR_UNFOCUS_BOT;
 
     uint32_t title_start_r  = (wy > cy0) ? wy : cy0;
     uint32_t title_end_r    = (wy + title_h < cy1) ? wy + title_h : cy1;
@@ -1194,7 +1165,7 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
         uint32_t row_color = color_lerp(tb_color_top, tb_color_bot,
                                         lr, title_h > 1 ? title_h - 1 : 1);
         uint32_t base = r * dw;
-        if (alpha >= 0.999f && lr >= WM_CORNER_RADIUS) {
+        if (alpha_255 == 255 && lr >= WM_CORNER_RADIUS) {
             for (uint32_t c = content_start_c; c < content_end_c; ++c)
                 comp->shadow[base + c] = row_color;
         } else {
@@ -1202,12 +1173,11 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
                 uint32_t lc_l = c - wx;
                 uint32_t lc_r = (wx + win_w - 1) - c;
                 if (corner_skip(lr, lc_l) || corner_skip(lr, lc_r)) continue;
-                shadow_put_alpha(comp, base + c, row_color, alpha);
+                shadow_put_alpha(comp, base + c, row_color, alpha_255);
             }
         }
     }
 
-    
     if (wy + title_h - 1 < comp->fb_height) {
         uint32_t line_y     = wy + title_h - 1;
         uint32_t line_color = foc ? 0x30509ADBU : 0x1094A3B8U;
@@ -1215,17 +1185,16 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
             uint32_t lc_l = c - wx;
             uint32_t lc_r = (wx + win_w - 1) - c;
             if (corner_skip(0, lc_l) || corner_skip(0, lc_r)) continue;
-            shadow_put_alpha(comp, line_y * dw + c, line_color, alpha);
+            shadow_put_alpha(comp, line_y * dw + c, line_color, alpha_255);
         }
     }
 
-    
     uint32_t border_col = foc ? COLOR_BORDER_FOCUS : COLOR_BORDER;
     
     for (uint32_t c = content_start_c; c < content_end_c; ++c) {
         uint32_t lc_l = c - wx, lc_r = (wx + win_w - 1) - c;
         if (!corner_skip(0, lc_l) && !corner_skip(0, lc_r))
-            shadow_put_alpha(comp, wy * dw + c, border_col, alpha * 0.5f);
+            shadow_put_alpha(comp, wy * dw + c, border_col, alpha_127);
     }
     
     uint32_t by = wy + title_h + (uint32_t)(win->h * scale) - 1;
@@ -1233,26 +1202,23 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
         for (uint32_t c = content_start_c; c < content_end_c; ++c) {
             uint32_t lc_l = c - wx, lc_r = (wx + win_w - 1) - c;
             if (!corner_skip(0, lc_l) && !corner_skip(0, lc_r))
-                shadow_put_alpha(comp, by * dw + c, border_col, alpha * 0.5f);
+                shadow_put_alpha(comp, by * dw + c, border_col, alpha_127);
         }
     }
     
     for (uint32_t r = title_start_r; r < title_end_r + (uint32_t)(win->h * scale); ++r) {
         if (r >= comp->fb_height) break;
         uint32_t lr = r - wy;
-        if (!corner_skip(lr, 0)) shadow_put_alpha(comp, r * dw + wx, border_col, alpha * 0.5f);
-        if (!corner_skip(lr, win_w - 1)) shadow_put_alpha(comp, r * dw + wx + win_w - 1, border_col, alpha * 0.5f);
+        if (!corner_skip(lr, 0)) shadow_put_alpha(comp, r * dw + wx, border_col, alpha_127);
+        if (!corner_skip(lr, win_w - 1)) shadow_put_alpha(comp, r * dw + wx + win_w - 1, border_col, alpha_127);
     }
 
-    
     if (win_w > (uint32_t)(WM_TITLE_BTN_W * 3)) {
         uint32_t btn_h = title_h;
         uint32_t btn_w = (uint32_t)(WM_TITLE_BTN_W * scale);
-
         
         uint32_t close_x = wx + win_w - btn_w;
         if (win->hover_close) {
-            
             uint32_t close_bg = foc ? COLOR_CLOSE_BTN_HOVER_BG : 0xA0C42B1CU;
             uint32_t hov_start = (close_x > cx0) ? close_x : cx0;
             uint32_t hov_end   = (close_x + btn_w < cx1) ? close_x + btn_w : cx1;
@@ -1264,12 +1230,11 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
                     uint32_t lc_r = (wx + win_w - 1) - c;
                     if (lr < WM_CORNER_RADIUS && corner_skip(lr, lc_r)) continue;
                     if (br == 0) continue; 
-                    shadow_put_alpha(comp, r * dw + c, close_bg, alpha);
+                    shadow_put_alpha(comp, r * dw + c, close_bg, alpha_255);
                 }
             }
         }
         {
-            
             uint32_t icon_sz = (uint32_t)(10 * scale);
             uint32_t ic_x    = close_x + (btn_w - icon_sz) / 2;
             uint32_t ic_y    = wy + (btn_h - icon_sz) / 2;
@@ -1280,120 +1245,111 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
                 uint32_t px1 = ic_x + i;
                 uint32_t px2 = ic_x + icon_sz - 1 - i;
                 if (py < comp->fb_height) {
-                    if (px1 < dw) shadow_put_alpha(comp, py * dw + px1, icol, alpha);
-                    if (px2 < dw && px2 != px1) shadow_put_alpha(comp, py * dw + px2, icol, alpha);
+                    if (px1 < dw) shadow_put_alpha(comp, py * dw + px1, icol, alpha_255);
+                    if (px2 < dw && px2 != px1) shadow_put_alpha(comp, py * dw + px2, icol, alpha_255);
                 }
             }
         }
 
-        
         uint32_t max_x = wx + win_w - btn_w * 2;
         if (win->hover_max && foc)
             shadow_fill_rounded_rect_clip(comp, max_x + 2, wy + 4,
-                btn_w - 4, btn_h - 8, 3, cx0, cy0, cx1, cy1, COLOR_MAX_BTN_HOVER, alpha);
+                btn_w - 4, btn_h - 8, 3, cx0, cy0, cx1, cy1, COLOR_MAX_BTN_HOVER, alpha_255);
         {
             uint32_t icon_sz = (uint32_t)(10 * scale);
             uint32_t ic_x    = max_x + (btn_w - icon_sz) / 2;
             uint32_t ic_y    = wy + (btn_h - icon_sz) / 2;
             uint32_t icol    = foc ? COLOR_BTN_ICON : 0xFF475569U;
             if (win->maximized) {
-                
                 uint32_t back_x = ic_x + 2, back_y = ic_y;
                 uint32_t front_x = ic_x,    front_y = ic_y + 2;
                 uint32_t sq = icon_sz - 2;
                 for (uint32_t i = 0; i < sq; ++i) {
                     if (back_y < comp->fb_height && back_x + i < dw)
-                        shadow_put_alpha(comp, back_y * dw + back_x + i, icol, alpha);
+                        shadow_put_alpha(comp, back_y * dw + back_x + i, icol, alpha_255);
                     if (back_y + sq - 1 < comp->fb_height && back_x + i < dw)
-                        shadow_put_alpha(comp, (back_y + sq - 1) * dw + back_x + i, icol, alpha);
+                        shadow_put_alpha(comp, (back_y + sq - 1) * dw + back_x + i, icol, alpha_255);
                     if (front_y < comp->fb_height && front_x + i < dw)
-                        shadow_put_alpha(comp, front_y * dw + front_x + i, icol, alpha);
+                        shadow_put_alpha(comp, front_y * dw + front_x + i, icol, alpha_255);
                     if (front_y + sq - 1 < comp->fb_height && front_x + i < dw)
-                        shadow_put_alpha(comp, (front_y + sq - 1) * dw + front_x + i, icol, alpha);
+                        shadow_put_alpha(comp, (front_y + sq - 1) * dw + front_x + i, icol, alpha_255);
                 }
                 for (uint32_t i = 1; i < sq - 1; ++i) {
                     if (back_y + i < comp->fb_height) {
-                        if (back_x < dw) shadow_put_alpha(comp, (back_y + i) * dw + back_x, icol, alpha);
-                        if (back_x + sq - 1 < dw) shadow_put_alpha(comp, (back_y + i) * dw + back_x + sq - 1, icol, alpha);
+                        if (back_x < dw) shadow_put_alpha(comp, (back_y + i) * dw + back_x, icol, alpha_255);
+                        if (back_x + sq - 1 < dw) shadow_put_alpha(comp, (back_y + i) * dw + back_x + sq - 1, icol, alpha_255);
                     }
                     if (front_y + i < comp->fb_height) {
-                        if (front_x < dw) shadow_put_alpha(comp, (front_y + i) * dw + front_x, icol, alpha);
-                        if (front_x + sq - 1 < dw) shadow_put_alpha(comp, (front_y + i) * dw + front_x + sq - 1, icol, alpha);
+                        if (front_x < dw) shadow_put_alpha(comp, (front_y + i) * dw + front_x, icol, alpha_255);
+                        if (front_x + sq - 1 < dw) shadow_put_alpha(comp, (front_y + i) * dw + front_x + sq - 1, icol, alpha_255);
                     }
                 }
             } else {
-                
                 for (uint32_t i = 0; i < icon_sz; ++i) {
                     if (ic_y < comp->fb_height && ic_x + i < dw)
-                        shadow_put_alpha(comp, ic_y * dw + ic_x + i, icol, alpha);
+                        shadow_put_alpha(comp, ic_y * dw + ic_x + i, icol, alpha_255);
                     if (ic_y + icon_sz - 1 < comp->fb_height && ic_x + i < dw)
-                        shadow_put_alpha(comp, (ic_y + icon_sz - 1) * dw + ic_x + i, icol, alpha);
+                        shadow_put_alpha(comp, (ic_y + icon_sz - 1) * dw + ic_x + i, icol, alpha_255);
                 }
                 for (uint32_t i = 1; i < icon_sz - 1; ++i) {
                     if (ic_y + i < comp->fb_height) {
-                        if (ic_x < dw) shadow_put_alpha(comp, (ic_y + i) * dw + ic_x, icol, alpha);
-                        if (ic_x + icon_sz - 1 < dw) shadow_put_alpha(comp, (ic_y + i) * dw + ic_x + icon_sz - 1, icol, alpha);
+                        if (ic_x < dw) shadow_put_alpha(comp, (ic_y + i) * dw + ic_x, icol, alpha_255);
+                        if (ic_x + icon_sz - 1 < dw) shadow_put_alpha(comp, (ic_y + i) * dw + ic_x + icon_sz - 1, icol, alpha_255);
                     }
                 }
             }
         }
 
-        
         uint32_t min_x = wx + win_w - btn_w * 3;
         if (win->hover_min && foc)
             shadow_fill_rounded_rect_clip(comp, min_x + 2, wy + 4,
-                btn_w - 4, btn_h - 8, 3, cx0, cy0, cx1, cy1, COLOR_MIN_BTN_HOVER, alpha);
+                btn_w - 4, btn_h - 8, 3, cx0, cy0, cx1, cy1, COLOR_MIN_BTN_HOVER, alpha_255);
         {
             uint32_t icon_w = (uint32_t)(10 * scale);
             uint32_t ic_x   = min_x + (btn_w - icon_w) / 2;
-            
             uint32_t ic_y   = wy + (btn_h * 2) / 3;
             uint32_t icol   = foc ? COLOR_BTN_ICON : 0xFF475569U;
             if (ic_y < comp->fb_height) {
                 for (uint32_t i = 0; i < icon_w; ++i)
-                    if (ic_x + i < dw) shadow_put_alpha(comp, ic_y * dw + ic_x + i, icol, alpha);
+                    if (ic_x + i < dw) shadow_put_alpha(comp, ic_y * dw + ic_x + i, icol, alpha_255);
             }
         }
     }
 
-    
     if (win->title[0] != '\0' && win_w > (uint32_t)(WM_TITLE_BTN_W * 3 + 60)) {
-        
         uint32_t ic_sz  = (uint32_t)(WM_TITLE_ICON_SIZE * scale);
         uint32_t ic_pad = (uint32_t)(WM_TITLE_ICON_PAD  * scale);
         uint32_t ic_x   = wx + ic_pad;
         uint32_t ic_y   = wy + (title_h > ic_sz ? (title_h - ic_sz) / 2 : 0);
 
         if (win->has_icon) {
-            
             uint32_t src_sz = WM_TITLE_ICON_SIZE;
             for (uint32_t r = 0; r < ic_sz; ++r) {
                 uint32_t src_r = r * src_sz / ic_sz;
                 uint32_t py    = ic_y + r;
-                if (py >= comp->fb_height) continue;
+                if (py < cy0 || py >= cy1 || py >= comp->fb_height) continue;
                 for (uint32_t c = 0; c < ic_sz; ++c) {
                     uint32_t src_c = c * src_sz / ic_sz;
                     uint32_t px    = ic_x + c;
-                    if (px >= comp->fb_width) continue;
+                    if (px < cx0 || px >= cx1 || px >= comp->fb_width) continue;
                     shadow_put_alpha(comp, py * comp->fb_width + px,
-                                     win->icon[src_r * src_sz + src_c], alpha);
+                                     win->icon[src_r * src_sz + src_c], alpha_255);
                 }
             }
         } else {
-            comp_draw_default_icon(comp, ic_x, ic_y, ic_sz, alpha);
+            comp_draw_default_icon(comp, ic_x, ic_y, ic_sz, alpha_255);
         }
 
-        
         uint32_t txt_x   = ic_x + ic_sz + (uint32_t)(4 * scale);
         uint32_t txt_y   = wy + (title_h > 0 ? (title_h - (uint32_t)(12.0f * scale)) / 2 : 0);
         uint32_t max_txt = win_w - (uint32_t)(WM_TITLE_BTN_W * 3 * scale) - (txt_x - wx) - (uint32_t)(8 * scale);
         float    font_sz = 12.0f * scale;
         comp_draw_text(comp, txt_x, txt_y, win->title,
                        foc ? COLOR_TEXT : 0xFF8B9AB0U,
-                       font_sz, max_txt, alpha);
+                       font_sz, max_txt, alpha_255,
+                       cx0, cy0, cx1, cy1);
     }
 
-    
     uint32_t cl_y     = wy + title_h;
     uint32_t cl_h     = win_h;
     uint32_t c_start_r = (cl_y > cy0) ? cl_y : cy0;
@@ -1403,7 +1359,7 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
     for (uint32_t r = c_start_r; r < c_end_r; ++r) {
         uint32_t br   = (wy + title_h + cl_h - 1) - r;
         uint32_t base = r * dw;
-        if (alpha >= 0.999f && (win->bg_color >> 24) == 0xFF && br >= WM_CORNER_RADIUS) {
+        if (alpha_255 == 255 && (win->bg_color >> 24) == 0xFF && br >= WM_CORNER_RADIUS) {
             for (uint32_t c = content_start_c; c < content_end_c; ++c)
                 comp->shadow[base + c] = win->bg_color;
         } else {
@@ -1411,12 +1367,21 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
                 uint32_t lc_l = c - wx;
                 uint32_t lc_r = (wx + win_w - 1) - c;
                 if (corner_skip(br, lc_l) || corner_skip(br, lc_r)) continue;
-                shadow_put_alpha(comp, base + c, win->bg_color, alpha);
+                shadow_put_alpha(comp, base + c, win->bg_color, alpha_255);
             }
         }
     }
 
-    
+    uint32_t win_cl_x0 = wx;
+    uint32_t win_cl_y0 = cl_y;
+    uint32_t win_cl_x1 = wx + win_w;
+    uint32_t win_cl_y1 = cl_y + win_h;
+
+    uint32_t ccx0 = (win_cl_x0 > cx0) ? win_cl_x0 : cx0;
+    uint32_t ccy0 = (win_cl_y0 > cy0) ? win_cl_y0 : cy0;
+    uint32_t ccx1 = (win_cl_x1 < cx1) ? win_cl_x1 : cx1;
+    uint32_t ccy1 = (win_cl_y1 < cy1) ? win_cl_y1 : cy1;
+
     for (uint32_t ui = 0; ui < win->ui_element_count; ui++) {
         wm_ui_element_t *e = &win->ui_elements[ui];
         uint32_t ex = wx + (uint32_t)(e->x * scale);
@@ -1436,17 +1401,20 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
             }
             if (rad > 0) {
                 shadow_fill_rounded_rect_clip(comp, ex, ey, ew, eh, rad,
-                    cx0, cy0, cx1, cy1, elem_bg, alpha);
+                    ccx0, ccy0, ccx1, ccy1, elem_bg, alpha_255);
             } else {
-                uint32_t e_start_r = (ey > cy0) ? ey : cy0;
-                uint32_t e_end_r   = (ey + eh < cy1) ? ey + eh : cy1;
+                uint32_t e_start_r = (ey > ccy0) ? ey : ccy0;
+                uint32_t e_end_r   = (ey + eh < ccy1) ? ey + eh : ccy1;
                 if (e_end_r > comp->fb_height) e_end_r = comp->fb_height;
-                uint32_t e_start_c = (ex > cx0) ? ex : cx0;
-                uint32_t e_end_c   = (ex + ew < cx1) ? ex + ew : cx1;
+                uint32_t e_start_c = (ex > ccx0) ? ex : ccx0;
+                uint32_t e_end_c   = (ex + ew < ccx1) ? ex + ew : ccx1;
                 if (e_end_c > dw) e_end_c = dw;
-                for (uint32_t r = e_start_r; r < e_end_r; ++r)
-                    for (uint32_t c = e_start_c; c < e_end_c; ++c)
-                        shadow_put_alpha(comp, r * dw + c, elem_bg, alpha);
+                for (uint32_t r = e_start_r; r < e_end_r; ++r) {
+                    uint32_t row_off = r * dw;
+                    for (uint32_t c = e_start_c; c < e_end_c; ++c) {
+                        shadow_put_alpha(comp, row_off + c, elem_bg, alpha_255);
+                    }
+                }
             }
         }
         if (e->type == WM_UI_TYPE_LABEL || e->type == WM_UI_TYPE_BUTTON) {
@@ -1458,44 +1426,39 @@ static void comp_draw_window(wm_compositor_t *comp, wm_window_t *win,
                     if (tw < ew) tx = ex + (ew - tw) / 2;
                     ty = ey + (eh > (uint32_t)fsz ? (eh - (uint32_t)fsz) / 2 : 0);
                 }
-                comp_draw_text(comp, tx, ty, e->text, e->color, fsz, ew, alpha);
+                comp_draw_text(comp, tx, ty, e->text, e->color, fsz, ew, alpha_255,
+                               ccx0, ccy0, ccx1, ccy1);
             }
         }
     }
 
-    
     uint32_t bdr = foc ? COLOR_BORDER_FOCUS : COLOR_BORDER;
-
-    
     if (wy < comp->fb_height) {
         for (uint32_t c = wx; c < wx + win_w && c < dw; ++c) {
             uint32_t lc_l = c - wx;
             uint32_t lc_r = (wx + win_w - 1) - c;
             if (corner_skip(0, lc_l) || corner_skip(0, lc_r)) continue;
-            shadow_put_alpha(comp, wy * dw + c, bdr, alpha);
+            shadow_put_alpha(comp, wy * dw + c, bdr, alpha_255);
         }
     }
-    
     for (uint32_t r = wy; r < wy + title_h + win_h && r < comp->fb_height; ++r) {
         uint32_t lr = r - wy;
         uint32_t br = (wy + title_h + win_h - 1) - r;
         if (lr < WM_CORNER_RADIUS && k_corner_skip[lr] > 0) continue;
         if (br < WM_CORNER_RADIUS && k_corner_skip[br] > 0) continue;
-        if (wx < dw) shadow_put_alpha(comp, r * dw + wx, bdr, alpha);
+        if (wx < dw) shadow_put_alpha(comp, r * dw + wx, bdr, alpha_255);
         if (win_w > 0 && wx + win_w - 1 < dw)
-            shadow_put_alpha(comp, r * dw + wx + win_w - 1, bdr, alpha);
+            shadow_put_alpha(comp, r * dw + wx + win_w - 1, bdr, alpha_255);
     }
-    
     if (wy + title_h + win_h - 1 < comp->fb_height) {
         for (uint32_t c = wx; c < wx + win_w && c < dw; ++c) {
             uint32_t lc_l = c - wx;
             uint32_t lc_r = (wx + win_w - 1) - c;
             if (corner_skip(0, lc_l) || corner_skip(0, lc_r)) continue;
-            shadow_put_alpha(comp, (wy + title_h + win_h - 1) * dw + c, bdr, alpha);
+            shadow_put_alpha(comp, (wy + title_h + win_h - 1) * dw + c, bdr, alpha_255);
         }
     }
 }
-
 
 static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
         uint32_t dx0, uint32_t dy0, uint32_t dx1, uint32_t dy1) {
@@ -1517,15 +1480,13 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
 
     if (bx1 > bx0 && by1 > by0) {
         comp_apply_blur_rect(comp, bx0, by0, bx1, by1, 8);
-        
         for (uint32_t r = by0; r < by1; ++r) {
             for (uint32_t c = bx0; c < bx1; ++c)
-                shadow_put_alpha(comp, r * dw + c, COLOR_TASKBAR_BG_GLASS, 1.0f);
+                shadow_put_alpha(comp, r * dw + c, COLOR_TASKBAR_BG_GLASS, 255);
         }
-        
         if (by0 == tb_y) {
             for (uint32_t c = bx0; c < bx1; ++c)
-                shadow_put_alpha(comp, tb_y * dw + c, COLOR_TASKBAR_HIGHLIGHT, 1.0f);
+                shadow_put_alpha(comp, tb_y * dw + c, COLOR_TASKBAR_HIGHLIGHT, 255);
         }
     }
 
@@ -1555,7 +1516,7 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
                                                  : COLOR_START_BTN;
 
     shadow_fill_rounded_rect_clip(comp, sb_x, sb_y, sb_w, sb_h, 6,
-        bx0, by0, bx1, by1, sb_color, 1.0f);
+        bx0, by0, bx1, by1, sb_color, 255);
     
     uint32_t logo_sz = 16;
     uint32_t logo_x  = sb_x + (sb_w - logo_sz) / 2;
@@ -1575,7 +1536,7 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
                                : w->minimized  ? COLOR_TASKBAR_BTN_MIN
                                                : COLOR_TASKBAR_BTN_IDLE;
             shadow_fill_rounded_rect_clip(comp, bx, btn_y, btn_w, btn_h, 4,
-                bx0, by0, bx1, by1, btn_color, 1.0f);
+                bx0, by0, bx1, by1, btn_color, 255);
 
             uint32_t pill_w  = w->has_focus ? 18 : (w->minimized ? 4 : 0);
             if (pill_w > 0) {
@@ -1602,14 +1563,14 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
                 if (pulse > 0.0f) {
                     shadow_fill_rounded_rect_clip(comp, icon_x - 3, icon_y - 3,
                         icon_sz + 6, icon_sz + 6, 8,
-                        bx0, by0, bx1, by1, 0xFFFFFFFF, pulse * 0.12f);
+                        bx0, by0, bx1, by1, 0xFFFFFFFF, (uint32_t)(pulse * 30.6f));
                 }
-                comp_draw_png_icon(comp, icon_x, icon_y, 16, 16, 16, 16, w->icon, 1.0f,
+                comp_draw_png_icon(comp, icon_x, icon_y, 16, 16, 16, 16, w->icon, 255,
                                   bx, btn_y, bx + btn_w, btn_y + btn_h);
                 tx = bx + 28;
             }
-            
-            comp_draw_text(comp, tx, ty, label, tcol, 11.0f, btn_w - 20, 1.0f);
+            comp_draw_text(comp, tx, ty, label, tcol, 11.0f, btn_w - 20, 255,
+                           bx0, by0, bx1, by1);
 
             bx += btn_w + btn_gap;
         }
@@ -1620,15 +1581,16 @@ static void comp_draw_taskbar(wm_compositor_t *comp, wm_server_t *srv,
     if (g_clock_str[0]) {
         uint32_t ty = tb_y + (tb_h / 2) - 14;
         comp_draw_text(comp, clock_x, ty, g_clock_str,
-                       COLOR_TASKBAR_TEXT, 12.0f, clock_area_w, 0.95f);
+                       COLOR_TASKBAR_TEXT, 12.0f, clock_area_w, 242,
+                       bx0, by0, bx1, by1);
     }
     if (g_date_str[0]) {
         uint32_t ty = tb_y + (tb_h / 2) + 1;
         comp_draw_text(comp, clock_x, ty, g_date_str,
-                       COLOR_TASKBAR_TEXT_DIM, 10.0f, clock_area_w, 0.85f);
+                       COLOR_TASKBAR_TEXT_DIM, 10.0f, clock_area_w, 216,
+                       bx0, by0, bx1, by1);
     }
 }
-
 
 static void comp_draw_cursor_to_shadow(wm_compositor_t *comp, uint32_t cx, uint32_t cy) {
     uint32_t dw = comp->fb_width;
@@ -1652,7 +1614,6 @@ static void comp_draw_cursor_to_shadow(wm_compositor_t *comp, uint32_t cx, uint3
         }
     }
 }
-
 
 static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
                                  uint32_t bx0, uint32_t by0, uint32_t bx1, uint32_t by1) {
@@ -1678,24 +1639,24 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
     }
     
     shadow_fill_rounded_rect_clip(comp, sm_x - 1, sm_y - 1, sm_w + 2, sm_h + 2, 14,
-        bx0, by0, bx1, by1, 0x40000000, 1.0f);
+        bx0, by0, bx1, by1, 0x40000000, 255);
 
     shadow_fill_rounded_rect_clip(comp, sm_x, sm_y, sm_w, sm_h, 12,
-        bx0, by0, bx1, by1, 0xC018202F, 1.0f);
+        bx0, by0, bx1, by1, 0xC018202F, 255);
 
     for (uint32_t c = sm_x; c < sm_x + sm_w; ++c) {
-        shadow_put_alpha(comp, sm_y * dw + c, 0x25FFFFFF, 1.0f);
-        shadow_put_alpha(comp, (sm_y + sm_h - 1) * dw + c, 0x10FFFFFF, 1.0f);
+        shadow_put_alpha(comp, sm_y * dw + c, 0x25FFFFFF, 255);
+        shadow_put_alpha(comp, (sm_y + sm_h - 1) * dw + c, 0x10FFFFFF, 255);
     }
     for (uint32_t r = sm_y; r < sm_y + sm_h; ++r) {
-        shadow_put_alpha(comp, r * dw + sm_x, 0x25FFFFFF, 1.0f);
-        shadow_put_alpha(comp, r * dw + (sm_x + sm_w - 1), 0x25FFFFFF, 1.0f);
+        shadow_put_alpha(comp, r * dw + sm_x, 0x25FFFFFF, 255);
+        shadow_put_alpha(comp, r * dw + (sm_x + sm_w - 1), 0x25FFFFFF, 255);
     }
     
     shadow_fill_rounded_rect_clip(comp, sm_x + 15, sm_y + 15, sm_w - 30, 36, 18,
-        bx0, by0, bx1, by1, 0x20FFFFFF, 1.0f);
-    comp_draw_text(comp, sm_x + 28, sm_y + 25, "🔍", 0xFF8B9AB0, 14.0f, 24, 1.0f);
-    comp_draw_text(comp, sm_x + 56, sm_y + 25, "Search apps and files", 0xFF8B9AB0, 14.0f, sm_w - 80, 1.0f);
+        bx0, by0, bx1, by1, 0x20FFFFFF, 255);
+    comp_draw_text(comp, sm_x + 28, sm_y + 25, "🔍", 0xFF8B9AB0, 14.0f, 24, 255, bx0, by0, bx1, by1);
+    comp_draw_text(comp, sm_x + 56, sm_y + 25, "Search apps and files", 0xFF8B9AB0, 14.0f, sm_w - 80, 255, bx0, by0, bx1, by1);
 
     for (uint32_t i = 0; i < START_APPS_COUNT; i++) {
         uint32_t ay = sm_y + 70 + i * 42;
@@ -1704,7 +1665,7 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
                            st->server.cursor_y >= ay && st->server.cursor_y < ay + 36);
              uint32_t bg_col = hover ? 0x25FFFFFF : 0x00FFFFFF;
              shadow_fill_rounded_rect_clip(comp, sm_x + 15, ay, sm_w - 30, 36, 6,
-                bx0, by0, bx1, by1, bg_col, 1.0f);
+                bx0, by0, bx1, by1, bg_col, 255);
              
              start_menu_app_t *app = &g_start_apps[i];
              if (app->has_png_icon && app->icon_pixels) {
@@ -1712,13 +1673,13 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
                  uint32_t icon_x = sm_x + 20;
                  uint32_t icon_y = ay + (36 - icon_size) / 2;
                  comp_draw_png_icon(comp, icon_x, icon_y,
-                                   icon_size, icon_size, app->icon_w, app->icon_h, app->icon_pixels, 1.0f,
+                                   icon_size, icon_size, app->icon_w, app->icon_h, app->icon_pixels, 255,
                                    sm_x + 15, ay, sm_x + sm_w - 15, ay + 36);
              } else {
-                 comp_draw_text(comp, sm_x + 28, ay + 10, app->emoji_icon, 0xFFFFFFFF, 14.0f, 30, 1.0f);
+                 comp_draw_text(comp, sm_x + 28, ay + 10, app->emoji_icon, 0xFFFFFFFF, 14.0f, 30, 255, bx0, by0, bx1, by1);
              }
              
-             comp_draw_text(comp, sm_x + 58, ay + 10, g_start_apps[i].name, 0xFFEFF3F8, 14.0f, sm_w - 88, 1.0f);
+             comp_draw_text(comp, sm_x + 58, ay + 10, g_start_apps[i].name, 0xFFEFF3F8, 14.0f, sm_w - 88, 255, bx0, by0, bx1, by1);
         }
     }
 
@@ -1727,32 +1688,31 @@ static void comp_draw_start_menu(wm_compositor_t *comp, wm_state_t *st,
     uint64_t mem_total = get_total_memory() / (1024 * 1024);
     char mem_text[64];
     snprintf(mem_text, sizeof(mem_text), "Memory Usage: %llu / %llu MB", mem_used, mem_total);
-    comp_draw_text(comp, sm_x + 15, stats_y, mem_text, 0xFF8B9AB0, 11.0f, sm_w - 30, 1.0f);
+    comp_draw_text(comp, sm_x + 15, stats_y, mem_text, 0xFF8B9AB0, 11.0f, sm_w - 30, 255, bx0, by0, bx1, by1);
 
     uint32_t up_y = sm_y + sm_h - 50;
     shadow_fill_rounded_rect_clip(comp, sm_x, up_y, sm_w, 50, 12,
-        bx0, by0, bx1, by1, 0x08FFFFFF, 1.0f);
+        bx0, by0, bx1, by1, 0x08FFFFFF, 255);
     shadow_fill_rounded_rect_clip(comp, sm_x, up_y, sm_w, 1, 0,
-        bx0, by0, bx1, by1, 0x15FFFFFF, 1.0f);
+        bx0, by0, bx1, by1, 0x15FFFFFF, 255);
         
-    comp_draw_text(comp, sm_x + 40, up_y + 15, "ImplusOS User", 0xFFFFFFFF, 14.0f, sm_w - 60, 1.0f);
-    comp_draw_text(comp, sm_x + 15, up_y + 15, "👤", 0xFFFFFFFF, 14.0f, 20, 1.0f);
+    comp_draw_text(comp, sm_x + 40, up_y + 15, "ImplusOS User", 0xFFFFFFFF, 14.0f, sm_w - 60, 255, bx0, by0, bx1, by1);
+    comp_draw_text(comp, sm_x + 15, up_y + 15, "👤", 0xFFFFFFFF, 14.0f, 20, 255, bx0, by0, bx1, by1);
 
     uint32_t pwr_x = sm_x + sm_w - 40;
     bool hover_pwr = (st->server.cursor_x >= pwr_x && st->server.cursor_x < pwr_x + 30 &&
                       st->server.cursor_y >= up_y + 10 && st->server.cursor_y < up_y + 40);
     shadow_fill_rounded_rect_clip(comp, pwr_x, up_y + 10, 30, 30, 6,
-        bx0, by0, bx1, by1, hover_pwr ? 0x40FFFFFF : 0x20FFFFFF, 1.0f);
-    comp_draw_text(comp, pwr_x + 8, up_y + 16, "⏻", 0xFFC42B1C, 14.0f, 20, 1.0f);
+        bx0, by0, bx1, by1, hover_pwr ? 0x40FFFFFF : 0x20FFFFFF, 255);
+    comp_draw_text(comp, pwr_x + 8, up_y + 16, "⏻", 0xFFC42B1C, 14.0f, 20, 255, bx0, by0, bx1, by1);
 
     pwr_x -= 40;
     bool hover_rb = (st->server.cursor_x >= pwr_x && st->server.cursor_x < pwr_x + 30 &&
                      st->server.cursor_y >= up_y + 10 && st->server.cursor_y < up_y + 40);
     shadow_fill_rounded_rect_clip(comp, pwr_x, up_y + 10, 30, 30, 6,
-        bx0, by0, bx1, by1, hover_rb ? 0x40FFFFFF : 0x20FFFFFF, 1.0f);
-    comp_draw_text(comp, pwr_x + 8, up_y + 16, "⟳", 0xFF3B82F6, 14.0f, 20, 1.0f);
+        bx0, by0, bx1, by1, hover_rb ? 0x40FFFFFF : 0x20FFFFFF, 255);
+    comp_draw_text(comp, pwr_x + 8, up_y + 16, "⟳", 0xFF3B82F6, 14.0f, 20, 255, bx0, by0, bx1, by1);
 }
-
 
 static void wm_add_notification(wm_state_t *st, const char *title, const char *msg) {
     for (int i = 0; i < WM_MAX_NOTIFICATIONS; i++) {
@@ -1791,33 +1751,27 @@ static void comp_draw_notifications(wm_compositor_t *comp, wm_state_t *st,
             continue;
         }
 
-        
         if (st->notifications[i].anim_y > 0.0f) {
             st->notifications[i].anim_y -= 0.08f;
             if (st->notifications[i].anim_y < 0.0f) st->notifications[i].anim_y = 0.0f;
-            
             wm_compositor_mark_dirty(comp, x - 10, start_y, notif_w + 20, notif_h + 120);
         }
 
         uint32_t y = start_y + (uint32_t)(st->notifications[i].anim_y * 100.0f);
         
-        
         shadow_fill_rounded_rect_clip(comp, x + 2, y + 2, notif_w, notif_h, 8,
-            bx0, by0, bx1, by1, 0x40000000, 1.0f);
-        
+            bx0, by0, bx1, by1, 0x40000000, 255);
         shadow_fill_rounded_rect_clip(comp, x, y, notif_w, notif_h, 8,
-            bx0, by0, bx1, by1, 0xF01C2433, 1.0f);
-        
+            bx0, by0, bx1, by1, 0xF01C2433, 255);
         shadow_fill_rounded_rect_clip(comp, x, y, 4, notif_h, 0,
-            bx0, by0, bx1, by1, COLOR_ACCENT, 1.0f);
+            bx0, by0, bx1, by1, g_color_accent, 255);
 
-        comp_draw_text(comp, x + 15, y + 10, st->notifications[i].title, 0xFFFFFFFF, 14.0f, notif_w - 30, 1.0f);
-        comp_draw_text(comp, x + 15, y + 35, st->notifications[i].message, 0xFF8B9AB0, 12.0f, notif_w - 30, 1.0f);
+        comp_draw_text(comp, x + 15, y + 10, st->notifications[i].title, 0xFFFFFFFF, 14.0f, notif_w - 30, 255, bx0, by0, bx1, by1);
+        comp_draw_text(comp, x + 15, y + 35, st->notifications[i].message, 0xFF8B9AB0, 12.0f, notif_w - 30, 255, bx0, by0, bx1, by1);
 
         start_y += notif_h + spacing;
     }
 }
-
 
 static void flush_rect(wm_compositor_t *comp,
         uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1) {
@@ -1833,9 +1787,7 @@ static void flush_rect(wm_compositor_t *comp,
             uint32_t  base = row * dw + x0;
             uint32_t *dst  = fb + base;
             uint32_t *src  = comp->shadow + base;
-            uint64_t  count = w;
-            __asm__ volatile ("cld\n\t rep movsl"
-                : "+D"(dst), "+S"(src), "+c"(count) :: "memory");
+            memcpy(dst, src, w * sizeof(uint32_t));
         }
         return;
     }
@@ -1852,13 +1804,11 @@ static void flush_rect(wm_compositor_t *comp,
     }
 }
 
-
 void wm_compositor_render(wm_state_t *st) {
     wm_compositor_t *comp = &st->compositor;
     wm_server_t     *srv  = &st->server;
     if (!comp->shadow || !comp->background) return;
 
-    
     for (uint32_t i = 0; i < srv->window_count; ++i) {
         wm_window_t *w = srv->windows[i];
         if (!w) continue;
@@ -1901,7 +1851,6 @@ void wm_compositor_render(wm_state_t *st) {
         if (w->is_system)  comp_draw_window(comp, w, dx0, dy0, dx1, dy1);
 
     comp_draw_taskbar(comp, srv, dx0, dy0, dx1, dy1);
-
     comp_draw_start_menu(comp, st, dx0, dy0, dx1, dy1);
     comp_draw_notifications(comp, st, dx0, dy0, dx1, dy1);
 
@@ -1917,7 +1866,6 @@ void wm_compositor_render(wm_state_t *st) {
     draw_present();
     comp->dirty.dirty = false;
 }
-
 
 void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
     if (!st || !msg || msg->size < sizeof(wm_msg_hdr_t)) return;
@@ -1991,11 +1939,42 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         resp.focused_window_id = srv->focused_id;
         ipc_send_message(msg->sender_pid, &resp, sizeof(resp)); break;
     }
+    case WM_SET_THEME: {
+        struct {
+            wm_msg_hdr_t hdr;
+            uint32_t bg_top, bg_mid, bg_bot, accent;
+            uint32_t titlebar_top, titlebar_bot;
+        } *cmd = (void *)msg->data;
+        if (msg->size >= sizeof(*cmd)) {
+            g_color_bg_top = cmd->bg_top;
+            g_color_bg_mid = cmd->bg_mid;
+            g_color_bg_bot = cmd->bg_bot;
+            g_color_accent = cmd->accent;
+            g_color_titlebar_top = cmd->titlebar_top;
+            g_color_titlebar_bot = cmd->titlebar_bot;
+            generate_background(&st->compositor);
+            wm_compositor_mark_dirty(&st->compositor, 0, 0,
+                                     st->compositor.fb_width, st->compositor.fb_height);
+        }
+        break;
+    }
+    case WM_RELOAD_BACKGROUND: {
+        generate_background(&st->compositor);
+        wm_compositor_mark_dirty(&st->compositor, 0, 0,
+                                 st->compositor.fb_width, st->compositor.fb_height);
+        break;
+    }
 
     case WM_DRAW_PIXEL: {
         struct { wm_msg_hdr_t hdr; uint32_t x, y, color; } *cmd = (void *)msg->data;
         wm_window_t *win = slot_find_by_id(srv, hdr->window_id);
-        if (win && msg->size >= sizeof(*cmd)) {
+        if (win && win->owner_pid == msg->sender_pid && msg->size >= sizeof(*cmd)) {
+            if (win->ui_element_count < WM_UI_MAX_ELEMENTS) {
+                wm_ui_element_t *e = &win->ui_elements[win->ui_element_count++];
+                e->type = WM_UI_TYPE_RECT;
+                e->x = cmd->x; e->y = cmd->y; e->w = 1; e->h = 1;
+                e->bg_color = cmd->color;
+            }
             int off_y = (int)((1.0f - win->anim_alpha) * 20.0f);
             wm_compositor_mark_dirty(&st->compositor, win->x + cmd->x,
                 win->y + off_y + WM_TITLE_HEIGHT + cmd->y, 1, 1);
@@ -2005,9 +1984,16 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
     case WM_DRAW_RECT: {
         struct { wm_msg_hdr_t hdr; uint32_t x, y, w, h, color; } *cmd = (void *)msg->data;
         wm_window_t *win = slot_find_by_id(srv, hdr->window_id);
-        if (win && msg->size >= sizeof(*cmd)) {
-            if (cmd->x == 0 && cmd->y == 0 && cmd->w >= win->w && cmd->h >= win->h)
+        if (win && win->owner_pid == msg->sender_pid && msg->size >= sizeof(*cmd)) {
+            if (cmd->x == 0 && cmd->y == 0 && cmd->w >= win->w && cmd->h >= win->h) {
                 win->bg_color = cmd->color;
+                win->ui_element_count = 0;
+            } else if (win->ui_element_count < WM_UI_MAX_ELEMENTS) {
+                wm_ui_element_t *e = &win->ui_elements[win->ui_element_count++];
+                e->type = WM_UI_TYPE_RECT;
+                e->x = cmd->x; e->y = cmd->y; e->w = cmd->w; e->h = cmd->h;
+                e->bg_color = cmd->color;
+            }
             int off_y = (int)((1.0f - win->anim_alpha) * 20.0f);
             wm_compositor_mark_dirty(&st->compositor, win->x + cmd->x,
                 win->y + off_y + WM_TITLE_HEIGHT + cmd->y, cmd->w, cmd->h);
@@ -2017,7 +2003,7 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
     case WM_DRAW_TEXT: {
         struct { wm_msg_hdr_t hdr; uint32_t x, y; uint32_t color; float font_size; char text[WM_UI_TEXT_MAX]; } *cmd = (void *)msg->data;
         wm_window_t *win = slot_find_by_id(srv, hdr->window_id);
-        if (win && msg->size >= sizeof(*cmd) && win->ui_element_count < WM_UI_MAX_ELEMENTS) {
+        if (win && win->owner_pid == msg->sender_pid && msg->size >= sizeof(*cmd) && win->ui_element_count < WM_UI_MAX_ELEMENTS) {
             wm_ui_element_t *e = &win->ui_elements[win->ui_element_count++];
             e->type = WM_UI_TYPE_LABEL;
             e->x = cmd->x; e->y = cmd->y;
@@ -2035,7 +2021,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         break;
     }
 
-    
     case WM_SET_LAYOUT_XML_START: {
         struct { wm_msg_hdr_t hdr; uint32_t total_size; } *cmd = (void *)msg->data;
         wm_window_t *win = slot_find_by_id(srv, hdr->window_id);
@@ -2111,7 +2096,7 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
 
     case WM_CLEAR_WINDOW: {
         wm_window_t *win = slot_find_by_id(srv, hdr->window_id);
-        if (win) {
+        if (win && win->owner_pid == msg->sender_pid) {
             win->ui_element_count = 0;
             int off_y = (int)((1.0f - win->anim_alpha) * 20.0f);
             wm_compositor_mark_dirty(&st->compositor, win->x, win->y + off_y,
@@ -2121,7 +2106,7 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
     }
     case WM_UPDATE_COMPLETE: {
         wm_window_t *win = slot_find_by_id(srv, hdr->window_id);
-        if (win) {
+        if (win && win->owner_pid == msg->sender_pid) {
             int off_y = (int)((1.0f - win->anim_alpha) * 20.0f);
             wm_compositor_mark_dirty(&st->compositor, win->x, win->y + off_y,
                 win->w, win->h + WM_TITLE_HEIGHT);
@@ -2213,7 +2198,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
             }
         }
 
-        
         bool changed_hover = false;
         wm_window_t *top = srv->z_top;
         if (top && !top->is_system && !top->is_closing && top->anim_alpha >= 1.0f) {
@@ -2230,7 +2214,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
             if (changed_hover) wm_mark_window_title_dirty(&st->compositor, top);
         }
 
-        
         if (st->resizing && left_held) {
             wm_window_t *rw = slot_find_by_id(srv, st->resize_window_id);
             if (rw && rw->anim_alpha >= 1.0f) {
@@ -2246,7 +2229,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         }
         if (st->resizing && left_up) { st->resizing = false; st->resize_window_id = 0; }
 
-        
         if (st->dragging && left_held) {
             wm_window_t *dw = slot_find_by_id(srv, st->drag_window_id);
             if (dw && dw->anim_alpha >= 1.0f) {
@@ -2260,14 +2242,12 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         if (st->dragging && left_up) { st->dragging = false; st->drag_window_id = 0; }
 
         if (left_down) {
-            
             uint32_t tb_h   = WM_TASKBAR_HEIGHT;
             uint32_t tb_y   = st->compositor.fb_height - tb_h;
             uint32_t tb_x0  = 0;
             uint32_t tb_x1  = st->compositor.fb_width;
 
             if (my >= tb_y && my < tb_y + tb_h && mx >= tb_x0 && mx < tb_x1) {
-                
                 uint32_t sb_w = 44;
                 uint32_t sb_x = 6;
 
@@ -2317,7 +2297,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
                 break;
             }
 
-
             uint32_t hit_id = wm_server_hit_test(srv, mx, my);
 
             if (st->start_menu_open) {
@@ -2358,7 +2337,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
                     }
                 }
             }
-
 
             if (hit_id != 0) {
                 wm_window_t *hit_w = slot_find_by_id(srv, hit_id);
@@ -2438,7 +2416,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         break;
     }
 
-    
     case WM_SET_WINDOW_ICON: {
         struct { wm_msg_hdr_t hdr; uint32_t icon[256]; } *cmd = (void *)msg->data;
         wm_window_t *win = slot_find_by_id(srv, hdr->window_id);
@@ -2451,7 +2428,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         break;
     }
 
-    
     case WM_UPDATE_CLOCK: {
         struct {
             wm_msg_header_t hdr;
@@ -2461,7 +2437,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         if (msg->size >= sizeof(wm_msg_header_t) + 8) {
             strncpy(g_clock_str, cmd->time_str, sizeof(g_clock_str) - 1);
             g_clock_str[sizeof(g_clock_str) - 1] = '\0';
-            
             if (msg->size >= sizeof(wm_msg_header_t) + 40) {
                 strncpy(g_date_str, cmd->date_str, sizeof(g_date_str) - 1);
                 g_date_str[sizeof(g_date_str) - 1] = '\0';
@@ -2475,7 +2450,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
         break;
     }
 
-    
     case WM_SHOW_NOTIFICATION: {
         struct {
             wm_msg_hdr_t hdr;
@@ -2491,7 +2465,6 @@ void wm_server_handle_message(wm_state_t *st, ipc_message_t *msg) {
     default: break;
     }
 }
-
 
 void wm_service_init(wm_state_t *st) {
     memset(st, 0, sizeof(*st));

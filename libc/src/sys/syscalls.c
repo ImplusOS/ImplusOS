@@ -1,80 +1,37 @@
 #include <sys/syscalls.h>
+#include <sys/hal_syscall.h>
 #include <stdint.h>
 
 #ifndef KERNEL
 
 uint64_t syscall0(uint64_t num)
 {
-    uint64_t ret;
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(num)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
+    return hal_syscall0(num);
 }
 
 uint64_t syscall1(uint64_t num, uint64_t arg1)
 {
-    uint64_t ret;
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(num), "D"(arg1)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
+    return hal_syscall1(num, arg1);
 }
 
 uint64_t syscall2(uint64_t num, uint64_t arg1, uint64_t arg2)
 {
-    uint64_t ret;
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
+    return hal_syscall2(num, arg1, arg2);
 }
 
 uint64_t syscall3(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3)
 {
-    uint64_t ret;
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
+    return hal_syscall3(num, arg1, arg2, arg3);
 }
 
 uint64_t syscall4(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4)
 {
-    uint64_t ret;
-    register uint64_t r10 __asm__("r10") = arg4;
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(r10)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
+    return hal_syscall4(num, arg1, arg2, arg3, arg4);
 }
 
 uint64_t syscall5(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5)
 {
-    uint64_t ret;
-    register uint64_t r10 __asm__("r10") = arg4;
-    register uint64_t r8  __asm__("r8")  = arg5;
-    __asm__ volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(r10), "r"(r8)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
+    return hal_syscall5(num, arg1, arg2, arg3, arg4, arg5);
 }
+
 #endif

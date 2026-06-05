@@ -36,16 +36,53 @@
 
 static inline uint64_t rdmsr_fs_base(void)
 {
+#if defined(__aarch64__)
+    uint64_t val;
+    __asm__ volatile("mrs %0, TPIDR_EL0" : "=r"(val));
+    return val;
+#else
     uint32_t lo, hi;
     __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(IA32_FS_BASE));
     return ((uint64_t)hi << 32) | lo;
+#endif
 }
 
 static inline void wrmsr_fs_base(uint64_t val)
 {
+#if defined(__aarch64__)
+    __asm__ volatile("msr TPIDR_EL0, %0" :: "r"(val) : "memory");
+#else
     uint32_t lo = (uint32_t)(val & 0xFFFFFFFFU);
     uint32_t hi = (uint32_t)(val >> 32);
     __asm__ volatile("wrmsr" :: "c"(IA32_FS_BASE), "a"(lo), "d"(hi) : "memory");
+#endif
+}
+
+static inline void process_cpu_halt(void)
+{
+#if defined(__aarch64__)
+    __asm__ volatile("wfi");
+#else
+    __asm__ volatile("hlt");
+#endif
+}
+
+static inline void process_fpu_save(uint8_t *state)
+{
+#if defined(__aarch64__)
+    (void)state;
+#else
+    __asm__ volatile("fxsave64 %0" : "=m"(*(uint8_t (*)[512])state) :: "memory");
+#endif
+}
+
+static inline void process_fpu_restore(uint8_t *state)
+{
+#if defined(__aarch64__)
+    (void)state;
+#else
+    __asm__ volatile("fxrstor64 %0" :: "m"(*(uint8_t (*)[512])state) : "memory");
+#endif
 }
 
 typedef struct {
@@ -144,7 +181,7 @@ static inline void current_pid_set(int32_t pid)
 static void halt_forever(void)
 {
     while (1) {
-        __asm__ volatile ("hlt");
+        process_cpu_halt();
     }
 }
 
@@ -174,7 +211,7 @@ void process_broadcast_shutdown(void)
         if (all_dead) break;
         
         
-        __asm__ volatile ("hlt");
+        process_cpu_halt();
     }
 }
 
@@ -959,7 +996,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         if (current_user_rsp != 0) {
             current->saved_user_rsp = current_user_rsp;
         }
-        __asm__ volatile("fxsave64 %0" : "=m"(current->fpu_state) :: "memory");
+        process_fpu_save(current->fpu_state);
         
         current->fs_base = rdmsr_fs_base();
 
@@ -971,7 +1008,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         uint64_t return_user_rsp = current->saved_user_rsp;
         current->state = PROCESS_STATE_RUNNING;
         
-        __asm__ volatile("fxrstor64 %0" :: "m"(current->fpu_state) : "memory");
+        process_fpu_restore(current->fpu_state);
         
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
@@ -999,7 +1036,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
     uint64_t next_saved_rsp = next->saved_rsp;
     uint64_t next_user_rsp = next->saved_user_rsp;
     
-    __asm__ volatile("fxrstor64 %0" :: "m"(next->fpu_state) : "memory");
+    process_fpu_restore(next->fpu_state);
     
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -1042,7 +1079,7 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
 
     uint64_t next_saved_rsp = next->saved_rsp;
     uint64_t next_user_rsp = next->saved_user_rsp;
-    __asm__ volatile("fxrstor64 %0" :: "m"(next->fpu_state) : "memory");
+    process_fpu_restore(next->fpu_state);
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
 

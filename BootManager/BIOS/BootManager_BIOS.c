@@ -155,14 +155,15 @@ static EFI_MEMORY_DESCRIPTOR g_memory_map[128] __attribute__((aligned(16)));
 
 static BOOT_INFO g_boot_info __attribute__((aligned(16)));
 
+#include "interfaces/hal_io.h"
+#include "interfaces/hal_cpu.h"
+
 static inline void outb(uint16_t port, uint8_t value) {
-    __asm__ volatile("outb %0, %1" :: "a"(value), "Nd"(port));
+    hal_io_out8(port, value);
 }
 
 static inline uint8_t inb(uint16_t port) {
-    uint8_t value;
-    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
+    return hal_io_in8(port);
 }
 
 static int read_sector(BIOS_FAT32 *fs, uint64_t sector, void *buffer) {
@@ -638,7 +639,7 @@ static void build_memory_map(const BIOS_BOOT_PARAMS *params, BOOT_INFO *bi) {
         ++out;
     }
 
-    bi->MemoryMap = (uint64_t)(uintptr_t)g_memory_map;
+    void* ptr = (void*)(uintptr_t)bi->MemoryMap;
     bi->MemoryMapSize = out * sizeof(EFI_MEMORY_DESCRIPTOR);
     bi->MemoryMapDescriptorSize = sizeof(EFI_MEMORY_DESCRIPTOR);
     bi->MemoryMapDescriptorVersion = 1;
@@ -909,7 +910,7 @@ static void on_driver_found_iso(BIOS_ISO9660 *fs, const char *name, uint32_t lba
 
 void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     if (!params || params->signature != BIOS_BOOT_PARAMS_SIGNATURE) {
-        for (;;) __asm__ volatile("hlt");
+        for (;;) hal_cpu_halt();
     }
 
     g_bios_read_sector = (int (*)(uint32_t, uint32_t, uint32_t, void *))params->read_sector_ptr;
@@ -943,12 +944,12 @@ void bootmanager_bios_main(BIOS_BOOT_PARAMS *params) {
     }
 
     if (!has_kernel) {
-        for (;;) __asm__ volatile("hlt");
+        for (;;) hal_cpu_halt();
     }
 
     uint32_t entry = 0;
     if (load_kernel_elf((void *)(uintptr_t)BIOS_KERNEL_ELF_BUFFER, kernel_size, &entry) != 0) {
-        for (;;) __asm__ volatile("hlt");
+        for (;;) hal_cpu_halt();
     }
 
     memset(&g_boot_info, 0, sizeof(g_boot_info));

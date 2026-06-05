@@ -50,6 +50,10 @@ $(KERNEL_BUILD)/%.o: %.asm
 	@mkdir -p $(dir $@)
 	$(NASM) -f $(ARCH_ASM_FORMAT) $< -o $@
 
+$(KERNEL_BUILD)/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
 $(KERNEL_BUILD)/libc/%.o: $(ROOT_DIR)/libc/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@

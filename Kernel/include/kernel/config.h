@@ -1,11 +1,23 @@
 #pragma once
 
+#ifndef GDT_KERNEL_CODE
 #define GDT_KERNEL_CODE      0x08
+#endif
+#ifndef GDT_KERNEL_DATA
 #define GDT_KERNEL_DATA      0x10
+#endif
+#ifndef GDT_USER_COMPAT_CODE
 #define GDT_USER_COMPAT_CODE 0x18
+#endif
+#ifndef GDT_USER_DATA
 #define GDT_USER_DATA        0x20
+#endif
+#ifndef GDT_USER_CODE
 #define GDT_USER_CODE        0x28
+#endif
+#ifndef GDT_TSS
 #define GDT_TSS              0x30
+#endif
 
 #ifndef OS_CONFIG_PROCESS_MAX_COUNT
 #ifdef PROCESS_MAX_COUNT_CONFIG

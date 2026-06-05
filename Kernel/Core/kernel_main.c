@@ -47,19 +47,32 @@ extern const arch_ops_t *arch_ops_get(void);
 
 #include "Debug/serial/Serial.h"
 
-bool all_fs_initialize() {
+static inline void kernel_arch_halt(void) {
+    hal_cpu_halt();
+}
+
+static inline void kernel_arch_switch_stack(uintptr_t sp) {
+    hal_arch_switch_stack(sp);
+}
+
+bool all_fs_initialize(void) {
     if (!vfs_init()) {
         return false;
     }
-    
-    if (!fat32_init()) {
+
+    bool iso_ok = iso9660_init();
+    bool fat_ok = fat32_init();
+
+    if (!iso_ok && !fat_ok) {
         return false;
     }
 
-    vfs_mount("", fat32_vfs_get_driver());
-    vfs_mount("", iso9660_vfs_get_driver());
-
-    vfs_set_default_fs("iso9660");
+    if (fat_ok) {
+        vfs_mount("", fat32_vfs_get_driver());
+    }
+    if (iso_ok) {
+        vfs_mount("", iso9660_vfs_get_driver());
+    }
 
     return true;
 }
@@ -143,28 +156,37 @@ static void load_spinner_timer(uint64_t tick) {
 
 __attribute__((noreturn))
 void kernel_main(BOOT_INFO *boot_info) {
-    __asm__ volatile ("cli");
+    const arch_ops_t *ops = arch_ops_get();
+    if (ops && ops->disable_interrupts) {
+        ops->disable_interrupts();
+    }
+    if (ops && ops->early_init) {
+        ops->early_init();
+    }
     serial_init();
 
     if (boot_info != NULL) {
         memcpy(&g_boot_info_copy, boot_info, sizeof(BOOT_INFO));
         boot_info = &g_boot_info_copy;
     }
-
     kernel_panic_init(boot_info);
 
     {
         uintptr_t sp = (uintptr_t)(kernel_stack + sizeof(kernel_stack));
         sp -= 16;
         sp &= ~0xFULL;
-        __asm__ volatile("mov %0, %%rsp" :: "r"(sp) : "memory");
+        kernel_arch_switch_stack(sp);
     }
 
     load_bar_init(boot_info);
     timer_set_callback(load_spinner_timer);
 
-    init_gdt();
-    init_idt();
+    if (ops && ops->init_cpu_tables) {
+        ops->init_cpu_tables();
+    } else {
+        init_gdt();
+        init_idt();
+    }
 
     init_physical_memory(
         (void *)boot_info->MemoryMap,
@@ -181,9 +203,13 @@ void kernel_main(BOOT_INFO *boot_info) {
     syscall_init();
     smp_init();
 
-    vmx_init();
+    if (ops && ops->virtualization_init) {
+        (void)ops->virtualization_init();
+    }
 
-    __asm__ volatile ("sti");
+    if (ops && ops->enable_interrupts) {
+        ops->enable_interrupts();
+    }
     timer_switch_lapic();
     
     driver_module_manager_init(boot_info);
@@ -212,7 +238,6 @@ void kernel_main(BOOT_INFO *boot_info) {
     if (!fs_ready) {
         kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");
     }
-
     driver_manager_display_init();
     wm_kernel_init();
     process_manager_init();
@@ -231,11 +256,9 @@ void kernel_main(BOOT_INFO *boot_info) {
         kernel_boot_screen_color(color);
     }
 
-    const arch_ops_t *ops = arch_ops_get();
-    
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
-            while (1) { __asm__("hlt"); }
+            while (1) { kernel_arch_halt(); }
         }
     }
 
@@ -244,12 +267,15 @@ void kernel_main(BOOT_INFO *boot_info) {
     uint64_t user_cr3 = process_get_current_cr3();
 
     if (user_rsp == 0 || saved_rsp == 0 || user_cr3 == 0) {
-        while (1) { __asm__ volatile("cli; hlt"); }
+        if (ops && ops->disable_interrupts) {
+            ops->disable_interrupts();
+        }
+        while (1) { kernel_arch_halt(); }
     }
 
     if (ops) {
         ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
     }
 
-    for(;;) { __asm__("hlt"); }
+    for(;;) { kernel_arch_halt(); }
 }

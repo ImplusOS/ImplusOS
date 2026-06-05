@@ -1,0 +1,30 @@
+[Defines]
+  INF_VERSION    = 0x0001001A
+  BASE_NAME      = ImplusOSBootLoader
+  FILE_GUID      = 912f6cbe-9068-484e-82d6-d6d5b469e2f5
+  MODULE_TYPE    = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT    = UefiMain
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+  gEfiBlockIoProtocolGuid
+
+[Sources.X64]
+  ../x86_64/UEFI/Loader.c
+
+[Sources.AARCH64]
+  ../arm64/UEFI/Loader.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  DevicePathLib
+  RegisterFilterLib

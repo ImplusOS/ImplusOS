@@ -8,9 +8,14 @@
 #define SYSCALL_MAX_CPUS OS_CONFIG_SMP_MAX_CPUS
 
 static inline void wrmsr(uint32_t msr, uint64_t value) {
+#if defined(__aarch64__)
+    (void)msr;
+    (void)value;
+#else
     uint32_t low = value & 0xFFFFFFFF;
     uint32_t high = value >> 32;
     __asm__ volatile ("wrmsr" :: "c"(msr), "a"(low), "d"(high));
+#endif
 }
 
 #define IA32_EFER           0xC0000080
@@ -36,6 +41,10 @@ static inline void wrmsr(uint32_t msr, uint64_t value) {
 
 static void syscall_init_fpu_for_cpu(void)
 {
+#if defined(__aarch64__)
+    uint64_t cpacr = (3ULL << 20) | (3ULL << 22);
+    __asm__ volatile("msr CPACR_EL1, %0; isb" :: "r"(cpacr) : "memory");
+#else
     uint64_t cr0 = 0;
     uint64_t cr4 = 0;
     uint32_t mxcsr = 0x1F80U;
@@ -51,6 +60,7 @@ static void syscall_init_fpu_for_cpu(void)
 
     __asm__ volatile("fninit");
     __asm__ volatile("ldmxcsr %0" :: "m"(mxcsr));
+#endif
 }
 
 typedef struct {
@@ -117,6 +127,9 @@ void syscall_init_per_cpu(void) {
     }
     syscall_init_cpu(cpu_id);
 
+#if defined(__aarch64__)
+    __asm__ volatile("msr TPIDR_EL1, %0" :: "r"(&g_syscall_cpu_state[cpu_id]) : "memory");
+#else
     uint64_t efer_low, efer_high;
     __asm__ volatile ("rdmsr" : "=a"(efer_low), "=d"(efer_high) : "c"(IA32_EFER));
     uint64_t efer = (efer_high << 32) | efer_low;
@@ -133,6 +146,7 @@ void syscall_init_per_cpu(void) {
     wrmsr(IA32_KERNEL_GS_BASE, 0);
     wrmsr(IA32_FMASK, RFLAGS_TF | RFLAGS_IF | RFLAGS_DF |
                       RFLAGS_IOPL | RFLAGS_NT | RFLAGS_AC);
+#endif
 }
 
 void syscall_init(void) {

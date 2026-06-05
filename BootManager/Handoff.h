@@ -1,7 +1,7 @@
 #ifndef IMPLUSOS_BOOT_HANDOFF_H
 #define IMPLUSOS_BOOT_HANDOFF_H
 
-#include <efi.h>
+#include "EDK2Compat.h"
 #include <stdint.h>
 
 
@@ -32,3 +32,4 @@ typedef struct {
 #define IMPLUSOS_BOOT_HANDOFF_VERSION   1u
 
 #endif
+

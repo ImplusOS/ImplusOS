@@ -180,6 +180,38 @@ int strncmp(const char* a, const char* b, size_t n)
     return 0;
 }
 
+int strcasecmp(const char* a, const char* b)
+{
+    if (a == 0 || b == 0) return 0;
+    while (*a && *b) {
+        unsigned char c1 = (unsigned char)*a;
+        unsigned char c2 = (unsigned char)*b;
+        if (c1 >= 'A' && c1 <= 'Z') c1 = (unsigned char)(c1 + ('a' - 'A'));
+        if (c2 >= 'A' && c2 <= 'Z') c2 = (unsigned char)(c2 + ('a' - 'A'));
+        if (c1 != c2)
+            return (int)c1 - (int)c2;
+        a++;
+        b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+int strncasecmp(const char* a, const char* b, size_t n)
+{
+    if (a == 0 || b == 0) return 0;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c1 = (unsigned char)a[i];
+        unsigned char c2 = (unsigned char)b[i];
+        if (c1 >= 'A' && c1 <= 'Z') c1 = (unsigned char)(c1 + ('a' - 'A'));
+        if (c2 >= 'A' && c2 <= 'Z') c2 = (unsigned char)(c2 + ('a' - 'A'));
+        if (c1 != c2)
+            return (int)c1 - (int)c2;
+        if (c1 == 0)
+            return 0;
+    }
+    return 0;
+}
+
 char* strchr(const char* s, int c)
 {
     if (s == 0) return 0;

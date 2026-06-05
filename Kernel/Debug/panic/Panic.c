@@ -4,6 +4,7 @@
 #include "kernel/boot_info.h"
 #include "Boot/LoadBar.h"
 #include "Platform/io/IO_Main.h"
+#include "include/interfaces/hal_cpu.h"
 #include "Unicode/UTF8/UTF8.h"
 #include <stdint.h>
 #include <stddef.h>
@@ -172,7 +173,6 @@ static void draw_text_ttf(int x, int y, const char* text, float size, uint32_t c
 }
 
 void kernel_panic(const char* module_name, const char* message) {
-    __asm__ volatile ("cli");
     load_bar_finish();
 
     if (!g_font_valid && bi != NULL && bi->FontDataAddress != 0) {
@@ -220,6 +220,6 @@ void kernel_panic(const char* module_name, const char* message) {
     }
 
     while (1) {
-        __asm__ volatile ("hlt");
+        hal_cpu_halt();
     }
 }

@@ -108,9 +108,13 @@ void acpi_reboot(void)
     
     outb(0x64, 0xFE);
     
-    
+#if defined(__aarch64__)
+    while (1) {
+        __asm__ volatile("wfi");
+    }
+#else
     __asm__ volatile ("lidt %0; int3" :: "m"((uint16_t[3]){0,0,0}));
-    
+#endif
     while(1);
 }
 

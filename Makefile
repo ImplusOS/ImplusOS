@@ -4,77 +4,96 @@ SHELL := /bin/bash
 
 export MTOOLSRC := /dev/null
 
-.PHONY: all kernel run_uefi_usb run_uefi_cdrom run_bios_usb clean image app_build \
-        driver_build driver_stage install_payload recovery_build
+.PHONY: all kernel app_build driver_build driver_stage recovery_build install_payload \
+        image run_uefi_usb run_uefi_cdrom clean \
+        edk2_bootloader edk2_bootmanager
 
-ARCH := x86_64
-CC   = $(ARCH)-elf-gcc
-CXX  = $(ARCH)-elf-g++
-LD   = $(ARCH)-elf-ld
-NASM = nasm
+ARCH ?= arm64
 
 BUILD_DIR := Build
 IMAGE_DIR := Image
-IMAGE     := $(IMAGE_DIR)/ImplusOS.iso
+IMAGE := $(IMAGE_DIR)/ImplusOS.iso
 
-OVMF_CODE := ./OVMF_CODE_4M.fd
+EDK2_DIR ?= $(HOME)/edk2
+EDK2_TARGET ?= RELEASE
+EDK2_TOOLCHAIN ?= CLANGDWARF
+
+ifeq ($(ARCH),arm64)
+CROSS_COMPILE ?= aarch64-elf-
+EDK2_ARCH := AARCH64
+BOOTLOADER_EFI := $(BUILD_DIR)/Loader/BOOTAA64.EFI
+QEMU_FIRMWARE := $(CURDIR)/AAVMF_CODE.fd
+USERLAND_ARCH_CFLAGS := -mstrict-align -mno-outline-atomics
+USERLAND_ARCH_CXXFLAGS := -mstrict-align -mno-outline-atomics
+else ifeq ($(ARCH),x86_64)
+CROSS_COMPILE ?= x86_64-elf-
+EDK2_ARCH := X64
+BOOTLOADER_EFI := $(BUILD_DIR)/Loader/BOOTX64.EFI
+QEMU_FIRMWARE := $(CURDIR)/OVMF_CODE_4M.fd
+USERLAND_ARCH_CFLAGS := -mcmodel=large -mno-red-zone
+USERLAND_ARCH_CXXFLAGS := -mcmodel=large -mno-red-zone
+else
+$(error Unsupported ARCH '$(ARCH)'. Use x86_64 or arm64.)
+endif
+
+CC := $(CROSS_COMPILE)gcc
+CXX := $(CROSS_COMPILE)g++
+LD := $(CROSS_COMPILE)ld
+OBJCOPY := $(CROSS_COMPILE)objcopy
+NASM := nasm
 
 KERNEL_DIR   := Kernel
 USERLAND_DIR := Userland
+RECOVERY_DIR := RecoveryEnviroment
 
-KERNEL_ELF           := $(BUILD_DIR)/Kernel/Kernel_Main.ELF
-BOOTX64_EFI          := $(BUILD_DIR)/Loader/BOOTX64.EFI
-BOOTMANAGER_EFI      := $(BUILD_DIR)/BootManager/BOOTMANAGER.EFI
-BIOS_STAGE1_BIN      := $(BUILD_DIR)/Loader/BIOS/stage1.bin
-BIOS_STAGE2_BIN      := $(BUILD_DIR)/Loader/BIOS/stage2.bin
-BIOS_BOOTMANAGER_BIN := $(BUILD_DIR)/BootManager/BootManager_BIOS.BIN
-USERLAND_INIT_ELF    := $(BUILD_DIR)/Userland/Userland.ELF
-RECOVERY_INIT_ELF    := $(BUILD_DIR)/RecoveryEnviroment/Userland.ELF
+KERNEL_ELF        := $(BUILD_DIR)/Kernel/Kernel_Main.ELF
+BOOTMANAGER_EFI   := $(BUILD_DIR)/BootManager/BOOTMANAGER.EFI
+USERLAND_INIT_ELF := $(BUILD_DIR)/Userland/Userland.ELF
+RECOVERY_INIT_ELF := $(BUILD_DIR)/RecoveryEnviroment/Userland.ELF
+
 INSTALL_PAYLOAD_DIR  := $(BUILD_DIR)/InstallPayload
 INSTALL_PAYLOAD_ROOT := $(INSTALL_PAYLOAD_DIR)/root
 INSTALL_PAYLOAD_TGZ  := $(INSTALL_PAYLOAD_DIR)/ImplusOS-root.tar.gz
 INSTALL_DISK_IMAGE   := $(INSTALL_PAYLOAD_DIR)/ImplusOS-install.img
 INSTALL_MANIFEST     := $(INSTALL_PAYLOAD_DIR)/MANIFEST.txt
 
-LOADER_CFLAGS := \
-    -I. \
-    -I/usr/local/include/efi/ \
-    -I/usr/local/include/efi/$(ARCH) \
-    -IBootManager/BootManager_libc/include \
-    -ffreestanding -fpie -fshort-wchar -fno-stack-protector \
-    -fno-builtin -mno-red-zone \
-    -mno-sse2 -mno-sse3 -mno-ssse3 -mno-sse4 \
-    -msoft-float \
-    -Wall -Wextra -DEFI_FUNCTION_WRAPPER
+IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
+ESP_IMAGE       := $(IMAGE_DIR)/esp.img
 
-BIOS_STAGE2_SECTORS := 32
-BIOS_CFLAGS := \
-	-m32 -I. -IKernel -IKernel/include -IBootManager/BIOS \
-	-ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
-	-mno-red-zone -mno-sse -mno-sse2 -mno-mmx \
-	-nostdlib -nostartfiles -nodefaultlibs \
-	-Wall -Wextra -O2
+BOOT_RESOURCE_DIR := $(firstword $(wildcard BootManager1/Resource BootManager/Resource))
+ifeq ($(BOOT_RESOURCE_DIR),)
+$(error BootManager resource directory not found. Expected BootManager1/Resource or BootManager/Resource.)
+endif
 
-BIOS_LDFLAGS    := -m elf_i386 -nostdlib --build-id=none -T BootManager/BIOS/linker.ld
-BIOS_BM_LDFLAGS := -m elf_i386 -nostdlib --build-id=none -T BootManager/BIOS/bootmanager_bios.ld
+BOOTLOADER_DSC := BootLoader/Configuration/ImplusOSBootLoader.dsc
+BOOTMANAGER_DSC := BootManager/BootManager.dsc
 
-USERLAND_LDFLAGS     := -T Userland/Userland.ld -nostdlib --build-id=none
-USERLAND_APP_LDFLAGS := -nostdlib --build-id=none
-USERLAND_CFLAGS := \
-    -Ilibc/include \
-    -IUserland/POSIX/include \
-	-IShareLib \
-	-IThirdparty \
-    -fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
-    -mcmodel=large -mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
-    -Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
-    -O3 -MMD -MP
+EDK2_OUTPUT_ROOT := $(EDK2_DIR)/Build/$(EDK2_TARGET)_$(EDK2_TOOLCHAIN)/$(EDK2_ARCH)
+BOOTLOADER_MODULE_NAME := ImplusOSBootLoader
+BOOTMANAGER_MODULE_NAME := BootManager
 
-USERLAND_CXXFLAGS := \
-	-ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
-	-mcmodel=large -mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
-	-fno-exceptions -fno-rtti \
-	-Wall -Wextra -O3 -MMD -MP
+define EDK2_BUILD_MODULE
+	cd $(EDK2_DIR) && \
+	. ./edksetup.sh && \
+	export WORKSPACE=$(EDK2_DIR) && \
+	export PACKAGES_PATH=$(CURDIR) && \
+	build \
+		-a $(EDK2_ARCH) \
+		-t $(EDK2_TOOLCHAIN) \
+		-b $(EDK2_TARGET) \
+		-p $(abspath $(1))
+endef
+
+define COPY_EDK2_OUTPUT
+	src="$$(find "$(EDK2_OUTPUT_ROOT)" -type f \( -name '$(1).efi' -o -name '$(1).EFI' \) | sort | head -n 1)"; \
+	if [ -z "$$src" ]; then \
+		echo "Missing EDK2 output for $(1): $(EDK2_OUTPUT_ROOT)"; \
+		find "$(EDK2_OUTPUT_ROOT)" -type f \( -name '*.efi' -o -name '*.EFI' \) | sort || true; \
+		exit 1; \
+	fi; \
+	mkdir -p "$(dir $(2))"; \
+	cp "$$src" "$(2)"
+endef
 
 DRIVER_MAKEFILES := $(shell find Kernel/Drivers/Server -name Makefile -print 2>/dev/null | sort)
 DRIVER_DIRS      := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
@@ -92,6 +111,7 @@ USERLAND_C_SRCS := \
 	libc/src/errno.c \
 	libc/src/posix.c \
 	libc/src/sys/syscalls.c \
+	libc/src/sys/$(ARCH)/hal_syscall.c \
 	$(SHARELIB_C_SRCS) \
 	Userland/Userland.c \
 	Userland/Syscalls.c \
@@ -117,6 +137,7 @@ USERLAND_APP_C_SRCS := \
 	libc/src/errno.c \
 	libc/src/posix.c \
 	libc/src/sys/syscalls.c \
+	libc/src/sys/$(ARCH)/hal_syscall.c \
 	$(SHARELIB_C_SRCS) \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
@@ -126,6 +147,7 @@ USERLAND_INIT_OBJS := \
 	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst ShareLib/%.c,$(BUILD_DIR)/ShareLib/%.o,$(filter ShareLib/%.c,$(USERLAND_C_SRCS)))
+
 USERLAND_APP_OBJS := \
 	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_APP_C_SRCS))) \
@@ -135,32 +157,102 @@ RECOVERY_OBJS := \
 	$(BUILD_DIR)/RecoveryEnviroment/Recovery.o \
 	$(USERLAND_APP_OBJS)
 
-all: $(BOOTX64_EFI) \
-     $(BOOTMANAGER_EFI) \
-     $(BIOS_STAGE1_BIN) \
-     $(BIOS_STAGE2_BIN) \
-     $(BIOS_BOOTMANAGER_BIN) \
-     kernel \
-     $(USERLAND_INIT_ELF) \
-     driver_stage \
-     app_build
+USERLAND_CFLAGS := \
+	-Ilibc/include \
+	-IUserland/POSIX/include \
+	-IShareLib \
+	-IThirdparty \
+	-fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
+	$(USERLAND_ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
+	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
+	-O3 -MMD -MP
+
+USERLAND_CXXFLAGS := \
+	-ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
+	$(USERLAND_ARCH_CXXFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
+	-fno-exceptions -fno-rtti \
+	-Wall -Wextra -O3 -MMD -MP
+
+USERLAND_LDFLAGS := -T Userland/Userland.ld -nostdlib --build-id=none
+
+all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel app_build driver_stage $(USERLAND_INIT_ELF)
 
 kernel:
 	@$(MAKE) -C Kernel ARCH=$(ARCH) BUILD_DIR=$(abspath $(BUILD_DIR))
 
 app_build: $(USERLAND_INIT_OBJS)
-	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_windowmanager
-	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_shell
-	@$(MAKE) -C Userland/Application/SystemApps/com_ImplusOS_version
-	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_exampleApp
-	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_ImplusStore
-	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_NetworkTest
-	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_editor
-	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_filemanager
-	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_procman
-	@$(MAKE) -C Userland/Application/UserApps/com_ImplusOS_vm
+	@set -e; \
+	for dir in \
+		Userland/Application/SystemApps/com_ImplusOS_windowmanager \
+		Userland/Application/SystemApps/com_ImplusOS_shell \
+		Userland/Application/SystemApps/com_ImplusOS_version \
+		Userland/Application/UserApps/com_ImplusOS_exampleApp \
+		Userland/Application/UserApps/com_ImplusOS_ImplusStore \
+		Userland/Application/UserApps/com_ImplusOS_NetworkTest \
+		Userland/Application/UserApps/com_ImplusOS_editor \
+		Userland/Application/UserApps/com_ImplusOS_filemanager \
+		Userland/Application/UserApps/com_ImplusOS_procman \
+		Userland/Application/UserApps/com_ImplusOS_settings \
+		Userland/Application/UserApps/com_ImplusOS_vm; do \
+			$(MAKE) -C $$dir ARCH=$(ARCH); \
+		done
 
 recovery_build: $(RECOVERY_INIT_ELF)
+
+edk2_bootloader:
+	@$(call EDK2_BUILD_MODULE,$(BOOTLOADER_DSC))
+
+edk2_bootmanager:
+	@$(call EDK2_BUILD_MODULE,$(BOOTMANAGER_DSC))
+
+$(BOOTLOADER_EFI): edk2_bootloader
+	@mkdir -p $(dir $@)
+	@$(call COPY_EDK2_OUTPUT,$(BOOTLOADER_MODULE_NAME),$@)
+
+$(BOOTMANAGER_EFI): edk2_bootmanager
+	@mkdir -p $(dir $@)
+	@$(call COPY_EDK2_OUTPUT,$(BOOTMANAGER_MODULE_NAME),$@)
+
+$(BUILD_DIR)/Userland/%.o: Userland/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Userland/libc/%.o: libc/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ShareLib/%.o: ShareLib/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Userland/%.o: Userland/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(USERLAND_CXXFLAGS) -c $< -o $@
+
+$(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
+	@mkdir -p $(dir $@)
+	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
+
+$(BUILD_DIR)/RecoveryEnviroment/%.o: $(RECOVERY_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -IUserland -IUserland/API -c $< -o $@
+
+$(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
+	@mkdir -p $(dir $@)
+	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
+
+driver_build:
+	@set -e; \
+	for dir in $(DRIVER_DIRS); do \
+		$(MAKE) -C $$dir ARCH=$(ARCH); \
+	done
+
+driver_stage: driver_build
+	@mkdir -p $(DRIVER_STAGE_DIR)
+	@find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -delete
+	@if [ -d $(DRIVER_BUILD_ROOT) ]; then \
+		find $(DRIVER_BUILD_ROOT) -type f -name '*.ELF' -exec cp {} $(DRIVER_STAGE_DIR)/ \; ; \
+	fi
 
 install_payload: all
 	@rm -rf $(INSTALL_PAYLOAD_ROOT)
@@ -169,9 +261,8 @@ install_payload: all
 		$(INSTALL_PAYLOAD_ROOT)/Kernel/Driver \
 		$(INSTALL_PAYLOAD_ROOT)/Userland \
 		$(INSTALL_PAYLOAD_ROOT)/BootManager
-	@cp $(BOOTX64_EFI)          $(INSTALL_PAYLOAD_ROOT)/EFI/BOOT/BOOTX64.EFI
+	@cp $(BOOTLOADER_EFI)       $(INSTALL_PAYLOAD_ROOT)/EFI/BOOT/$(notdir $(BOOTLOADER_EFI))
 	@cp $(BOOTMANAGER_EFI)      $(INSTALL_PAYLOAD_ROOT)/EFI/BOOT/BOOTMANAGER.EFI
-	@cp $(BIOS_BOOTMANAGER_BIN) $(INSTALL_PAYLOAD_ROOT)/BootManager/BootManager_BIOS.BIN
 	@cp $(KERNEL_ELF)           $(INSTALL_PAYLOAD_ROOT)/Kernel/Kernel_Main.ELF
 	@cp $(USERLAND_INIT_ELF)    $(INSTALL_PAYLOAD_ROOT)/Userland/Userland.ELF
 	@cp -a $(BUILD_DIR)/Userland/SystemApps $(INSTALL_PAYLOAD_ROOT)/Userland/
@@ -202,251 +293,96 @@ install_payload: all
 	mmd -i $$PART_IMG ::/Userland; \
 	mmd -i $$PART_IMG ::/BootManager; \
 	mmd -i $$PART_IMG ::/BootManager/Resource; \
-	mcopy -o -i $$PART_IMG $(BOOTX64_EFI)          ::/EFI/BOOT/BOOTX64.EFI; \
-	mcopy -o -i $$PART_IMG $(BOOTMANAGER_EFI)      ::/EFI/BOOT/BOOTMANAGER.EFI; \
-	mcopy -o -i $$PART_IMG $(BIOS_BOOTMANAGER_BIN) ::/BootManager/BootManager_BIOS.BIN; \
-	mcopy -o -i $$PART_IMG $(KERNEL_ELF)           ::/Kernel/Kernel_Main.ELF; \
-	mcopy -o -i $$PART_IMG $(USERLAND_INIT_ELF)    ::/Userland/Userland.ELF; \
+	if [ "$(ARCH)" = "x86_64" ]; then mcopy -o -i $$PART_IMG $(BOOTLOADER_EFI) ::/EFI/BOOT/BOOTX64.EFI; fi; \
+	if [ "$(ARCH)" = "arm64" ]; then mcopy -o -i $$PART_IMG $(BOOTLOADER_EFI) ::/EFI/BOOT/BOOTAA64.EFI; fi; \
+	mcopy -o -i $$PART_IMG $(BOOTMANAGER_EFI) ::/EFI/BOOT/BOOTMANAGER.EFI; \
+	mcopy -s -i $$PART_IMG $(BOOT_RESOURCE_DIR) ::/BootManager; \
+	mcopy -o -i $$PART_IMG $(KERNEL_ELF) ::/Kernel/Kernel_Main.ELF; \
+	mcopy -o -i $$PART_IMG $(USERLAND_INIT_ELF) ::/Userland/Userland.ELF; \
 	mcopy -s -i $$PART_IMG $(BUILD_DIR)/Userland/SystemApps ::/Userland; \
 	mcopy -s -i $$PART_IMG $(BUILD_DIR)/Userland/UserApps ::/Userland; \
-	mcopy -s -i $$PART_IMG $(BOOT_RESOURCE_DIR) ::/BootManager; \
 	for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
 		[ -e "$$f" ] || continue; \
 		mcopy -o -i $$PART_IMG "$$f" ::/Kernel/Driver/; \
 	done
 
-driver_build:
-	@set -e; \
-	for dir in $(DRIVER_DIRS); do \
-		$(MAKE) -C $$dir; \
-	done
-
-driver_stage: driver_build
-	@mkdir -p $(DRIVER_STAGE_DIR)
-	@find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -delete
-	@if [ -d $(DRIVER_BUILD_ROOT) ]; then \
-		find $(DRIVER_BUILD_ROOT) -type f -name '*.ELF' -exec cp {} $(DRIVER_STAGE_DIR)/ \; ; \
-	fi
-
-EFI_CC      := x86_64-w64-mingw32-gcc
-EFI_LD      := x86_64-elf-ld
-EFI_OBJCOPY := x86_64-elf-objcopy
-
-$(BUILD_DIR)/Loader/Loader.o: BootLoader/x86_64/UEFI/Loader.c
-	mkdir -p $(dir $@)
-	$(CC) $(LOADER_CFLAGS) -c $< -o $@
-
-$(BOOTX64_EFI): $(BUILD_DIR)/Loader/Loader.o
-	mkdir -p $(dir $@)
-	$(EFI_LD) -nostdlib \
-		-znocombreloc \
-		--defsym=_DYNAMIC=0 \
-		-T /usr/local/lib/elf_$(ARCH)_efi.lds \
-		-shared -Bsymbolic \
-		/usr/local/lib/crt0-efi-$(ARCH).o \
-		$< \
-		/usr/local/lib/libefi.a \
-		/usr/local/lib/libgnuefi.a \
-		-o $@.so
-	$(EFI_OBJCOPY) \
-		-j .text -j .sdata -j .data -j .dynamic \
-		-j .dynsym -j .rel -j .rela -j .reloc \
-		-j .rodata -j .rdata -j .rodata.* \
-		-O efi-app-$(ARCH) \
-		$@.so $@
-	rm -f $@.so
-
-$(BIOS_STAGE1_BIN): BootLoader/x86_64/BIOS/stage1.asm
-	mkdir -p $(dir $@)
-	$(NASM) -f bin -DSTAGE2_SECTORS=$(BIOS_STAGE2_SECTORS) $< -o $@
-
-$(BUILD_DIR)/Loader/BIOS/lowlevel.o: BootLoader/x86_64/BIOS/lowlevel.asm BootManager/BIOS/stage2_constants.inc
-	mkdir -p $(dir $@)
-	$(NASM) -f elf32 -I. $< -o $@
-
-BIOS_LOADER_OBJS := \
-	$(BUILD_DIR)/Loader/BIOS/stage2_entry.o \
-	$(BUILD_DIR)/Loader/BIOS/lowlevel.o \
-	$(BUILD_DIR)/Loader/BIOS/BiosLoader.o \
-	$(BUILD_DIR)/BootManager/BIOS/string.o
-
-$(BUILD_DIR)/Loader/BIOS/stage2_entry.o: BootLoader/x86_64/BIOS/stage2_entry.asm BootManager/BIOS/stage2_constants.inc
-	mkdir -p $(dir $@)
-	$(NASM) -f elf32 -I. $< -o $@
-
-$(BUILD_DIR)/Loader/BIOS/BiosLoader.o: BootLoader/x86_64/BIOS/BiosLoader.c
-	mkdir -p $(dir $@)
-	$(CC) $(BIOS_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/BootManager/BIOS/BootManager_BIOS.o: BootManager/BIOS/BootManager_BIOS.c BootManager/BIOS/BIOS_Handoff.h
-	mkdir -p $(dir $@)
-	$(CC) $(BIOS_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/BootManager/BIOS/string.o: BootManager/BootManager_libc/source/string.c
-	mkdir -p $(dir $@)
-	$(CC) $(BIOS_CFLAGS) -c $< -o $@
-
-$(BIOS_STAGE2_BIN): $(BIOS_LOADER_OBJS) BootManager/BIOS/linker.ld
-	mkdir -p $(dir $@)
-	$(LD) $(BIOS_LDFLAGS) $(BIOS_LOADER_OBJS) -o $@.elf
-	$(ARCH)-elf-objcopy -O binary $@.elf $@
-	@size=$$(wc -c < $@); max=$$(( $(BIOS_STAGE2_SECTORS) * 512 )); \
-	if [ $$size -gt $$max ]; then \
-		echo "BIOS Loader too large: $$size bytes (max $$max)"; \
-		exit 1; \
-	fi; \
-	truncate -s $$max $@
-
-$(BUILD_DIR)/BootManager/BIOS/bm_entry.o: BootManager/BIOS/bm_entry.asm
-	mkdir -p $(dir $@)
-	$(NASM) -f elf32 $< -o $@
-
-BIOS_BM_OBJS := \
-	$(BUILD_DIR)/BootManager/BIOS/bm_entry.o \
-	$(BUILD_DIR)/BootManager/BIOS/BootManager_BIOS.o \
-	$(BUILD_DIR)/BootManager/BIOS/string.o
-
-$(BIOS_BOOTMANAGER_BIN): $(BIOS_BM_OBJS) BootManager/BIOS/bootmanager_bios.ld
-	mkdir -p $(dir $@)
-	$(LD) $(BIOS_BM_LDFLAGS) $(BIOS_BM_OBJS) -o $@.elf
-	$(ARCH)-elf-objcopy -O binary $@.elf $@
-
-BOOTMANAGER_OBJS := \
-	$(BUILD_DIR)/BootManager/UEFI/BootManager.o \
-	$(BUILD_DIR)/BootManager/FAT32.o \
-	$(BUILD_DIR)/BootManager/BootManager_libc/string.o \
-	$(BUILD_DIR)/BootManager/BootManager_libc/stdlib.o
-
-$(BUILD_DIR)/BootManager/UEFI/BootManager.o: BootManager/UEFI/BootManager_UEFI.c
-	mkdir -p $(dir $@)
-	$(CC) $(LOADER_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/BootManager/FAT32.o: BootManager/FAT32.c
-	mkdir -p $(dir $@)
-	$(CC) $(LOADER_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/BootManager/BootManager_libc/%.o: BootManager/BootManager_libc/source/%.c
-	mkdir -p $(dir $@)
-	$(CC) $(LOADER_CFLAGS) -c $< -o $@
-
-$(BOOTMANAGER_EFI): $(BOOTMANAGER_OBJS)
-	mkdir -p $(dir $@)
-	$(ARCH)-elf-ld -nostdlib -znocombreloc --defsym=_DYNAMIC=0 \
-		-T /usr/local/lib//elf_$(ARCH)_efi.lds \
-		-shared -Bsymbolic \
-		/usr/local/lib/crt0-efi-$(ARCH).o \
-		$^ \
-		/usr/local/lib/libefi.a \
-		/usr/local/lib/libgnuefi.a \
-		-o $@.so
-	$(ARCH)-elf-objcopy -j .text -j .sdata -j .data -j .dynamic \
-		-j .dynsym -j .rel -j .rela -j .reloc -j .rodata -j .rdata -j .rodata.* \
-		-O efi-app-$(ARCH) $@.so $@
-	rm -f $@.so
-
-$(BUILD_DIR)/Userland/%.o: Userland/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/Userland/libc/%.o: libc/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/ShareLib/%.o: ShareLib/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
-
-$(BUILD_DIR)/Userland/%.o: Userland/%.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(USERLAND_CXXFLAGS) -c $< -o $@
-
-$(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
-	mkdir -p $(dir $@)
-	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
-
-$(BUILD_DIR)/RecoveryEnviroment/%.o: RecoveryEnviroment/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(USERLAND_CFLAGS) -IUserland -IUserland/API -c $< -o $@
-
-$(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
-	mkdir -p $(dir $@)
-	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
-
-BOOT_RESOURCE_DIR := BootManager/Resource
-
 image: install_payload recovery_build
 	@mkdir -p $(IMAGE_DIR)
-	@rm -f $(IMAGE)
-
-	@dd if=/dev/zero of=$(IMAGE) bs=1M count=128 status=none
-	@mformat -i $(IMAGE) -F -v "IMPLUSOS" ::
-
-	@PART_IMG=$(IMAGE); \
-	mmd -i $$PART_IMG ::/EFI; \
-	mmd -i $$PART_IMG ::/EFI/BOOT; \
-	mmd -i $$PART_IMG ::/Kernel; \
-	mmd -i $$PART_IMG ::/Kernel/Driver; \
-	mmd -i $$PART_IMG ::/Userland; \
-	mmd -i $$PART_IMG ::/Recovery; \
-	mmd -i $$PART_IMG ::/BootManager; \
-	mmd -i $$PART_IMG ::/BootManager/Resource; \
-	\
-	mcopy -s -i $$PART_IMG $(abspath $(BOOTX64_EFI)) ::/EFI/BOOT/BOOTX64.EFI; \
-	mcopy -s -i $$PART_IMG $(abspath $(BOOTMANAGER_EFI)) ::/EFI/BOOT/BOOTMANAGER.EFI; \
-	mcopy -s -i $$PART_IMG $(abspath $(KERNEL_ELF)) ::/Kernel/Kernel_Main.ELF; \
-	mcopy -s -i $$PART_IMG $(abspath $(RECOVERY_INIT_ELF)) ::/Userland/Userland.ELF; \
-	mcopy -s -i $$PART_IMG $(abspath $(INSTALL_PAYLOAD_TGZ)) ::/Recovery/ImplusOS-root.tar.gz; \
-	mcopy -s -i $$PART_IMG $(abspath $(INSTALL_DISK_IMAGE)) ::/Recovery/ImplusOS-install.img; \
-	mcopy -s -i $$PART_IMG $(abspath $(INSTALL_MANIFEST)) ::/Recovery/MANIFEST.txt; \
-	\
-	mcopy -s -i $$PART_IMG $(abspath $(BOOT_RESOURCE_DIR)) ::/BootManager; \
-	for f in $(abspath $(DRIVER_STAGE_DIR))/*.ELF; do \
+	@rm -f $(IMAGE) $(ESP_IMAGE)
+	@dd if=/dev/zero of=$(ESP_IMAGE) bs=1M count=64 status=none
+	@mformat -i $(ESP_IMAGE) -F -v "IMPLUSOS" ::
+	@mmd -i $(ESP_IMAGE) ::/EFI
+	@mmd -i $(ESP_IMAGE) ::/EFI/BOOT
+	@mmd -i $(ESP_IMAGE) ::/BootManager
+	@mmd -i $(ESP_IMAGE) ::/BootManager/Resource
+	@if [ "$(ARCH)" = "x86_64" ]; then \
+		mcopy -o -i $(ESP_IMAGE) $(BOOTLOADER_EFI) ::/EFI/BOOT/BOOTX64.EFI; \
+	else \
+		mcopy -o -i $(ESP_IMAGE) $(BOOTLOADER_EFI) ::/EFI/BOOT/BOOTAA64.EFI; \
+	fi
+	@mcopy -o -i $(ESP_IMAGE) $(BOOTMANAGER_EFI) ::/EFI/BOOT/BOOTMANAGER.EFI
+	@mcopy -s -i $(ESP_IMAGE) $(BOOT_RESOURCE_DIR) ::/BootManager
+	@rm -rf $(IMAGE_STAGE_DIR)
+	@mkdir -p \
+		$(IMAGE_STAGE_DIR)/Recovery \
+		$(IMAGE_STAGE_DIR)/Kernel/Driver \
+		$(IMAGE_STAGE_DIR)/Userland \
+		$(IMAGE_STAGE_DIR)/BootManager/Resource
+	@cp $(ESP_IMAGE) $(IMAGE_STAGE_DIR)/esp.img
+	@cp $(KERNEL_ELF) $(IMAGE_STAGE_DIR)/Kernel/Kernel_Main.ELF
+	@cp $(RECOVERY_INIT_ELF) $(IMAGE_STAGE_DIR)/Userland/Userland.ELF
+	@cp $(INSTALL_PAYLOAD_TGZ) $(IMAGE_STAGE_DIR)/Recovery/ImplusOS-root.tar.gz
+	@cp $(INSTALL_DISK_IMAGE) $(IMAGE_STAGE_DIR)/Recovery/ImplusOS-install.img
+	@cp $(INSTALL_MANIFEST) $(IMAGE_STAGE_DIR)/Recovery/MANIFEST.txt
+	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
+	@for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
 		[ -e "$$f" ] || continue; \
-		mcopy -i $$PART_IMG "$$f" ::/Kernel/Driver/; \
+		cp "$$f" $(IMAGE_STAGE_DIR)/Kernel/Driver/; \
 	done
+	@xorriso -as mkisofs \
+		-R \
+		-J \
+		-V IMPLUSOS \
+		-eltorito-alt-boot \
+		-e esp.img \
+		-no-emul-boot \
+		-isohybrid-gpt-basdat \
+		-o $(IMAGE) \
+		$(IMAGE_STAGE_DIR)
 
-QEMU_COMMON = \
-	-machine q35,accel=tcg \
+QEMU_COMMON := \
+	-machine pc \
 	-cpu max \
 	-smp 1 \
 	-m 4G \
 	-device qemu-xhci,id=xhci \
 	-device usb-kbd,bus=xhci.0 \
 	-device usb-mouse,bus=xhci.0 \
-	-netdev user,id=net0 \
-	-device virtio-net-pci,netdev=net0 \
-	-device ich9-ahci,id=sata \
-	-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
-	-drive if=none,id=drive0,file=./disk.qcow2,format=qcow2 \
-	-device ide-hd,drive=drive0,bus=sata.0 \
-	-device ich9-intel-hda \
-	-device hda-duplex \
-	-rtc base=localtime \
-	-serial stdio
+	-serial stdio \
+	-display cocoa \
+	-device ramfb
 
-QEMU_USB = \
-	-drive if=none,id=usbstick,format=raw,file=${IMAGE} \
+QEMU_USB := \
+	-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick
 
-QEMU_DISK = \
-	-drive file=${IMAGE},format=raw,if=none,id=disk0 \
+QEMU_DISK := \
+	-drive file=$(IMAGE),format=raw,if=none,id=disk0 \
 	-device ide-hd,drive=disk0,bus=sata.0
 
 run_uefi_usb:
-	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_USB)
+	@if [ "$(ARCH)" = "arm64" ]; then \
+		qemu-system-aarch64 $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_USB); \
+	else \
+		qemu-system-x86_64 $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_USB); \
+	fi
 
 run_uefi_cdrom:
-	@qemu-system-$(ARCH) $(QEMU_COMMON) $(QEMU_DISK)
-
-run_bios_usb:
-	@qemu-system-$(ARCH) \
-		-machine q35 \
-		-smp 4,sockets=1,cores=4,threads=1 \
-		-m 4G \
-		-serial stdio \
-		-device qemu-xhci,id=xhci \
-		-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
-		-device usb-storage,drive=usbstick
+	@if [ "$(ARCH)" = "arm64" ]; then \
+		qemu-system-aarch64 $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_DISK); \
+	else \
+		qemu-system-x86_64 $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_DISK); \
+	fi
 
 clean:
 	@rm -rf $(BUILD_DIR) $(IMAGE_DIR)

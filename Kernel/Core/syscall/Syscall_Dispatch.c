@@ -45,6 +45,24 @@ typedef struct {
 
 static const char k_decimal_digits[10] = "0123456789";
 
+static inline void syscall_arch_enable_interrupts(void)
+{
+#if defined(__aarch64__)
+    __asm__ volatile("msr daifclr, #0x2" ::: "memory");
+#else
+    __asm__ volatile("sti" ::: "memory");
+#endif
+}
+
+static inline void syscall_arch_disable_interrupts(void)
+{
+#if defined(__aarch64__)
+    __asm__ volatile("msr daifset, #0xf" ::: "memory");
+#else
+    __asm__ volatile("cli" ::: "memory");
+#endif
+}
+
 static void set_syscall_result(uint64_t saved_rsp, uint64_t value)
 {
     uint64_t *frame = (uint64_t *)(uintptr_t)saved_rsp;
@@ -192,7 +210,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                          uint64_t arg4,
                          uint64_t arg5)
 {
-    __asm__ volatile("sti");
+    syscall_arch_enable_interrupts();
 
     (void)arg5;
     int32_t current_pid = current_pid_get();
@@ -1441,7 +1459,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
     }
 
 pre_schedule:
-    __asm__ volatile("cli");
+    syscall_arch_disable_interrupts();
 
     if (process_timeslice_expired()) {
         request_switch = 1;

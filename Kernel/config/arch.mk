@@ -13,7 +13,7 @@ ifeq ($(ARCH),arm64)
 CC := aarch64-elf-gcc
 LD := aarch64-elf-ld
 NASM := false
-ARCH_CFLAGS :=
+ARCH_CFLAGS := -mstrict-align -mno-outline-atomics
 KERNEL_LDSCRIPT := Arch/arm64/linker/linker.ld
 endif
 

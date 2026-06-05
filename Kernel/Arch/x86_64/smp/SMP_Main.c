@@ -55,6 +55,8 @@ volatile struct {
 extern uint8_t smp_trampoline_start[];
 extern uint8_t smp_trampoline_end[];
 
+#include "interfaces/hal_cpu.h"
+
 static inline uint32_t read_lapic_id(void)
 {
     if (!lapic_is_present()) return 0;
@@ -63,14 +65,14 @@ static inline uint32_t read_lapic_id(void)
 
 static inline void io_wait(void)
 {
-    __asm__ volatile("outb %%al, $0x80" :: "a"((uint8_t)0));
+    hal_io_delay();
 }
 
 static void smp_delay_ms(uint32_t ms)
 {
     for (uint32_t i = 0; i < ms; i++) {
         for (volatile uint32_t j = 0; j < 100000; j++) {
-            __asm__ volatile("pause");
+            hal_cpu_pause();
         }
     }
 }
@@ -79,21 +81,15 @@ static uint32_t smp_detect_possible_cpus(void)
 {
     uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
 
-    __asm__ volatile("cpuid"
-                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                     : "a"(0));
+    hal_cpu_get_id(0, 0, &eax, &ebx, &ecx, &edx);
 
     if (eax >= 0x0Bu) {
-        __asm__ volatile("cpuid"
-                         : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                         : "a"(0x0Bu), "c"(0));
+        hal_cpu_get_id(0x0Bu, 0, &eax, &ebx, &ecx, &edx);
         uint32_t count = ebx & 0xFFFFu;
         if (count > 0) return count;
     }
 
-    __asm__ volatile("cpuid"
-                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                     : "a"(1));
+    hal_cpu_get_id(1, 0, &eax, &ebx, &ecx, &edx);
     uint32_t logical = (ebx >> 16) & 0xFFu;
     if (logical == 0) logical = 1;
     return logical;
@@ -114,7 +110,7 @@ void ap_entry_c(void)
     }
 
     if (!found) {
-        while (1) { __asm__ volatile("hlt"); }
+        while (1) { hal_cpu_halt(); }
     }
 
     g_current_pid_per_cpu[cpu_idx] = -1;
@@ -125,9 +121,9 @@ void ap_entry_c(void)
 
     __atomic_fetch_add(&g_cpu_online, 1u, __ATOMIC_SEQ_CST);
 
-    __asm__ volatile("sti");
+    hal_cpu_enable_interrupts();
     while (1) {
-        __asm__ volatile("hlt");
+        hal_cpu_halt();
     }
 }
 
@@ -155,7 +151,7 @@ static void smp_fill_shared(uint64_t ap_cr3, void *ap_entry, uint64_t ap_stack)
     sh->idtr_base  = idt_ptr->base;
 
     gdtr_t gdtr;
-    __asm__ volatile("sgdt %0" : "=m"(gdtr));
+    hal_cpu_get_gdt_ptr(&gdtr);
     sh->gdtr_limit = gdtr.limit;
     sh->gdtr_base  = gdtr.base;
 }
@@ -187,15 +183,14 @@ void smp_init(void)
 
     uint32_t trampoline_size = (uint32_t)(smp_trampoline_end - smp_trampoline_start);
     memcpy((void *)(uintptr_t)SMP_TRAMPOLINE_PHYS, smp_trampoline_start, trampoline_size);
-    __asm__ volatile("mfence" ::: "memory");
+    hal_cpu_memory_barrier();
     memset((void *)(uintptr_t)SMP_SHARED_PHYS, 0, 4096);
 
     uint32_t bsp_lapic_id = lapic_get_id();
     uint8_t  trampoline_vector = (uint8_t)(SMP_TRAMPOLINE_PHYS >> 12);
 
-    uint64_t bsp_cr3;
-    __asm__ volatile("mov %%cr3, %0" : "=r"(bsp_cr3));
-        __asm__ volatile("wbinvd" ::: "memory");
+    uint64_t bsp_cr3 = hal_cpu_read_cr(3);
+    hal_cpu_invalidate_caches();
 
     uint32_t aps_started = 0;
 
@@ -268,7 +263,7 @@ void smp_tlb_shootdown(uint64_t vaddr, uint64_t pages)
 {
     if (__atomic_load_n(&g_cpu_online, __ATOMIC_ACQUIRE) <= 1) {
         for (uint64_t i = 0; i < pages; i++) {
-            __asm__ volatile("invlpg (%0)" :: "r"(vaddr + i * 4096ULL) : "memory");
+            hal_mmu_invalidate_tlb(vaddr + i * 4096ULL);
         }
         return;
     }
@@ -277,7 +272,7 @@ void smp_tlb_shootdown(uint64_t vaddr, uint64_t pages)
     __atomic_store_n(&g_tlb_req.pages,     pages, __ATOMIC_RELAXED);
     __atomic_store_n(&g_tlb_req.ack_count, 0u,    __ATOMIC_RELAXED);
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    
+
     lapic_send_ipi(0, (3u << 18) | (uint32_t)VECTOR_TLB_SHOOTDOWN);
 
     uint32_t expected = __atomic_load_n(&g_cpu_online, __ATOMIC_ACQUIRE) - 1u;
@@ -287,11 +282,11 @@ void smp_tlb_shootdown(uint64_t vaddr, uint64_t pages)
             break;
         }
         timeout--;
-        __asm__ volatile("pause");
+        hal_cpu_pause();
     }
 
     for (uint64_t i = 0; i < pages; i++) {
-        __asm__ volatile("invlpg (%0)" :: "r"(vaddr + i * 4096ULL) : "memory");
+        hal_mmu_invalidate_tlb(vaddr + i * 4096ULL);
     }
 }
 
@@ -300,7 +295,7 @@ void smp_tlb_shootdown_handler(void)
     uint64_t addr  = __atomic_load_n(&g_tlb_req.vaddr, __ATOMIC_ACQUIRE);
     uint64_t pages = __atomic_load_n(&g_tlb_req.pages, __ATOMIC_ACQUIRE);
     for (uint64_t i = 0; i < pages; i++) {
-        __asm__ volatile("invlpg (%0)" :: "r"(addr + i * 4096ULL) : "memory");
+        hal_mmu_invalidate_tlb(addr + i * 4096ULL);
     }
     __atomic_fetch_add(&g_tlb_req.ack_count, 1u, __ATOMIC_RELEASE);
     lapic_eoi();

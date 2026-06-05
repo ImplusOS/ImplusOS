@@ -3,20 +3,35 @@
 #include "Drivers/Module/DriverManager.h"
 #include "Drivers/Client/USB/USB_Driver_API.h"
 #include "Debug/serial/Serial.h"
+#include "Core/timer/Timer.h"
 
 static bool g_usb_ms_working = false;
 
 bool usb_ms_init(uint64_t partition_lba) {
-    (void)partition_lba;
     g_usb_ms_working = false;
 
     uint8_t probe_buf[512];
-    if (!driver_manager_input_usb_read_sectors(0, probe_buf, 1)) {
-        return false;
+    
+    for (int retry = 0; retry < 1000; retry++) {
+        uint32_t count = usb_driver_client_get_device_count();
+        if (count > 0) {
+            for (uint32_t i = 0; i < count; i++) {
+                if (usb_driver_client_select_device(i)) {
+                    if (driver_manager_input_usb_read_sectors((uint32_t)partition_lba, probe_buf, 1)) {
+                        g_usb_ms_working = true;
+                        return true;
+                    }
+                    if (partition_lba != 0 && driver_manager_input_usb_read_sectors(0, probe_buf, 1)) {
+                        g_usb_ms_working = true;
+                        return true;
+                    }
+                }
+            }
+        }
+        timer_apic_sleep_ms(10);
     }
 
-    g_usb_ms_working = true;
-    return true;
+    return false;
 }
 
 bool usb_ms_read(uint32_t lba, uint8_t *buffer, uint32_t sectors)

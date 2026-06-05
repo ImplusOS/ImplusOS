@@ -18,7 +18,6 @@ static bool ensure_fat32_initialized() {
     if (driver == NULL) {
         g_fat32_driver = NULL;
         g_fat32_initialized = 0;
-        g_fat32_init_failed = 1;
         return false;
     }
 
@@ -36,7 +35,6 @@ static bool ensure_fat32_initialized() {
     }
 
     if (g_fat32_driver->init == NULL) {
-        g_fat32_init_failed = 1;
         return false;
     }
     if (!g_fat32_driver->init()) {

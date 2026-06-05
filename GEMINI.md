@@ -12,7 +12,7 @@ Runs on QEMU with OVMF firmware.
 
 ```bash
 # Prerequisites (Ubuntu/Debian)
-sudo apt install -y build-essential nasm binutils gnu-efi \
+sudo apt install -y build-essential nasm binutils \
   gcc-x86-64-elf g++-x86-64-elf parted qemu-system-x86 \
   dosfstools xorriso mtools util-linux gdb
 
@@ -52,7 +52,7 @@ ImplusOS/
 ├── BootLoader/           # UEFI/BIOS entry points (x86_64/UEFI/, x86_64/BIOS/)
 ├── BootManager/          # Secondary boot stage (UEFI/BIOS)
 ├── Kernel/               # Kernel source
-│   ├── Arch/x86_64/      # GDT, IDT, mmu/paging, SMP, virt/VMX
+│   ├── Arch/             Architecture-specific (x86_64, arm64)
 │   ├── Core/             # kernel_main, process, syscall, VFS, IPC, timer, window, sync, elf
 │   ├── Debug/            # Serial, printf, panic
 │   ├── Drivers/          # Driver framework (Client/Server/Module)

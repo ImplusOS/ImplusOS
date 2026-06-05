@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "interfaces/hal_cpu.h"
 
 typedef struct {
     volatile uint32_t value;
@@ -9,16 +10,12 @@ typedef struct {
 
 static inline uint64_t irq_save_disable(void)
 {
-    uint64_t flags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
-    return flags;
+    return hal_cpu_save_interrupts();
 }
 
 static inline void irq_restore(uint64_t flags)
 {
-    if (flags & (1ull << 9)) {
-        __asm__ volatile("sti" ::: "memory");
-    }
+    hal_cpu_restore_interrupts(flags);
 }
 
 static inline void spinlock_init(spinlock_t *lock)
@@ -41,7 +38,7 @@ static inline void spinlock_lock(spinlock_t *lock)
 
     while (__atomic_exchange_n(&lock->value, 1u, __ATOMIC_ACQUIRE) != 0u) {
         while (__atomic_load_n(&lock->value, __ATOMIC_RELAXED) != 0u) {
-            __asm__ volatile ("pause");
+            hal_cpu_pause();
         }
     }
 }

@@ -68,6 +68,40 @@ typedef struct {
 } driver_api_debug_t;
 
 typedef struct {
+    void (*cpu_halt)(void);
+    void (*cpu_pause)(void);
+    void (*cpu_enable_interrupts)(void);
+    void (*cpu_disable_interrupts)(void);
+    uint64_t (*cpu_save_interrupts)(void);
+    void (*cpu_restore_interrupts)(uint64_t state);
+    void (*mmu_invalidate_tlb)(uintptr_t addr);
+    uint64_t (*cpu_read_cr)(int reg);
+    void (*cpu_write_cr)(int reg, uint64_t value);
+    void (*cpu_memory_barrier)(void);
+    void (*io_delay)(void);
+    uint64_t (*cpu_read_msr)(uint32_t msr);
+    void (*cpu_write_msr)(uint32_t msr, uint64_t value);
+    void (*cpu_get_id)(uint32_t leaf, uint32_t subleaf, uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx);
+    void (*cpu_get_gdt_ptr)(void *ptr);
+    void (*cpu_invalidate_caches)(void);
+    void (*arch_switch_stack)(uintptr_t sp);
+    uint64_t (*cpu_get_current_el)(void);
+    void (*cpu_set_vbar)(void *vbar);
+    uint64_t (*cpu_read_fs_base)(void);
+    void (*cpu_write_fs_base)(uint64_t val);
+    void (*cpu_save_fpu)(uint8_t *state);
+    void (*cpu_restore_fpu)(uint8_t *state);
+
+    void (*io_out8)(uint16_t port, uint8_t value);
+    uint8_t (*io_in8)(uint16_t port);
+    void (*io_out16)(uint16_t port, uint16_t value);
+    uint16_t (*io_in16)(uint16_t port);
+    void (*io_out32)(uint16_t port, uint32_t value);
+    uint32_t (*io_in32)(uint16_t port);
+    void (*io_outsw)(uint16_t port, const void *addr, uint32_t count);
+} driver_api_hal_t;
+
+typedef struct {
     uint16_t version_major;
     uint16_t version_minor;
     uint32_t reserved;
@@ -77,6 +111,7 @@ typedef struct {
     driver_api_io_t io;
     driver_api_hw_t hw;
     driver_api_debug_t dbg;
+    driver_api_hal_t hal;
 
     void (*timer_msleep)(uint32_t ms);
     uint32_t (*timer_hz)(void);

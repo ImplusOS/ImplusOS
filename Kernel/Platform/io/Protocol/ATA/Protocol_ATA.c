@@ -87,6 +87,10 @@ bool ata_select_device(uint32_t index) {
     ata_set_channel(g_ata_devices[index].ch);
     g_ata_devsel_value = g_ata_devices[index].devsel;
     g_atapi = g_ata_devices[index].is_atapi;
+    
+    outb(g_ata_hddevsel, g_ata_devsel_value);
+    ata_delay(g_ata_control);
+    
     return true;
 }
 
@@ -115,40 +119,51 @@ static uint16_t mask_io_bar(uint32_t bar) {
 static void ide_configure_ports_from_pci(void) {
     for (uint16_t bus = 0; bus < 256; ++bus) {
         for (uint8_t dev = 0; dev < 32; ++dev) {
-            for (uint8_t func = 0; func < 8; ++func) {
-                uint32_t class_reg = pci_read_config((uint8_t)bus, dev, func, 0x08);
+            /* func=0 でベンダIDが 0xFFFF ならこのデバイスは存在しない。
+             * dev ループを次へ進める。                                  */
+            uint32_t vd0 = pci_read_config((uint8_t)bus, dev, 0u, 0x00u);
+            if ((vd0 & 0xFFFFu) == 0xFFFFu) {
+                continue;
+            }
+
+            /* マルチファンクションでなければ func は 0 のみ確認すればよい */
+            uint32_t hdr0 = pci_read_config((uint8_t)bus, dev, 0u, 0x0Cu);
+            uint8_t  max_func = (((hdr0 >> 16) & 0x80u) != 0u) ? 8u : 1u;
+
+            for (uint8_t func = 0; func < max_func; ++func) {
+                uint32_t vd = pci_read_config((uint8_t)bus, dev, func, 0x00u);
+                if ((vd & 0xFFFFu) == 0xFFFFu) continue;
+
+                uint32_t class_reg = pci_read_config((uint8_t)bus, dev, func, 0x08u);
                 uint8_t class_code = (uint8_t)((class_reg >> 24) & 0xFFu);
                 uint8_t subclass   = (uint8_t)((class_reg >> 16) & 0xFFu);
-                if (class_code != 0x01u || subclass != 0x01u) {
-                    if (func == 0) {
-                        uint32_t header = pci_read_config((uint8_t)bus, dev, func, 0x0C);
-                        if (((header >> 16) & 0x80u) == 0u) break;
-                    }
-                    continue;
-                }
 
-                uint32_t bar0 = pci_read_config((uint8_t)bus, dev, func, 0x10);
-                uint32_t bar1 = pci_read_config((uint8_t)bus, dev, func, 0x14);
-                uint32_t bar2 = pci_read_config((uint8_t)bus, dev, func, 0x18);
-                uint32_t bar3 = pci_read_config((uint8_t)bus, dev, func, 0x1C);
-                uint32_t cmd  = pci_read_config((uint8_t)bus, dev, func, 0x04);
+                /* IDE コントローラ (class=0x01, subclass=0x01) のみ対象 */
+                if (class_code != 0x01u || subclass != 0x01u) continue;
 
-                pci_write_config((uint8_t)bus, dev, func, 0x04, cmd | 0x5u);
+                uint32_t bar0 = pci_read_config((uint8_t)bus, dev, func, 0x10u);
+                uint32_t bar1 = pci_read_config((uint8_t)bus, dev, func, 0x14u);
+                uint32_t bar2 = pci_read_config((uint8_t)bus, dev, func, 0x18u);
+                uint32_t bar3 = pci_read_config((uint8_t)bus, dev, func, 0x1Cu);
+                uint32_t cmd  = pci_read_config((uint8_t)bus, dev, func, 0x04u);
 
-                ata_channel_t primary = g_primary;
+                pci_write_config((uint8_t)bus, dev, func, 0x04u, cmd | 0x05u);
+
+                ata_channel_t primary   = g_primary;
                 ata_channel_t secondary = g_secondary;
 
-                if (bar0 != 0 && (bar0 & 0x1u)) primary.cmd_io = mask_io_bar(bar0);
-                if (bar1 != 0 && (bar1 & 0x1u)) primary.ctrl_io = (uint16_t)(mask_io_bar(bar1));
-                if (bar2 != 0 && (bar2 & 0x1u)) secondary.cmd_io = mask_io_bar(bar2);
-                if (bar3 != 0 && (bar3 & 0x1u)) secondary.ctrl_io = (uint16_t)(mask_io_bar(bar3));
+                if (bar0 != 0u && (bar0 & 0x1u)) primary.cmd_io   = mask_io_bar(bar0);
+                if (bar1 != 0u && (bar1 & 0x1u)) primary.ctrl_io  = mask_io_bar(bar1);
+                if (bar2 != 0u && (bar2 & 0x1u)) secondary.cmd_io  = mask_io_bar(bar2);
+                if (bar3 != 0u && (bar3 & 0x1u)) secondary.ctrl_io = mask_io_bar(bar3);
 
-                g_primary = primary;
+                g_primary   = primary;
                 g_secondary = secondary;
                 return;
             }
         }
     }
+    /* IDE コントローラが見つからなくてもデフォルトポートのまま続行 */
 }
 
 static int ata_poll(uint32_t timeout)
@@ -322,6 +337,8 @@ static int atapi_read_block(uint32_t lba2048, uint8_t *buf)
         if (--timeout_bsy == 0u) return -1;
     }
 
+    outb(g_ata_hddevsel, g_ata_devsel_value);
+    ata_delay(g_ata_control);
     outb(g_ata_feature, 0);
     outb(g_ata_seccount, 0);
     outb(g_ata_lba0, 0);
@@ -442,6 +459,11 @@ bool ata_init(uint64_t partition_lba) {
         { &g_secondary, 0xB0u },
     };
 
+    static const char *slot_names[4] = {
+        "primary master", "primary slave",
+        "secondary master", "secondary slave"
+    };
+
     for (int i = 0; i < 4; i++) {
         ata_soft_reset(slots[i].ch->ctrl_io);
         ata_set_channel(slots[i].ch);
@@ -465,11 +487,32 @@ bool ata_init(uint64_t partition_lba) {
         g_disk_io_working = true;
         return true;
     }
-    
+
     return false;
 }
 
 bool ata_read(uint32_t lba, uint8_t *buffer, uint32_t sectors) {
+    serial_write_string("ATA READ\n");
+
+serial_write_string("LBA=");
+serial_write_uint32(lba);
+
+serial_write_string(" COUNT=");
+serial_write_uint32(sectors);
+
+serial_write_string("\n");
+
+serial_write_string("LBA0=");
+serial_write_uint8(lba & 0xff);
+
+serial_write_string(" LBA1=");
+serial_write_uint8((lba >> 8) & 0xff);
+
+serial_write_string(" LBA2=");
+serial_write_uint8((lba >> 16) & 0xff);
+
+serial_write_string(" DEV=");
+serial_write_uint8(0xE0 | ((lba >> 24) & 0x0f));
     if (sectors == 0 || buffer == 0) return false;
 
     if (g_atapi) {

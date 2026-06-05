@@ -12,6 +12,8 @@ char* strncpy(char* d, const char* s, size_t n);
 
 int strcmp(const char* a, const char* b);
 int strncmp(const char* a, const char* b, size_t n);
+int strcasecmp(const char* a, const char* b);
+int strncasecmp(const char* a, const char* b, size_t n);
 
 char* strchr(const char* s, int c);
 char* strrchr(const char* s, int c);

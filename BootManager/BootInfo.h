@@ -4,23 +4,12 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifndef BASE_LIBRARY_JUMP_BUFFER_ALIGNMENT
 
-#if !defined(_EFI_H) && !defined(_EFI_H_) && !defined(_EFI_INCLUDE_) && !defined(_EFI_DEF_H) && !defined(_EFI_TYPES_H)
-typedef uint64_t UINTN;
-typedef uint32_t UINT32;
-typedef uint64_t EFI_PHYSICAL_ADDRESS;
+typedef unsigned long long UINTN;
+typedef unsigned int       UINT32;
+typedef unsigned long long EFI_PHYSICAL_ADDRESS;
 
-#ifndef EFI_MEMORY_DESCRIPTOR_DEFINED
-typedef struct {
-    UINT32   Type;
-    UINT32   Pad;
-    uint64_t PhysicalStart;
-    uint64_t VirtualStart;
-    uint64_t NumberOfPages;
-    uint64_t Attribute;
-} EFI_MEMORY_DESCRIPTOR;
-#define EFI_MEMORY_DESCRIPTOR_DEFINED
-#endif
 #endif
 
 #define MAX_LOADED_FILES     16
@@ -41,9 +30,9 @@ typedef struct {
 
 #pragma pack(push, 1)
 typedef struct {
-    uint64_t MemoryMap;
+    void    *MemoryMap;
     uint64_t MemoryMapSize;
-    uint64_t MemoryMapDescriptorSize;
+    UINTN    MemoryMapDescriptorSize;
     uint32_t MemoryMapDescriptorVersion;
 
     uint64_t FrameBufferBase;
@@ -52,7 +41,7 @@ typedef struct {
     uint32_t VerticalResolution;
     uint32_t PixelsPerScanLine;
 
-    uint64_t  PartitionStartLBA;
+    uint64_t PartitionStartLBA;
 
     uint64_t AcpiRsdpAddress;
     uint32_t AcpiRsdpSize;

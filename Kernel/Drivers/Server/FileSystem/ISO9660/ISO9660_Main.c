@@ -2,41 +2,43 @@
 #include "Debug/serial/Serial.h"
 #include "kernel/config.h"
 #include "Platform/io/IO_Main.h"
+#ifndef IMPLUS_DRIVER_MODULE
+#include "interfaces/hal_cpu.h"
+#endif
 #include <string.h>
 #include <stddef.h>
 
 #ifdef IMPLUS_DRIVER_MODULE
 #include "Drivers/Module/DriverBinary.h"
 
+static const driver_binary_t *g_driver_api = NULL;
+
+#define hal_cpu_pause               g_driver_api->hal.cpu_pause
+#define hal_cpu_save_interrupts     g_driver_api->hal.cpu_save_interrupts
+#define hal_cpu_restore_interrupts  g_driver_api->hal.cpu_restore_interrupts
+#define disk_read                   g_driver_api->hw.disk_read
+#define disk_write                  g_driver_api->hw.disk_write
+#define disk_get_partition_lba      g_driver_api->hw.disk_get_partition_lba
+#define serial_write_string          g_driver_api->dbg.write_string
+#define serial_write_uint32             g_driver_api->dbg.write_uint32
+
 typedef struct { volatile int locked; } spinlock_t;
 static inline void spinlock_init(spinlock_t *l)   { l->locked = 0; }
 static inline void spinlock_lock(spinlock_t *l)   {
     while (__sync_lock_test_and_set(&l->locked, 1)) {
-        while (l->locked) { __asm__ volatile("pause"); }
+        while (l->locked) { hal_cpu_pause(); }
     }
 }
 static inline void spinlock_unlock(spinlock_t *l) { __sync_lock_release(&l->locked); }
 
-static const driver_binary_t *g_driver_api = NULL;
-
-#define disk_read               g_driver_api->disk_read
-#define disk_write              g_driver_api->disk_write
-#define disk_get_partition_lba  g_driver_api->disk_get_partition_lba
-#define serial_write_string     g_driver_api->serial_write_string
-#define serial_write_uint32     g_driver_api->serial_write_uint32
-
 static inline uint64_t irq_save_disable(void)
 {
-    uint64_t flags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
-    return flags;
+    return hal_cpu_save_interrupts();
 }
 
 static inline void irq_restore(uint64_t flags)
 {
-    if (flags & (1ull << 9)) {
-        __asm__ volatile("sti" ::: "memory");
-    }
+    hal_cpu_restore_interrupts(flags);
 }
 
 void *memcpy(void *dest, const void *src, size_t n)
@@ -123,6 +125,9 @@ static inline uint32_t iso9660_read_u32_both(const uint8_t *p) {
 
 static bool iso9660_read_sector(uint32_t lba, uint8_t *buffer) {
     uint32_t base = g_iso_partition_lba + lba * (ISO9660_SECTOR_SIZE / 512u);
+    serial_write_string("Read LBA=");
+    serial_write_uint32(base);
+    serial_write_string("\n");
     return disk_read(base, buffer, ISO9660_SECTOR_SIZE / 512u);
 }
 
@@ -300,7 +305,10 @@ static bool iso9660_scan_descriptors(ISO9660_CONTEXT *ctx) {
     bool found_pvd = false;
     
     for (uint32_t lba = 16u; lba < 32u; lba++) {
-        if (!iso9660_read_sector(lba, g_iso_sector_buffer)) break;
+        if (!iso9660_read_sector(lba, g_iso_sector_buffer)) {
+            serial_write_string("READ FAIL\n");
+            break;
+        }
 
         uint8_t type = g_iso_sector_buffer[0];
         if (type == VD_TYPE_TERMINATOR) break;
@@ -325,6 +333,19 @@ static bool iso9660_scan_descriptors(ISO9660_CONTEXT *ctx) {
             }
         }
     }
+
+    serial_write_string("type=");
+    serial_write_uint32(g_iso_sector_buffer[0]);
+
+    serial_write_string(" version=");
+    serial_write_uint32(g_iso_sector_buffer[6]);
+
+    serial_write_string("\n");
+
+    serial_write_string("magic=");
+    for (int i=1;i<6;i++)
+        serial_write_uint32(g_iso_sector_buffer[i]);
+    serial_write_string("\n");
 
     return found_pvd;
 }
@@ -495,13 +516,28 @@ static bool iso9660_lookup_path(const char *path, ISO9660_FILE *out_entry,
 }
 
 static bool _iso9660_init(void) {
+    g_iso_partition_lba = disk_get_partition_lba();
     memset(&g_iso_context, 0, sizeof(g_iso_context));
 
-    if (!iso9660_scan_descriptors(&g_iso_context)) return false;
+    serial_write_string("[ISO9660] Starting initialization...\n");
+    serial_write_uint32(g_iso_partition_lba);
 
-    iso9660_detect_rock_ridge(&g_iso_context);
+    if (iso9660_scan_descriptors(&g_iso_context)) {
+        iso9660_detect_rock_ridge(&g_iso_context);
+        serial_write_string("[ISO9660] Initialization successful.\n");
+        return true;
+    }
 
-    return true;
+    if (g_iso_partition_lba != 0) {
+        g_iso_partition_lba = 0;
+        memset(&g_iso_context, 0, sizeof(g_iso_context));
+        if (iso9660_scan_descriptors(&g_iso_context)) {
+            iso9660_detect_rock_ridge(&g_iso_context);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool iso9660_init(void) {
@@ -787,7 +823,7 @@ static const driver_module_descriptor_t g_iso9660_module = {
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api) {
     if (!api || !api->disk_read || !api->disk_get_partition_lba ||
-        !api->memset || !api->memcpy || !api->serial_write_string)
+        !api->memset || !api->memcpy)
         return NULL;
     g_driver_api = api;
     g_iso_partition_lba = api->disk_get_partition_lba();

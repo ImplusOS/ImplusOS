@@ -1,6 +1,5 @@
 #include "../include/stdlib.h"
 #include "../include/string.h"
-#include <efilib.h>
 
 static EFI_SYSTEM_TABLE *g_system_table;
 
@@ -29,3 +28,4 @@ void *calloc(size_t count, size_t size) {
     if (ptr) memset(ptr, 0, total);
     return ptr;
 }
+

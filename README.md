@@ -18,7 +18,7 @@ ImplusOS is a hobby OS tree with a UEFI boot path, a small kernel, and userland 
 | Component | Description |
 |---|---|
 | **Architecture** | x86-64 (Long Mode) |
-| **Boot** | UEFI via `gnu-efi` → ELF64 kernel load |
+| **Boot** | UEFI via `EDK2` → ELF64 kernel load |
 | **Kernel model** | Monolithic with loadable driver modules (PIC ELF shared objects) |
 | **Memory** | 4-level paging, bitmap PMM, kernel heap, DMA allocator |
 | **Filesystem** | VFS layer → FAT32 (read / write / directory ops) |
@@ -54,6 +54,23 @@ ImplusOS is a hobby OS tree with a UEFI boot path, a small kernel, and userland 
 └─────────────────────────────────────────────────────┘
 ```
 
+## Prerequisites
+
+- Need clang 17
+
+1. Clone EDK2
+```bash
+git clone https://github.com/tianocore/edk2.git
+cd edk2
+git submodule update --init
+```
+
+2. Build EDK2
+```bash
+make -C BaseTools
+source edksetup.sh
+```
+
 ## Build
 1. Install toolchains:
 ```bash
@@ -61,7 +78,6 @@ sudo apt install -y build-essential pkg-config git make cmake
 sudo apt install -y gcc-multilib g++-multilib
 sudo apt install -y nasm
 sudo apt install -y binutils
-sudo apt install -y gnu-efi
 sudo apt install -y parted
 sudo apt install -y qemu-system-x86
 sudo apt install -y gdb
@@ -69,10 +85,13 @@ sudo apt install -y dosfstools
 sudo apt install -y xorriso
 sudo apt install -y mtools
 sudo apt install -y util-linux
+sudo apt install -y python3
+sudo apt install -y llvm
 # Please Install Homebrew
 brew install x86_64-elf-binutils
 brew install x86_64-elf-gcc
 brew install gptfdisk
+brew install lld
 ```
 2. Build and run:
 ```bash

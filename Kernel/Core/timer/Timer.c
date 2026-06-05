@@ -37,6 +37,14 @@ static uint32_t g_lapic_initial_count = 0;
 static uint16_t g_pit_divisor = 0;
 static volatile uint64_t g_pit_interrupt_count = 0;
 
+static inline void timer_cpu_relax(void) {
+#if defined(__aarch64__)
+    __asm__ volatile("yield" ::: "memory");
+#else
+    __asm__ volatile("pause" ::: "memory");
+#endif
+}
+
 static void pit_set_frequency(uint32_t hz) {
     if (hz == 0) return;
 
@@ -119,12 +127,12 @@ static uint32_t lapic_calculate_initial(uint32_t target_hz)
 
     uint64_t start_tick = g_pit_interrupt_count;
     while (g_pit_interrupt_count == start_tick) {
-        __asm__ volatile("pause" ::: "memory");
+        timer_cpu_relax();
     }
     start_tick = g_pit_interrupt_count;
 
     while ((g_pit_interrupt_count - start_tick) < sample_ticks) {
-        __asm__ volatile("pause" ::: "memory");
+        timer_cpu_relax();
     }
 
     uint32_t elapsed = 0xFFFFFFFFu - lapic_timer_current();
@@ -225,16 +233,30 @@ void timer_switch_lapic(void) {
 void timer_apic_sleep_ms(uint32_t ms)
 {
     if (ms == 0) return;
-
-    if (!g_using_lapic || g_lapic_initial_count == 0 || g_requested_hz == 0) {
-        uint32_t hz = g_requested_hz ? g_requested_hz : 60;
-        uint64_t wait_ticks = ((uint64_t)ms * hz + 999) / 1000;
-        uint64_t end = timer_ticks() + wait_ticks;
-        while (timer_ticks() < end) {
-            __asm__ volatile("pause" ::: "memory");
+    
+    #if defined(__aarch64__)
+        uint64_t freq;
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(freq));
+        uint64_t ticks_to_wait = (freq * ms) / 1000u;
+        uint64_t start;
+        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(start));
+        while (1) {
+            uint64_t current;
+            __asm__ volatile("mrs %0, cntvct_el0" : "=r"(current));
+            if ((current - start) >= ticks_to_wait) break;
+            timer_cpu_relax();
         }
-        return;
-    }
+    #else
+        if (!g_using_lapic || g_lapic_initial_count == 0 || g_requested_hz == 0) {
+            uint32_t hz = g_requested_hz ? g_requested_hz : 60;
+            uint64_t wait_ticks = ((uint64_t)ms * hz + 999) / 1000;
+            uint64_t end = timer_ticks() + wait_ticks;
+            while (timer_ticks() < end) {
+                timer_cpu_relax();
+            }
+            return;
+        }
+    #endif
 
     uint64_t ms_ticks = ((uint64_t)ms * (uint64_t)g_lapic_initial_count * (uint64_t)g_requested_hz) / 1000ULL;
     if (ms_ticks == 0) return;
@@ -250,6 +272,6 @@ void timer_apic_sleep_ms(uint32_t ms)
             elapsed += (last + (g_lapic_initial_count - current));
         }
         last = current;
-        __asm__ volatile("pause" ::: "memory");
+        timer_cpu_relax();
     }
 }

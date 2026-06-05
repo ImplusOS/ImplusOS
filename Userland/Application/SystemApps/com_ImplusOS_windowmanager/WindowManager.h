@@ -80,7 +80,7 @@
 #define COLOR_CURSOR_SHADOW     0x40000000
 #define COLOR_SHADOW_BASE       0x40000000
 
-#define WM_UI_MAX_ELEMENTS     256
+#define WM_UI_MAX_ELEMENTS     1024
 #define WM_UI_TEXT_MAX         128
 #define WM_UI_TYPE_LABEL        1
 #define WM_UI_TYPE_BUTTON       2

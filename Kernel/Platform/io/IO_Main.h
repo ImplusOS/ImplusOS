@@ -1,44 +1,34 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
- 
+#include "interfaces/hal_io.h"
+
 static inline void outsw(uint16_t port, const void *addr, int count) {
-    __asm__ volatile(
-        "rep outsw"
-        : "+S"(addr), "+c"(count)
-        : "d"(port)
-        : "memory"
-    );
+    hal_io_outsw(port, addr, (uint32_t)count);
 }
- 
+
 static inline void outw(uint16_t port, uint16_t val) {
-    __asm__ volatile("outw %0,%1" :: "a"(val), "Nd"(port));
+    hal_io_out16(port, val);
 }
- 
+
 static inline void outb(uint16_t port, uint8_t val) {
-    __asm__ volatile("outb %0,%1" :: "a"(val), "Nd"(port));
+    hal_io_out8(port, val);
 }
- 
+
 static inline uint8_t inb(uint16_t port) {
-    uint8_t val;
-    __asm__ volatile("inb %1,%0" : "=a"(val) : "Nd"(port));
-    return val;
+    return hal_io_in8(port);
 }
- 
+
 static inline uint16_t inw(uint16_t port) {
-    uint16_t val;
-    __asm__ volatile("inw %1,%0" : "=a"(val) : "Nd"(port));
-    return val;
+    return hal_io_in16(port);
 }
- 
+
 static inline void outl(uint16_t port, uint32_t val) {
-    __asm__ volatile("outl %0, %1" : : "a"(val), "Nd"(port));
+    hal_io_out32(port, val);
 }
- 
+
 static inline uint32_t inl(uint16_t port) {
-    uint32_t ret;
-    __asm__ volatile("inl %1, %0" : "=a"(ret) : "Nd"(port));
-    return ret;
+    return hal_io_in32(port);
 }
  
 typedef enum {

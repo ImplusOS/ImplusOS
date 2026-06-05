@@ -538,7 +538,6 @@ static void handle_mouse_event(void)
             if (mouse_btn_pressed(INPUT_MOUSE_BTN_LEFT)) {
                 g_selected_idx = index;
             } else if (mouse_btn_pressed(INPUT_MOUSE_BTN_RIGHT)) {
-                // Right-click: Show context menu or kill process directly
                 int32_t target_pid = g_procs[index].pid;
                 if (target_pid == process_get_current_pid())
                     set_status("Cannot kill this process from within procman.");

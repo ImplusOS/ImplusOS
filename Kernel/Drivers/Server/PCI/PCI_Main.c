@@ -15,7 +15,22 @@ static const driver_binary_t *g_driver_api = NULL;
 
 #define outl g_driver_api->outl
 #define inl g_driver_api->inl
-#include "Core/sync/Spinlock.h"
+
+#define hal_cpu_pause               g_driver_api->hal.cpu_pause
+#define hal_cpu_save_interrupts     g_driver_api->hal.cpu_save_interrupts
+#define hal_cpu_restore_interrupts  g_driver_api->hal.cpu_restore_interrupts
+
+typedef struct { volatile int locked; } spinlock_t;
+static inline void spinlock_init(spinlock_t *l)   { l->locked = 0; }
+static inline void spinlock_lock(spinlock_t *l)   {
+    while (__sync_lock_test_and_set(&l->locked, 1)) {
+        while (l->locked) { hal_cpu_pause(); }
+    }
+}
+static inline void spinlock_unlock(spinlock_t *l) { __sync_lock_release(&l->locked); }
+
+static inline uint64_t irq_save_disable(void) { return hal_cpu_save_interrupts(); }
+static inline void irq_restore(uint64_t flags) { hal_cpu_restore_interrupts(flags); }
 #endif
 
 static spinlock_t g_pci_lock = {0};
@@ -189,7 +204,10 @@ const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
 {
     if (api == NULL ||
         api->outl == NULL ||
-        api->inl == NULL) {
+        api->inl == NULL ||
+        api->hal.cpu_pause == NULL ||
+        api->hal.cpu_save_interrupts == NULL ||
+        api->hal.cpu_restore_interrupts == NULL) {
         return NULL;
     }
 

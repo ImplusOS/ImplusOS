@@ -39,7 +39,7 @@ enabled by the UEFI firmware.
 
 ### 2.1 UEFI Bootloader (`BootLoader/Loader.c`)
 
-The bootloader is a UEFI application built with `gnu-efi`:
+The bootloader is a UEFI application built with `EDK2`:
 
 1. **GOP Initialization** — Queries `EFI_GRAPHICS_OUTPUT_PROTOCOL`, selects native resolution
 2. **Boot Logo** — Loads `Resource/Images/BootLogo.bmp` from the ESP, renders on framebuffer
