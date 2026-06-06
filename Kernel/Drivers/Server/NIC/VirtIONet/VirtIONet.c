@@ -5,12 +5,49 @@
 #include <stdbool.h>
 #include <string.h>
 
+#ifdef IMPLUS_DRIVER_MODULE
+#include "Drivers/Module/DriverBinary.h"
+#else
 #include "Drivers/Client/PCI/PCI_Main.h"
 #include "MemoryManagement/DMA_Memory.h"
 #include "MemoryManagement/Memory_Main.h"
 #include "mmu/Paging_Main.h"
 #include "Core/sync/Spinlock.h"
 #include "Debug/serial/Serial.h"
+#endif
+
+#ifdef IMPLUS_DRIVER_MODULE
+static const driver_binary_t *g_api = NULL;
+
+#define malloc             g_api->malloc
+#define free               g_api->free
+#define dma_alloc          g_api->dma_alloc
+#define dma_free           g_api->dma_free
+#define memset             g_api->memset
+#define memcpy             g_api->memcpy
+#define map_mmio_virt      g_api->map_mmio_virt
+#define pci_read_config    g_api->pci_read_config
+#define pci_write_config   g_api->pci_write_config
+#define serial_write_string g_api->serial_write_string
+
+#define hal_cpu_save_interrupts    g_api->hal.cpu_save_interrupts
+#define hal_cpu_restore_interrupts g_api->hal.cpu_restore_interrupts
+#define hal_cpu_pause             g_api->hal.cpu_pause
+
+typedef struct { volatile int locked; } spinlock_t;
+static inline void spinlock_init(spinlock_t *l)   { l->locked = 0; }
+static inline void spinlock_lock(spinlock_t *l)   {
+    while (__sync_lock_test_and_set(&l->locked, 1)) {
+        while (l->locked) { hal_cpu_pause(); }
+    }
+}
+static inline void spinlock_unlock(spinlock_t *l) { __sync_lock_release(&l->locked); }
+
+static inline uint64_t irq_save_disable(void) { return hal_cpu_save_interrupts(); }
+static inline void irq_restore(uint64_t flags) { hal_cpu_restore_interrupts(flags); }
+
+static inline bool dma_init(void) { return true; }
+#endif
 
 #define VIRTIO_VENDOR_ID              0x1AF4u
 #define VIRTIO_NET_DEVICE_ID_MODERN   0x1041u
@@ -905,3 +942,52 @@ void virtio_net_set_rx_callback(virtio_net_rx_callback_t cb)
     spinlock_unlock(&g_virtio_net_lock);
     irq_restore(irq_flags);
 }
+
+#ifdef IMPLUS_DRIVER_MODULE
+static const driver_nic_t g_virtio_net_driver = {
+    .init = virtio_net_init,
+    .is_ready = virtio_net_is_ready,
+    .mtu = virtio_net_mtu,
+    .get_mac = virtio_net_get_mac,
+    .send_frame = virtio_net_send,
+    .poll = virtio_net_poll,
+    .set_rx_callback = virtio_net_set_rx_callback,
+};
+
+static void virtio_net_shutdown(void)
+{
+    g_virtio_net_ready = 0;
+    g_api = NULL;
+}
+
+static const driver_module_descriptor_t g_virtio_net_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_NIC,
+    .load_priority = 50u,
+    .deps = { NULL },
+    .driver_api = &g_virtio_net_driver,
+    .shutdown = virtio_net_shutdown,
+};
+
+const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
+{
+    if (api == NULL ||
+        api->malloc == NULL ||
+        api->free == NULL ||
+        api->dma_alloc == NULL ||
+        api->memset == NULL ||
+        api->memcpy == NULL ||
+        api->map_mmio_virt == NULL ||
+        api->pci_read_config == NULL ||
+        api->pci_write_config == NULL ||
+        api->hal.cpu_save_interrupts == NULL ||
+        api->hal.cpu_restore_interrupts == NULL ||
+        api->hal.cpu_pause == NULL) {
+        return NULL;
+    }
+
+    g_api = api;
+    return &g_virtio_net_module;
+}
+#endif

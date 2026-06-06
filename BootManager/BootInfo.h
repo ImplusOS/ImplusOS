@@ -18,6 +18,7 @@ typedef unsigned long long EFI_PHYSICAL_ADDRESS;
 #define BOOT_DRIVE_TYPE_UNKNOWN 0
 #define BOOT_DRIVE_TYPE_IDE     1
 #define BOOT_DRIVE_TYPE_USB     2
+#define BOOT_DRIVE_TYPE_AHCI    3
 
 #define EFI_RESERVED_MEMORY_TYPE 0u
 #define EFI_CONVENTIONAL_MEMORY  7u

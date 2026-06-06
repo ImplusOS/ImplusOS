@@ -65,6 +65,7 @@ typedef enum {
 
 void usb_core_init(void);
 usb_hc_type_t usb_get_hc_type(void);
+usb_hc_type_t usb_get_device_hc_type(uint8_t addr);
 void usb_set_hc_type(usb_hc_type_t type);
 
 bool usb_control_transfer(uint8_t addr, uint8_t endpoint, uint16_t max_packet_size,

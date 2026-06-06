@@ -13,7 +13,6 @@
 #include "../Handoff.h"
 #include "../Math.h"
 
-
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
 #define STB_TRUETYPE_NO_STDIO
@@ -359,6 +358,25 @@ done:
     return Result;
 }
 
+static uint32_t GetDriveTypeFromDevicePath(EFI_DEVICE_PATH_PROTOCOL *DevicePath) {
+    uint32_t DriveType = BOOT_DRIVE_TYPE_UNKNOWN;
+    if (!DevicePath) return DriveType;
+
+    EFI_DEVICE_PATH_PROTOCOL *Node = DevicePath;
+    while (!IsDevicePathEnd(Node)) {
+        if (DevicePathType(Node) == 3) {
+            if (DevicePathSubType(Node) == 5 || DevicePathSubType(Node) == 15)
+                DriveType = BOOT_DRIVE_TYPE_USB;
+            else if (DevicePathSubType(Node) == 1)
+                DriveType = BOOT_DRIVE_TYPE_IDE;
+            else if (DevicePathSubType(Node) == 18)
+                DriveType = BOOT_DRIVE_TYPE_AHCI;
+        }
+        Node = NextDevicePathNode(Node);
+    }
+    return DriveType;
+}
+
 static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST, BOOT_INFO *BootInfo) {
     BootInfo->BootDriveType = BOOT_DRIVE_TYPE_UNKNOWN;
 
@@ -368,14 +386,10 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
         DeviceHandle, &gEfiDevicePathProtocolGuid, (VOID **)&DevicePath);
 
     if (!EFI_ERROR(Status) && DevicePath != NULL) {
+        BootInfo->BootDriveType = GetDriveTypeFromDevicePath(DevicePath);
+        
         EFI_DEVICE_PATH_PROTOCOL *Node = DevicePath;
         while (!IsDevicePathEnd(Node)) {
-            if (DevicePathType(Node) == 3) {
-                if (DevicePathSubType(Node) == 5)
-                    BootInfo->BootDriveType = BOOT_DRIVE_TYPE_USB;
-                else if (DevicePathSubType(Node) == 1 || DevicePathSubType(Node) == 18)
-                    BootInfo->BootDriveType = BOOT_DRIVE_TYPE_IDE;
-            }
             if (DevicePathType(Node) == 4 && DevicePathSubType(Node) == 1) {
                 HARDDRIVE_DEVICE_PATH *HD = (HARDDRIVE_DEVICE_PATH *)Node;
                 return HD->PartitionStart;
@@ -392,12 +406,31 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
 
     if (!EFI_ERROR(Status) && Handles != NULL) {
         for (UINTN i = 0; i < Count; i++) {
+            if (Handles[i] != DeviceHandle) continue;
             EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
             uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
                 Handles[i], &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
             if (!Bio || Bio->Media->LogicalPartition || Bio->Media->LastBlock < 200) continue;
             UINT64 Lba = ParseElToritoCatalog(Bio, ST);
             if (Lba) {
+                BootInfo->BootDriveType = GetDriveTypeFromDevicePath(DevicePath);
+                uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
+                return Lba;
+            }
+        }
+
+        for (UINTN i = 0; i < Count; i++) {
+            if (Handles[i] == DeviceHandle) continue;
+            EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
+            uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
+                Handles[i], &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
+            if (!Bio || Bio->Media->LogicalPartition || Bio->Media->LastBlock < 200) continue;
+            UINT64 Lba = ParseElToritoCatalog(Bio, ST);
+            if (Lba) {
+                EFI_DEVICE_PATH_PROTOCOL *DP = NULL;
+                uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
+                    Handles[i], &gEfiDevicePathProtocolGuid, (VOID **)&DP);
+                BootInfo->BootDriveType = GetDriveTypeFromDevicePath(DP);
                 uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
                 return Lba;
             }
@@ -410,16 +443,12 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
                 ST->BootServices->HandleProtocol, 3,
                 Handles[i], &gEfiDevicePathProtocolGuid, (VOID **)&DP);
             if (EFI_ERROR(Status) || !DP) continue;
+
             EFI_DEVICE_PATH_PROTOCOL *Node = DP;
             while (!IsDevicePathEnd(Node)) {
-                if (DevicePathType(Node) == 3) {
-                    if (DevicePathSubType(Node) == 5)
-                        BootInfo->BootDriveType = BOOT_DRIVE_TYPE_USB;
-                    else if (DevicePathSubType(Node) == 1 || DevicePathSubType(Node) == 18)
-                        BootInfo->BootDriveType = BOOT_DRIVE_TYPE_IDE;
-                }
                 if (DevicePathType(Node) == 4 && DevicePathSubType(Node) == 1) {
                     HARDDRIVE_DEVICE_PATH *HD = (HARDDRIVE_DEVICE_PATH *)Node;
+                    BootInfo->BootDriveType = GetDriveTypeFromDevicePath(DP);
                     uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
                     return HD->PartitionStart;
                 }
@@ -549,28 +578,29 @@ static EFI_STATUS LoadFromISO(EFI_SYSTEM_TABLE *ST, const char *IsoPath, VOID **
             }
 
             if (FoundPath && !CurIsDir) {
-                EFI_PHYSICAL_ADDRESS FileAddr = 0xFFFFFFFFULL;
+                EFI_PHYSICAL_ADDRESS FileAddr = 0;
                 Status = uefi_call_wrapper(ST->BootServices->AllocatePages, 4,
-                    AllocateMaxAddress, EfiLoaderData, EFI_SIZE_TO_PAGES(CurSize), &FileAddr);
+                    AllocateAnyPages, EfiLoaderData, EFI_SIZE_TO_PAGES(CurSize), &FileAddr);
                 if (!EFI_ERROR(Status)) {
                     VOID *FileBuf = (VOID *)(UINTN)FileAddr;
                     UINT32 Rem = CurSize;
                     UINT32 L   = CurLba;
                     UINT8 *D   = (UINT8 *)FileBuf;
 
+                    UINT32 ReadBytes = ((2048u + BS - 1u) / BS) * BS;
                     UINT8 *TempBuf = NULL;
-                    uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, 2048, (VOID **)&TempBuf);
+                    uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
+                        EfiLoaderData, ReadBytes, (VOID **)&TempBuf);
 
                     while (Rem > 0 && TempBuf) {
                         UINT64 StartByte   = (UINT64)L * 2048ULL;
                         UINT64 StartSector = StartByte / (UINT64)BS;
-                        UINT32 ReadBytes   = ((2048 + BS - 1) / BS) * BS;
 
                         Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
                             StartSector, ReadBytes, TempBuf);
                         if (EFI_ERROR(Status)) break;
 
-                        UINT32 Copy = (Rem < 2048) ? Rem : 2048;
+                        UINT32 Copy = (Rem < 2048u) ? Rem : 2048u;
                         memcpy(D, TempBuf, Copy);
                         D += Copy; Rem -= Copy; L++;
                     }
@@ -784,15 +814,93 @@ typedef struct {
     UINT64           fallback_span;
 } UEFI_ELF_ALLOC_CTX;
 
+static BOOLEAN IsReclaimableMemory(UINT32 Type)
+{
+    return (Type == EfiConventionalMemory   ||
+            Type == EfiBootServicesCode     ||
+            Type == EfiBootServicesData     ||
+            Type == EfiLoaderCode           ||
+            Type == EfiLoaderData);
+}
+
+static BOOLEAN IsRangeReclaimable(
+    EFI_SYSTEM_TABLE     *ST,
+    EFI_PHYSICAL_ADDRESS  Base,
+    UINTN                 Pages)
+{
+    UINTN                MapSize    = 0;
+    UINTN                MapKey     = 0;
+    UINTN                DescSize   = 0;
+    UINT32               DescVer    = 0;
+    EFI_STATUS           Status;
+
+    Status = uefi_call_wrapper(ST->BootServices->GetMemoryMap, 5,
+        &MapSize, NULL, &MapKey, &DescSize, &DescVer);
+    if (Status != EFI_BUFFER_TOO_SMALL || MapSize == 0 || DescSize == 0)
+        return FALSE;
+
+    MapSize += DescSize * 8;
+    EFI_MEMORY_DESCRIPTOR *Map = NULL;
+    Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
+        EfiLoaderData, MapSize, (VOID **)&Map);
+    if (EFI_ERROR(Status) || !Map)
+        return FALSE;
+
+    Status = uefi_call_wrapper(ST->BootServices->GetMemoryMap, 5,
+        &MapSize, Map, &MapKey, &DescSize, &DescVer);
+    if (EFI_ERROR(Status)) {
+        uefi_call_wrapper(ST->BootServices->FreePool, 1, Map);
+        return FALSE;
+    }
+
+    EFI_PHYSICAL_ADDRESS RangeEnd = Base + (EFI_PHYSICAL_ADDRESS)(Pages * EFI_PAGE_SIZE);
+
+    EFI_PHYSICAL_ADDRESS Covered = Base;
+    UINTN                EntryCount = MapSize / DescSize;
+
+    for (UINTN i = 0; i < EntryCount && Covered < RangeEnd; ++i) {
+        EFI_MEMORY_DESCRIPTOR *Desc =
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Map + i * DescSize);
+
+        EFI_PHYSICAL_ADDRESS DescStart = Desc->PhysicalStart;
+        EFI_PHYSICAL_ADDRESS DescEnd   = DescStart +
+            (EFI_PHYSICAL_ADDRESS)(Desc->NumberOfPages * EFI_PAGE_SIZE);
+            
+        if (DescEnd <= Base || DescStart >= RangeEnd)
+            continue;
+
+        if (!IsReclaimableMemory(Desc->Type)) {
+            uefi_call_wrapper(ST->BootServices->FreePool, 1, Map);
+            return FALSE;
+        }
+
+        if (DescStart <= Covered)
+            Covered = DescEnd;
+    }
+
+    uefi_call_wrapper(ST->BootServices->FreePool, 1, Map);
+
+    return (Covered >= RangeEnd);
+}
+
 static void *UefiElfAllocAt(uint64_t address, size_t pages, void *ctx)
 {
-    UEFI_ELF_ALLOC_CTX *AllocCtx = (UEFI_ELF_ALLOC_CTX *)ctx;
-    EFI_PHYSICAL_ADDRESS Requested = (EFI_PHYSICAL_ADDRESS)address;
+    UEFI_ELF_ALLOC_CTX   *AllocCtx = (UEFI_ELF_ALLOC_CTX *)ctx;
+    EFI_PHYSICAL_ADDRESS  Requested = (EFI_PHYSICAL_ADDRESS)address;
+
     EFI_STATUS Status = uefi_call_wrapper(
         AllocCtx->ST->BootServices->AllocatePages, 4,
         AllocateAddress, EfiLoaderData, (UINTN)pages, &Requested);
-    if (EFI_ERROR(Status)) return NULL;
-    return (void *)(UINTN)Requested;
+    if (!EFI_ERROR(Status))
+        return (void *)(UINTN)Requested;
+
+    if (IsRangeReclaimable(AllocCtx->ST,
+                           (EFI_PHYSICAL_ADDRESS)address,
+                           (UINTN)pages)) {
+        return (void *)(UINTN)address;
+    }
+
+    return NULL;
 }
 
 static void *UefiElfAllocAny(size_t pages, uint64_t *phys_out, void *ctx)
@@ -800,17 +908,58 @@ static void *UefiElfAllocAny(size_t pages, uint64_t *phys_out, void *ctx)
     UEFI_ELF_ALLOC_CTX *AllocCtx = (UEFI_ELF_ALLOC_CTX *)ctx;
     UINT64 Span = (UINT64)pages * EFI_PAGE_SIZE;
     AllocCtx->fallback_span = Span;
-    for (EFI_PHYSICAL_ADDRESS Candidate = 0x01000000ULL;
-         Candidate + Span <= 0x80000000ULL;
-         Candidate += 0x00200000ULL) {
-        EFI_PHYSICAL_ADDRESS Requested = Candidate;
-        EFI_STATUS Status = uefi_call_wrapper(
-            AllocCtx->ST->BootServices->AllocatePages, 4,
-            AllocateAddress, EfiLoaderData, (UINTN)pages, &Requested);
-        if (!EFI_ERROR(Status)) {
-            if (phys_out) *phys_out = (uint64_t)Requested;
-            return (void *)(UINTN)Requested;
+
+    UINTN  MapSize  = 0, MapKey = 0, DescSize = 0;
+    UINT32 DescVer  = 0;
+    EFI_STATUS Status = uefi_call_wrapper(AllocCtx->ST->BootServices->GetMemoryMap, 5,
+        &MapSize, NULL, &MapKey, &DescSize, &DescVer);
+    if (Status == EFI_BUFFER_TOO_SMALL && MapSize > 0 && DescSize > 0) {
+        MapSize += DescSize * 8;
+        EFI_MEMORY_DESCRIPTOR *Map = NULL;
+        Status = uefi_call_wrapper(AllocCtx->ST->BootServices->AllocatePool, 3,
+            EfiLoaderData, MapSize, (VOID **)&Map);
+        if (!EFI_ERROR(Status) && Map) {
+            Status = uefi_call_wrapper(AllocCtx->ST->BootServices->GetMemoryMap, 5,
+                &MapSize, Map, &MapKey, &DescSize, &DescVer);
+            if (!EFI_ERROR(Status)) {
+                UINTN Count = MapSize / DescSize;
+                for (UINTN i = 0; i < Count; i++) {
+                    EFI_MEMORY_DESCRIPTOR *D =
+                        (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Map + i * DescSize);
+                    if (D->Type != EfiConventionalMemory) continue;
+
+                    EFI_PHYSICAL_ADDRESS RegionStart = D->PhysicalStart;
+                    EFI_PHYSICAL_ADDRESS RegionEnd   =
+                        RegionStart + (EFI_PHYSICAL_ADDRESS)(D->NumberOfPages * EFI_PAGE_SIZE);
+
+                    for (EFI_PHYSICAL_ADDRESS Candidate =
+                             (RegionStart + 0xFFFFF) & ~(EFI_PHYSICAL_ADDRESS)0xFFFFF;
+                         Candidate + Span <= RegionEnd;
+                         Candidate += 0x00100000ULL)
+                    {
+                        EFI_PHYSICAL_ADDRESS Requested = Candidate;
+                        Status = uefi_call_wrapper(
+                            AllocCtx->ST->BootServices->AllocatePages, 4,
+                            AllocateAddress, EfiLoaderData, (UINTN)pages, &Requested);
+                        if (!EFI_ERROR(Status)) {
+                            uefi_call_wrapper(AllocCtx->ST->BootServices->FreePool, 1, Map);
+                            if (phys_out) *phys_out = (uint64_t)Requested;
+                            return (void *)(UINTN)Requested;
+                        }
+                    }
+                }
+            }
+            uefi_call_wrapper(AllocCtx->ST->BootServices->FreePool, 1, Map);
         }
+    }
+
+    EFI_PHYSICAL_ADDRESS AnyAddr = 0;
+    Status = uefi_call_wrapper(
+        AllocCtx->ST->BootServices->AllocatePages, 4,
+        AllocateAnyPages, EfiLoaderData, (UINTN)pages, &AnyAddr);
+    if (!EFI_ERROR(Status)) {
+        if (phys_out) *phys_out = (uint64_t)AnyAddr;
+        return (void *)(UINTN)AnyAddr;
     }
     return NULL;
 }
@@ -818,6 +967,7 @@ static void *UefiElfAllocAny(size_t pages, uint64_t *phys_out, void *ctx)
 static void UefiElfFree(uint64_t address, size_t pages, void *ctx)
 {
     UEFI_ELF_ALLOC_CTX *AllocCtx = (UEFI_ELF_ALLOC_CTX *)ctx;
+
     uefi_call_wrapper(AllocCtx->ST->BootServices->FreePages, 2,
                       (EFI_PHYSICAL_ADDRESS)address, (UINTN)pages);
 }
@@ -828,25 +978,41 @@ EFI_STATUS LoadKernelELF(
     UINTN             KernelImageSize,
     UINT64           *EntryPoint
 ) {
+    if (!KernelImage || KernelImageSize < sizeof(Elf64_Ehdr) || !EntryPoint)
+        return EFI_INVALID_PARAMETER;
+
+    *EntryPoint = 0;
+
+    VOID *ImageCopy = NULL;
+    EFI_STATUS Status = uefi_call_wrapper(
+        ST->BootServices->AllocatePool, 3,
+        EfiLoaderData, KernelImageSize, &ImageCopy);
+    if (EFI_ERROR(Status) || !ImageCopy) {
+        return EFI_OUT_OF_RESOURCES;
+    }
+
+    memcpy(ImageCopy, KernelImage, KernelImageSize);
+
     UEFI_ELF_ALLOC_CTX AllocCtx = { .ST = ST, .fallback_span = 0 };
     boot_elf_load_request_t Req = {
-        .image = KernelImage,
-        .image_size = (size_t)KernelImageSize,
-#if defined(__aarch64__)
-        .arch = BOOT_ELF_ARCH_AARCH64,
-#else
-        .arch = BOOT_ELF_ARCH_X86_64,
-#endif
+        .image            = ImageCopy,
+        .image_size       = (size_t)KernelImageSize,
+        .arch             = BOOT_ELF_ARCH_AUTO,
         .dynamic_anywhere = 1,
-        .alloc_pages_at = UefiElfAllocAt,
-        .alloc_pages_any = UefiElfAllocAny,
-        .free_pages = UefiElfFree,
-        .ctx = &AllocCtx,
+        .alloc_pages_at   = UefiElfAllocAt,
+        .alloc_pages_any  = UefiElfAllocAny,
+        .free_pages       = UefiElfFree,
+        .ctx              = &AllocCtx,
     };
     boot_elf_load_result_t Result;
-    if (boot_elf_load64(&Req, &Result) != 0) {
+
+    int rc = boot_elf_load64(&Req, &Result);
+
+    uefi_call_wrapper(ST->BootServices->FreePool, 1, ImageCopy);
+
+    if (rc != 0)
         return EFI_LOAD_ERROR;
-    }
+
     *EntryPoint = Result.entry;
     return EFI_SUCCESS;
 }
@@ -922,6 +1088,7 @@ EFI_STATUS ExitBootServicesComplete(
     EFI_SYSTEM_TABLE *ST,
     BOOT_INFO        *BootInfo
 ) {
+    Print(L"On ExitBootServices");
     UINTN      MapKey;
     UINTN      BufferSize;
     EFI_STATUS Status;
@@ -931,12 +1098,17 @@ EFI_STATUS ExitBootServicesComplete(
         Status = uefi_call_wrapper(ST->BootServices->GetMemoryMap, 5,
             &BufferSize, NULL, &MapKey,
             &BootInfo->MemoryMapDescriptorSize, &BootInfo->MemoryMapDescriptorVersion);
-        if (Status != EFI_BUFFER_TOO_SMALL) return Status;
+        if (Status != EFI_BUFFER_TOO_SMALL) {
+            return Status;
+        }
 
         BufferSize += BootInfo->MemoryMapDescriptorSize * 8;
         Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
             EfiLoaderData, BufferSize, (VOID **)&BootInfo->MemoryMap);
-        if (EFI_ERROR(Status)) return Status;
+        Print(L"AllocatePool");
+        if (EFI_ERROR(Status)) {
+            return Status;
+        }
 
         Status = uefi_call_wrapper(ST->BootServices->GetMemoryMap, 5,
             &BufferSize, (EFI_MEMORY_DESCRIPTOR *)(UINTN)BootInfo->MemoryMap, &MapKey,
@@ -1313,10 +1485,13 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
         Status = LoadFromISO(ST, "Kernel/Kernel_Main.ELF", &KernelBuffer, &KernelSize);
     }
 
-    Status = LoadKernelELF(ST, KernelBuffer, KernelSize, &KernelEntry);
+    EFI_STATUS LoadStatus = LoadKernelELF(ST, KernelBuffer, KernelSize, &KernelEntry);
 
-    uefi_call_wrapper(ST->BootServices->FreePages, 2,
-        (EFI_PHYSICAL_ADDRESS)(UINTN)KernelBuffer, EFI_SIZE_TO_PAGES(KernelSize));
+    if (EFI_ERROR(LoadStatus) || KernelEntry == 0) {
+        while (1) {
+            uefi_call_wrapper(ST->BootServices->Stall, 1, 1000000);
+        }
+    }
 
     if (KernelRoot) {
         Status = PreloadDriverModules(ST, KernelRoot, &BootInfo);

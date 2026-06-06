@@ -1,12 +1,34 @@
 #include "USB_HID.h"
 #include "../USB_Main.h"
 #include "Drivers/Module/DriverBinary.h"
+
+extern const driver_binary_t *g_api;
+
+#ifdef IMPLUS_DRIVER_MODULE
+#define hal_cpu_save_interrupts    g_api->hal.cpu_save_interrupts
+#define hal_cpu_restore_interrupts g_api->hal.cpu_restore_interrupts
+#define hal_cpu_pause             g_api->hal.cpu_pause
+
+typedef struct { volatile int locked; } spinlock_t;
+static inline void spinlock_init(spinlock_t *l)   { l->locked = 0; }
+static inline void spinlock_lock(spinlock_t *l)   {
+    while (__sync_lock_test_and_set(&l->locked, 1)) {
+        while (l->locked) { hal_cpu_pause(); }
+    }
+}
+static inline void spinlock_unlock(spinlock_t *l) { __sync_lock_release(&l->locked); }
+
+static inline uint64_t irq_save_disable(void) { return hal_cpu_save_interrupts(); }
+static inline void irq_restore(uint64_t flags) { hal_cpu_restore_interrupts(flags); }
+#else
 #include "Core/sync/Spinlock.h"
+#include "interfaces/hal_cpu.h"
+#endif
+
 #include "kernel/keycodes.h"
 #include "kernel/input_utils.h"
 
 #define USB_HID_QUEUE_SIZE 64
-extern const driver_binary_t *g_api;
 
 static const uint16_t hid_to_ps2_set1[256] = {
     [0x04] = KEY_A, [0x05] = KEY_B, [0x06] = KEY_C, [0x07] = KEY_D,
@@ -69,6 +91,11 @@ static uint8_t  g_last_mouse_buttons = 0;
 
 static uint32_t g_mouse_poll_count = 0;
 
+static uint32_t g_kbd_poll_timer = 0;
+static uint32_t g_mouse_poll_timer = 0;
+
+extern usb_hc_type_t usb_get_device_hc_type(uint8_t addr);
+
 void usb_hid_init(void)
 {
     g_usd_kbd.valid     = false;
@@ -106,30 +133,18 @@ void usb_hid_add_keyboard(uint8_t dev_addr, uint8_t interface,
     g_usd_kbd.interface = interface;
     g_usd_kbd.ep_in     = ep_in;
     g_usd_kbd.mps       = mps;
-    g_usd_kbd.hc_type   = usb_get_hc_type();
+    g_usd_kbd.hc_type   = usb_get_device_hc_type(dev_addr);
+    if (g_usd_kbd.hc_type == USB_HC_NONE) g_usd_kbd.hc_type = usb_get_hc_type();
 
-    usb_device_request_t req;
-    req.bmRequestType = 0x21; req.bRequest = 0x0B;
-    req.wValue = 0; req.wIndex = interface; req.wLength = 0;
-    usb_control_transfer(dev_addr, 0, 8, &req, NULL);
-
-    req.bRequest = 0x0A;
-    usb_control_transfer(dev_addr, 0, 8, &req, NULL);
-
-    g_usd_kbd.valid = true;
+    usb_submit_control(dev_addr, 0x21, 0x0B, 0, interface, 0, NULL);
+    usb_submit_control(dev_addr, 0x21, 0x0A, 0, interface, 0, NULL);
 
     if (!hid_alloc_dma(&g_usd_kbd)) {
         return;
     }
 
-    if (g_usd_kbd.hc_type == 4) {
-        bool submit_ok = usb_submit_interrupt_in_async(dev_addr, ep_in,
-                                                        g_usd_kbd.mps,
-                                                        g_usd_kbd.dma_buf, g_usd_kbd.dma_phys, 8);
-        if (submit_ok) {
-            g_usd_kbd.pending = true;
-        }
-    }
+    g_usd_kbd.valid = true;
+    g_usd_kbd.pending = false;
 }
 
 void usb_hid_add_mouse(uint8_t dev_addr, uint8_t interface,
@@ -139,30 +154,18 @@ void usb_hid_add_mouse(uint8_t dev_addr, uint8_t interface,
     g_usd_mouse.interface = interface;
     g_usd_mouse.ep_in     = ep_in;
     g_usd_mouse.mps       = mps;
-    g_usd_mouse.hc_type   = usb_get_hc_type();
+    g_usd_mouse.hc_type   = usb_get_device_hc_type(dev_addr);
+    if (g_usd_mouse.hc_type == USB_HC_NONE) g_usd_mouse.hc_type = usb_get_hc_type();
 
-    usb_device_request_t req;
-    req.bmRequestType = 0x21; req.bRequest = 0x0B;
-    req.wValue = 0; req.wIndex = interface; req.wLength = 0;
-    usb_control_transfer(dev_addr, 0, 8, &req, NULL);
-
-    req.bRequest = 0x0A;
-    usb_control_transfer(dev_addr, 0, 8, &req, NULL);
-
-    g_usd_mouse.valid = true;
+    usb_submit_control(dev_addr, 0x21, 0x0B, 0, interface, 0, NULL);
+    usb_submit_control(dev_addr, 0x21, 0x0A, 0, interface, 0, NULL);
 
     if (!hid_alloc_dma(&g_usd_mouse)) {
         return;
     }
 
-    if (g_usd_mouse.hc_type == 4) {
-        bool submit_ok = usb_submit_interrupt_in_async(dev_addr, ep_in,
-                                                        g_usd_mouse.mps,
-                                                        g_usd_mouse.dma_buf, g_usd_mouse.dma_phys, 4);
-        if (submit_ok) {
-            g_usd_mouse.pending = true;
-        }
-    }
+    g_usd_mouse.valid = true;
+    g_usd_mouse.pending = false;
 }
 
 static void push_kbd_event(uint16_t hid_keycode, uint8_t pressed, uint8_t modifiers)
@@ -242,20 +245,37 @@ static void poll_keyboard(void)
 {
     if (!g_usd_kbd.valid || !g_usd_kbd.dma_buf) return;
 
-    if (g_usd_kbd.hc_type == 4) {
-        int event_code = usb_check_interrupt_event(g_usd_kbd.dev_addr, g_usd_kbd.ep_in);
-        
-        if (event_code > 0) {
-            process_kbd_report((uint8_t *)g_usd_kbd.dma_buf);
+    if (g_usd_kbd.hc_type == USB_HC_XHCI) {
+        if (!g_usd_kbd.pending) {
             if (usb_submit_interrupt_in_async(g_usd_kbd.dev_addr, g_usd_kbd.ep_in,
                                               g_usd_kbd.mps,
                                               g_usd_kbd.dma_buf, g_usd_kbd.dma_phys, 8)) {
                 g_usd_kbd.pending = true;
             }
+            return;
+        }
+
+        int event_code = usb_check_interrupt_event(g_usd_kbd.dev_addr, g_usd_kbd.ep_in);
+        
+        if (event_code != 0) {
+            if (event_code > 0) {
+                process_kbd_report((uint8_t *)g_usd_kbd.dma_buf);
+            }
+            if (usb_submit_interrupt_in_async(g_usd_kbd.dev_addr, g_usd_kbd.ep_in,
+                                              g_usd_kbd.mps,
+                                              g_usd_kbd.dma_buf, g_usd_kbd.dma_phys, 8)) {
+                g_usd_kbd.pending = true;
+            } else {
+                g_usd_kbd.pending = false;
+            }
         }
     } else {
-        if (hid_sync_interrupt_in(&g_usd_kbd, 8)) {
-            process_kbd_report((uint8_t *)g_usd_kbd.dma_buf);
+        g_kbd_poll_timer++;
+        if (g_kbd_poll_timer >= 10) {
+            g_kbd_poll_timer = 0;
+            if (hid_sync_interrupt_in(&g_usd_kbd, 8)) {
+                process_kbd_report((uint8_t *)g_usd_kbd.dma_buf);
+            }
         }
     }
 }
@@ -293,22 +313,37 @@ static void poll_mouse(void)
 {
     if (!g_usd_mouse.valid || !g_usd_mouse.dma_buf) return;
 
-    g_mouse_poll_count++;
-    
-    if (g_usd_mouse.hc_type == 4) {
-        int event_code = usb_check_interrupt_event(g_usd_mouse.dev_addr, g_usd_mouse.ep_in);
-        
-        if (event_code > 0) {
-            process_mouse_report((uint8_t *)g_usd_mouse.dma_buf);
+    if (g_usd_mouse.hc_type == USB_HC_XHCI) {
+        if (!g_usd_mouse.pending) {
             if (usb_submit_interrupt_in_async(g_usd_mouse.dev_addr, g_usd_mouse.ep_in,
                                               g_usd_mouse.mps,
                                               g_usd_mouse.dma_buf, g_usd_mouse.dma_phys, 4)) {
                 g_usd_mouse.pending = true;
             }
+            return;
+        }
+
+        int event_code = usb_check_interrupt_event(g_usd_mouse.dev_addr, g_usd_mouse.ep_in);
+        
+        if (event_code != 0) {
+            if (event_code > 0) {
+                process_mouse_report((uint8_t *)g_usd_mouse.dma_buf);
+            }
+            if (usb_submit_interrupt_in_async(g_usd_mouse.dev_addr, g_usd_mouse.ep_in,
+                                              g_usd_mouse.mps,
+                                              g_usd_mouse.dma_buf, g_usd_mouse.dma_phys, 4)) {
+                g_usd_mouse.pending = true;
+            } else {
+                g_usd_mouse.pending = false;
+            }
         }
     } else {
-        if (hid_sync_interrupt_in(&g_usd_mouse, 4)) {
-            process_mouse_report((uint8_t *)g_usd_mouse.dma_buf);
+        g_mouse_poll_timer++;
+        if (g_mouse_poll_timer >= 10) {
+            g_mouse_poll_timer = 0;
+            if (hid_sync_interrupt_in(&g_usd_mouse, 4)) {
+                process_mouse_report((uint8_t *)g_usd_mouse.dma_buf);
+            }
         }
     }
 }

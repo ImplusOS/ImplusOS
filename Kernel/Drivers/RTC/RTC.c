@@ -1,5 +1,16 @@
 #include "RTC.h"
+
+#ifdef IMPLUS_DRIVER_MODULE
+#include "Drivers/Module/DriverBinary.h"
+#else
 #include "Platform/io/IO_Main.h"
+#endif
+
+#ifdef IMPLUS_DRIVER_MODULE
+static const driver_binary_t *g_api = NULL;
+#define outb g_api->outb
+#define inb g_api->inb
+#endif
 
 #define CMOS_ADDR 0x70
 #define CMOS_DATA 0x71
@@ -48,3 +59,29 @@ void rtc_read_time(rtc_time_t *time) {
     time->month  = month;
     time->year   = (uint16_t)(2000 + year);
 }
+
+#ifdef IMPLUS_DRIVER_MODULE
+static void rtc_shutdown(void)
+{
+    g_api = NULL;
+}
+
+static const driver_module_descriptor_t g_rtc_module = {
+    .magic = DRIVER_DESCRIPTOR_MAGIC,
+    .version = DRIVER_DESCRIPTOR_VERSION,
+    .kind = DEVICE_TYPE_UNKNOWN,
+    .load_priority = 100u,
+    .deps = { NULL },
+    .driver_api = NULL,
+    .shutdown = rtc_shutdown,
+};
+
+const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
+{
+    if (api == NULL || api->inb == NULL || api->outb == NULL) {
+        return NULL;
+    }
+    g_api = api;
+    return &g_rtc_module;
+}
+#endif

@@ -125,9 +125,6 @@ static inline uint32_t iso9660_read_u32_both(const uint8_t *p) {
 
 static bool iso9660_read_sector(uint32_t lba, uint8_t *buffer) {
     uint32_t base = g_iso_partition_lba + lba * (ISO9660_SECTOR_SIZE / 512u);
-    serial_write_string("Read LBA=");
-    serial_write_uint32(base);
-    serial_write_string("\n");
     return disk_read(base, buffer, ISO9660_SECTOR_SIZE / 512u);
 }
 
@@ -306,7 +303,6 @@ static bool iso9660_scan_descriptors(ISO9660_CONTEXT *ctx) {
     
     for (uint32_t lba = 16u; lba < 32u; lba++) {
         if (!iso9660_read_sector(lba, g_iso_sector_buffer)) {
-            serial_write_string("READ FAIL\n");
             break;
         }
 
@@ -333,19 +329,6 @@ static bool iso9660_scan_descriptors(ISO9660_CONTEXT *ctx) {
             }
         }
     }
-
-    serial_write_string("type=");
-    serial_write_uint32(g_iso_sector_buffer[0]);
-
-    serial_write_string(" version=");
-    serial_write_uint32(g_iso_sector_buffer[6]);
-
-    serial_write_string("\n");
-
-    serial_write_string("magic=");
-    for (int i=1;i<6;i++)
-        serial_write_uint32(g_iso_sector_buffer[i]);
-    serial_write_string("\n");
 
     return found_pvd;
 }
@@ -519,12 +502,8 @@ static bool _iso9660_init(void) {
     g_iso_partition_lba = disk_get_partition_lba();
     memset(&g_iso_context, 0, sizeof(g_iso_context));
 
-    serial_write_string("[ISO9660] Starting initialization...\n");
-    serial_write_uint32(g_iso_partition_lba);
-
     if (iso9660_scan_descriptors(&g_iso_context)) {
         iso9660_detect_rock_ridge(&g_iso_context);
-        serial_write_string("[ISO9660] Initialization successful.\n");
         return true;
     }
 
@@ -813,13 +792,16 @@ static const driver_module_descriptor_t g_iso9660_module = {
     .shutdown   = iso9660_driver_shutdown,
 };
 
+#undef hal_cpu_pause
+#undef hal_cpu_save_interrupts
+#undef hal_cpu_restore_interrupts
 #undef disk_read
 #undef disk_write
 #undef disk_get_partition_lba
-#undef memset
-#undef memcpy
 #undef serial_write_string
 #undef serial_write_uint32
+#undef memset
+#undef memcpy
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api) {
     if (!api || !api->disk_read || !api->disk_get_partition_lba ||

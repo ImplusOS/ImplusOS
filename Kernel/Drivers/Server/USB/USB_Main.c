@@ -36,10 +36,12 @@ static uint16_t g_hid_mouse_ep_mps    = 0;
 static usb_hc_type_t g_hc_type = USB_HC_NONE;
 static bool g_ohci_ready = false;
 static usb_hc_type_t g_dev_hc[256];
+static uint16_t g_dev_ep0_mps[256] = {0};
 static usb_hc_type_t g_default_hc = USB_HC_NONE;
 static bool g_uhci_ready = false;
 
 usb_hc_type_t usb_get_hc_type(void) { return g_hc_type; }
+usb_hc_type_t usb_get_device_hc_type(uint8_t addr) { return g_dev_hc[addr]; }
 
 static void usb_wait_ms(usb_hc_type_t hc, uint32_t ms)
 {
@@ -59,7 +61,13 @@ bool usb_submit_control(uint8_t addr,
     req.wValue        = wValue;
     req.wIndex        = wIndex;
     req.wLength       = wLength;
-    return usb_control_transfer(addr, 0, 64, &req, data);
+    
+    usb_hc_type_t hc = (addr == 0) ? g_default_hc : g_dev_hc[addr];
+    if (hc == USB_HC_NONE) hc = usb_get_hc_type();
+    uint16_t mps = (addr == 0) ? ((hc == USB_HC_EHCI || hc == USB_HC_XHCI) ? 64 : 8) : g_dev_ep0_mps[addr];
+    if (mps == 0) mps = 8;
+    
+    return usb_control_transfer(addr, 0, mps, &req, data);
 }
 
 #define USB_DESC_HUB 0x29
@@ -217,7 +225,10 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
         uint16_t ep0_mps = usb_device_max_packet_size(desc.bMaxPacketSize0);
         xhci_evaluate_ep0_mps(current_addr, ep0_mps);
         max_packet_size = ep0_mps;
+    } else {
+        max_packet_size = usb_device_max_packet_size(desc.bMaxPacketSize0);
     }
+    g_dev_ep0_mps[current_addr] = max_packet_size;
 
     uint8_t conf_buf[256];
     usb_device_request_t req;
@@ -225,7 +236,7 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
     req.bRequest      = USB_REQ_GET_DESCRIPTOR;
     req.wValue        = (USB_DESC_CONFIGURATION << 8) | 0;
     req.wIndex        = 0;
-    req.wLength       = sizeof(conf_buf);
+    req.wLength       = 9;
 
     bool is_hub = (desc.bDeviceClass == 9);
     uint8_t current_iface = 0xFF;
@@ -245,56 +256,59 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
     uint16_t mouse_ep_mps = 0;
 
     if (usb_control_transfer(current_addr, 0, max_packet_size, &req, conf_buf)) {
-        uint32_t total_len = usb_le16(&conf_buf[2]);
+        uint16_t total_len = usb_le16(&conf_buf[2]);
         if (total_len > sizeof(conf_buf)) total_len = sizeof(conf_buf);
+        
+        req.wLength = total_len;
+        if (usb_control_transfer(current_addr, 0, max_packet_size, &req, conf_buf)) {
+            for (uint32_t pos = 0; pos + 2 <= total_len;) {
+                uint8_t len = conf_buf[pos];
+                uint8_t type = conf_buf[pos + 1];
 
-        for (uint32_t pos = 0; pos + 2 <= total_len;) {
-            uint8_t len = conf_buf[pos];
-            uint8_t type = conf_buf[pos + 1];
+                if (len == 0 || pos + len > total_len) {
+                    break;
+                }
 
-            if (len == 0 || pos + len > total_len) {
-                break;
-            }
+                if (type == USB_DESC_INTERFACE && len >= 9) {
+                    current_iface = conf_buf[pos + 2];
+                    uint8_t iface_class = conf_buf[pos + 5];
+                    uint8_t iface_protocol = conf_buf[pos + 7];
 
-            if (type == USB_DESC_INTERFACE && len >= 9) {
-                current_iface = conf_buf[pos + 2];
-                uint8_t iface_class = conf_buf[pos + 5];
-                uint8_t iface_protocol = conf_buf[pos + 7];
+                    if (iface_class == 9) {
+                        is_hub = true;
+                    } else if (iface_class == 0x08) {
+                        mass_iface = current_iface;
+                    } else if (iface_class == 0x03) {
+                        if (iface_protocol == 1) {
+                            kbd_iface = current_iface;
+                        } else if (iface_protocol == 2) {
+                            mouse_iface = current_iface;
+                        }
+                    }
+                } else if (type == USB_DESC_ENDPOINT && len >= 7 && current_iface != 0xFF) {
+                    uint8_t ep_addr = conf_buf[pos + 2];
+                    uint8_t attributes = conf_buf[pos + 3];
+                    uint16_t mps = usb_le16(&conf_buf[pos + 4]);
 
-                if (iface_class == 9) {
-                    is_hub = true;
-                } else if (iface_class == 0x08) {
-                    mass_iface = current_iface;
-                } else if (iface_class == 0x03) {
-                    if (iface_protocol == 1) {
-                        kbd_iface = current_iface;
-                    } else if (iface_protocol == 2) {
-                        mouse_iface = current_iface;
+                    if (mass_iface != 0xFF && current_iface == mass_iface && (attributes & 0x03u) == 2) {
+                        if (ep_addr & 0x80u) {
+                            mass_ep_in = ep_addr & 0x7Fu;
+                            mass_ep_in_mps = mps;
+                        } else {
+                            mass_ep_out = ep_addr & 0x7Fu;
+                            mass_ep_out_mps = mps;
+                        }
+                    } else if (kbd_iface != 0xFF && current_iface == kbd_iface && (attributes & 0x03u) == 3 && (ep_addr & 0x80u)) {
+                        kbd_ep_in = ep_addr & 0x7Fu;
+                        kbd_ep_mps = mps;
+                    } else if (mouse_iface != 0xFF && current_iface == mouse_iface && (attributes & 0x03u) == 3 && (ep_addr & 0x80u)) {
+                        mouse_ep_in = ep_addr & 0x7Fu;
+                        mouse_ep_mps = mps;
                     }
                 }
-            } else if (type == USB_DESC_ENDPOINT && len >= 7 && current_iface != 0xFF) {
-                uint8_t ep_addr = conf_buf[pos + 2];
-                uint8_t attributes = conf_buf[pos + 3];
-                uint16_t mps = usb_le16(&conf_buf[pos + 4]);
 
-                if (mass_iface != 0xFF && current_iface == mass_iface && (attributes & 0x03u) == 2) {
-                    if (ep_addr & 0x80u) {
-                        mass_ep_in = ep_addr & 0x7Fu;
-                        mass_ep_in_mps = mps;
-                    } else {
-                        mass_ep_out = ep_addr & 0x7Fu;
-                        mass_ep_out_mps = mps;
-                    }
-                } else if (kbd_iface != 0xFF && current_iface == kbd_iface && (attributes & 0x03u) == 3 && (ep_addr & 0x80u)) {
-                    kbd_ep_in = ep_addr & 0x7Fu;
-                    kbd_ep_mps = mps;
-                } else if (mouse_iface != 0xFF && current_iface == mouse_iface && (attributes & 0x03u) == 3 && (ep_addr & 0x80u)) {
-                    mouse_ep_in = ep_addr & 0x7Fu;
-                    mouse_ep_mps = mps;
-                }
+                pos += len;
             }
-
-            pos += len;
         }
     }
 
@@ -441,6 +455,11 @@ void usb_core_init(void)
     g_hid_mouse_ep_in = 0;
     g_hid_mouse_ep_mps = 0;
 
+    for (uint32_t i = 0; i < 256u; ++i) {
+        g_dev_hc[i] = USB_HC_NONE;
+        g_dev_ep0_mps[i] = 8;
+    }
+
     usb_hc_type_t hc_types[] = { USB_HC_XHCI, USB_HC_EHCI, USB_HC_OHCI, USB_HC_UHCI };
 
     for (int t = 0; t < 4; t++) {
@@ -568,7 +587,13 @@ bool usb_set_address(uint8_t old_addr, uint8_t new_addr) {
     req.wValue        = new_addr;
     req.wIndex        = 0;
     req.wLength       = 0;
-    return usb_control_transfer(old_addr, 0, 64, &req, NULL);
+    
+    usb_hc_type_t hc = (old_addr == 0) ? g_default_hc : g_dev_hc[old_addr];
+    if (hc == USB_HC_NONE) hc = usb_get_hc_type();
+    uint16_t mps = (old_addr == 0) ? ((hc == USB_HC_EHCI || hc == USB_HC_XHCI) ? 64 : 8) : g_dev_ep0_mps[old_addr];
+    if (mps == 0) mps = 8;
+    
+    return usb_control_transfer(old_addr, 0, mps, &req, NULL);
 }
 
 bool usb_submit_interrupt_in_async(uint8_t addr, uint8_t ep_num,
@@ -617,9 +642,12 @@ bool usb_get_device_descriptor(uint8_t addr, usb_device_descriptor_t *desc) {
     req.wValue        = (USB_DESC_DEVICE << 8);
     req.wIndex        = 0;
     req.wLength       = sizeof(usb_device_descriptor_t);
+    
     usb_hc_type_t hc = (addr == 0) ? g_default_hc : g_dev_hc[addr];
     if (hc == USB_HC_NONE) hc = usb_get_hc_type();
-    uint16_t mps = (hc == USB_HC_EHCI || hc == USB_HC_XHCI) ? 64 : 8;
+    uint16_t mps = (addr == 0) ? ((hc == USB_HC_EHCI || hc == USB_HC_XHCI) ? 64 : 8) : g_dev_ep0_mps[addr];
+    if (mps == 0) mps = 8;
+    
     return usb_control_transfer(addr, 0, mps, &req, desc);
 }
 
@@ -707,6 +735,7 @@ static void usb_driver_shutdown(void)
     g_uhci_ready = false;
     for (uint32_t i = 0; i < 256u; ++i) {
         g_dev_hc[i] = USB_HC_NONE;
+        g_dev_ep0_mps[i] = 0;
     }
     g_api = NULL;
 }

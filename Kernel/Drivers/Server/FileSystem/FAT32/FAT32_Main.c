@@ -1993,6 +1993,9 @@ static const driver_module_descriptor_t g_fat32_module = {
     .shutdown = fat32_driver_shutdown,
 };
 
+#undef hal_cpu_pause
+#undef hal_cpu_save_interrupts
+#undef hal_cpu_restore_interrupts
 #undef disk_read
 #undef disk_write
 #undef disk_get_partition_lba

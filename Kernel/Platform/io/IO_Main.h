@@ -64,7 +64,7 @@ typedef struct {
 #define IO_DISK_FLAG_BOOT     (1u << 0)
 #define IO_DISK_FLAG_WRITABLE (1u << 1)
 
-void disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type);
+bool disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type);
 
 bool disk_read(uint32_t lba, uint8_t *buffer, uint32_t sectors);
 bool disk_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors);

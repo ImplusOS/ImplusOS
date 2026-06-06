@@ -456,18 +456,18 @@ GetPartitionStartLBA (
     EFI_DEVICE_PATH_PROTOCOL *Node = DevicePath;
 
     while (!IsDevicePathEnd (Node)) {
-      if (DevicePathType (Node) == MEDIA_DEVICE_PATH) {
-        if (DevicePathSubType (Node) == MSG_USB_DP) {
+      if (DevicePathType (Node) == 3) {
+        if (DevicePathSubType (Node) == 5 || DevicePathSubType (Node) == 15) {
           Handoff->BootDriveType = BOOT_DRIVE_TYPE_USB;
-        } else if ((DevicePathSubType (Node) == MSG_ATAPI_DP) ||
-                   (DevicePathSubType (Node) == MSG_SATA_DP))
-        {
+        } else if (DevicePathSubType (Node) == 1) {
           Handoff->BootDriveType = BOOT_DRIVE_TYPE_IDE;
+        } else if (DevicePathSubType (Node) == 18) {
+          Handoff->BootDriveType = BOOT_DRIVE_TYPE_AHCI;
         }
       }
 
-      if ((DevicePathType (Node) == MEDIA_DEVICE_PATH) &&
-          (DevicePathSubType (Node) == MEDIA_HARDDRIVE_DP))
+      if ((DevicePathType (Node) == 4) &&
+          (DevicePathSubType (Node) == 1))
       {
         HARDDRIVE_DEVICE_PATH *Hd = (HARDDRIVE_DEVICE_PATH *)Node;
         *OutIsIsoLba = FALSE;

@@ -81,25 +81,16 @@ static const driver_binary_t g_driver_api = {
     .hal = {
         .cpu_halt = hal_cpu_halt,
         .cpu_pause = hal_cpu_pause,
+
         .cpu_enable_interrupts = hal_cpu_enable_interrupts,
         .cpu_disable_interrupts = hal_cpu_disable_interrupts,
         .cpu_save_interrupts = hal_cpu_save_interrupts,
         .cpu_restore_interrupts = hal_cpu_restore_interrupts,
-        .mmu_invalidate_tlb = hal_mmu_invalidate_tlb,
-        .cpu_read_cr = hal_cpu_read_cr,
-        .cpu_write_cr = hal_cpu_write_cr,
+
         .cpu_memory_barrier = hal_cpu_memory_barrier,
-        .io_delay = hal_io_delay,
-        .cpu_read_msr = hal_cpu_read_msr,
-        .cpu_write_msr = hal_cpu_write_msr,
-        .cpu_get_id = hal_cpu_get_id,
-        .cpu_get_gdt_ptr = hal_cpu_get_gdt_ptr,
-        .cpu_invalidate_caches = hal_cpu_invalidate_caches,
+
         .arch_switch_stack = hal_arch_switch_stack,
-        .cpu_get_current_el = hal_cpu_get_current_el,
-        .cpu_set_vbar = hal_cpu_set_vbar,
-        .cpu_read_fs_base = hal_cpu_read_fs_base,
-        .cpu_write_fs_base = hal_cpu_write_fs_base,
+
         .cpu_save_fpu = hal_cpu_save_fpu,
         .cpu_restore_fpu = hal_cpu_restore_fpu,
 

@@ -43,7 +43,7 @@ void input_manager_init(void)
             break;
         }
         usb = (const usb_master_vtable_t *)dev->ops;
-        g_drivers[g_driver_count++] = &usb->input;
+        input_manager_add_driver(&usb->input);
     }
 }
 

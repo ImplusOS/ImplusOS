@@ -2,8 +2,11 @@ Image/
 Build/
 *.d
 *.o
-disk.qcow2
+*.qcow2
 OVMF_CODE_4M.fd
 OVMF_VARS_4M.fd
+AAVMF_CODE.fd
+AAVMF_VARS.fd
 .DS_Store
 edk2/
+my_notepad.md

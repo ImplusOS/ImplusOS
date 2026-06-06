@@ -163,6 +163,7 @@ void kernel_main(BOOT_INFO *boot_info) {
     if (ops && ops->early_init) {
         ops->early_init();
     }
+
     serial_init();
 
     if (boot_info != NULL) {
@@ -228,7 +229,9 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     input_manager_init();
     
-    disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType);
+    if (!disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType)) {
+        kernel_panic("Disk Protocol initialization failed","kernel_main");
+    }
 
     bool fs_ready = false;
     if (all_fs_initialize()) {

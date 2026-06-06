@@ -489,6 +489,7 @@ static bool xhci_wait_event(uint32_t expected_type,
         }
 
         uint32_t trb_type = (trb->control >> 10) & 0x3Fu;
+        
         uint32_t cc       = (trb->status  >> 24) & 0xFFu;
         uint8_t ev_slot   = (uint8_t)((trb->control >> 24) & 0xFFu);
         uint8_t ev_ep     = (uint8_t)((trb->control >> 16) & 0xFFu);
@@ -1394,6 +1395,7 @@ static void xhci_drain_event_ring(void)
         }
 
         uint32_t trb_type = (trb->control >> 10) & 0x3Fu;
+        
         uint32_t cc       = (trb->status  >> 24) & 0xFFu;
         uint8_t ev_slot   = (uint8_t)((trb->control >> 24) & 0xFFu);
         uint8_t ev_ep     = (uint8_t)((trb->control >> 16) & 0xFFu);

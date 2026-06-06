@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 typedef enum {
+    BOOT_ELF_ARCH_AUTO,
     BOOT_ELF_ARCH_X86_64,
     BOOT_ELF_ARCH_AARCH64
 } boot_elf_arch_t;

@@ -12,7 +12,7 @@ ARCH ?= arm64
 
 BUILD_DIR := Build
 IMAGE_DIR := Image
-IMAGE := $(IMAGE_DIR)/ImplusOS.iso
+IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH).iso
 
 EDK2_DIR ?= $(HOME)/edk2
 EDK2_TARGET ?= RELEASE
@@ -351,7 +351,7 @@ image: install_payload recovery_build
 		$(IMAGE_STAGE_DIR)
 
 QEMU_COMMON := \
-	-machine pc \
+	-machine virt \
 	-cpu max \
 	-smp 1 \
 	-m 4G \
@@ -360,8 +360,8 @@ QEMU_COMMON := \
 	-device usb-mouse,bus=xhci.0 \
 	-serial stdio \
 	-display cocoa \
-	-device ramfb
-
+	-device virtio-gpu-pci
+	
 QEMU_USB := \
 	-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick

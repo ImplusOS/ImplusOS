@@ -11,6 +11,7 @@
 #define BOOT_DRIVE_TYPE_UNKNOWN 0
 #define BOOT_DRIVE_TYPE_IDE     1
 #define BOOT_DRIVE_TYPE_USB     2
+#define BOOT_DRIVE_TYPE_AHCI    3
 
 typedef struct {
     uint32_t Signature;
