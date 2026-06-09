@@ -68,6 +68,7 @@
 #include "../BootInfo.h"
 #include "../ElfDefs.h"
 #include "../Core/ElfLoader.h"
+#include <stdarg.h>
 
 #define FAT32_BOOT_BLOCK_MAX 4096u
 
@@ -1088,7 +1089,6 @@ EFI_STATUS ExitBootServicesComplete(
     EFI_SYSTEM_TABLE *ST,
     BOOT_INFO        *BootInfo
 ) {
-    Print(L"On ExitBootServices");
     UINTN      MapKey;
     UINTN      BufferSize;
     EFI_STATUS Status;
@@ -1105,7 +1105,6 @@ EFI_STATUS ExitBootServicesComplete(
         BufferSize += BootInfo->MemoryMapDescriptorSize * 8;
         Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
             EfiLoaderData, BufferSize, (VOID **)&BootInfo->MemoryMap);
-        Print(L"AllocatePool");
         if (EFI_ERROR(Status)) {
             return Status;
         }
@@ -1317,6 +1316,17 @@ void DrawTextGraySmallCenterBottom(
     }
 }
 
+#if defined(__aarch64__)
+extern void aarch64_el2_to_el1_and_call(void *boot_info, uint64_t kernel_entry);
+
+static inline uint64_t read_current_el(void)
+{
+    uint64_t val;
+    __asm__ volatile("mrs %0, CurrentEL" : "=r"(val));
+    return (val >> 2) & 0x3;
+}
+#endif
+
 typedef void (*KernelEntryFn)(BOOT_INFO *);
 
 EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
@@ -1428,7 +1438,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     BootInfo.HorizontalResolution = Gop->Mode->Info->HorizontalResolution;
     BootInfo.VerticalResolution   = Gop->Mode->Info->VerticalResolution;
     BootInfo.PixelsPerScanLine    = Gop->Mode->Info->PixelsPerScanLine;
-
+    
     if (Handoff) {
         BootInfo.PartitionStartLBA = Handoff->PartitionStartLBA;
         BootInfo.BootDriveType     = Handoff->BootDriveType;
@@ -1498,11 +1508,18 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     } else {
         Status = PreloadDriversFromISO(ST, &BootInfo);
     }
+
     Status = ExitBootServicesComplete(ImageHandle, ST, &BootInfo);
+
+    #if defined(__aarch64__)
+        if (read_current_el() == 2) {
+            aarch64_el2_to_el1_and_call(&BootInfo, KernelEntry);
+            while (1) {}
+        }
+    #endif
 
     KernelEntryFn Entry = (KernelEntryFn)KernelEntry;
     Entry(&BootInfo);
-
+    while (1) {}
     return EFI_SUCCESS;
 }
-

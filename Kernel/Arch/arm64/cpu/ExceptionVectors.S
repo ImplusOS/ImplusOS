@@ -3,31 +3,37 @@
 .global arm64_exception_vector_table
 .type arm64_exception_vector_table, %function
 
-.macro vector_slot
-    b arm64_vector_common
-    .space 124
+.macro vector_entry label
+    .align 7
+    b \label
 .endm
 
 arm64_exception_vector_table:
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
-    vector_slot
+    // Current EL with SP0
+    vector_entry arm64_sync_handler
+    vector_entry arm64_irq_handler
+    vector_entry arm64_fiq_handler
+    vector_entry arm64_err_handler
 
-.align 4
-arm64_vector_common:
+    // Current EL with SPx
+    vector_entry arm64_sync_handler
+    vector_entry arm64_irq_handler
+    vector_entry arm64_fiq_handler
+    vector_entry arm64_err_handler
+
+    // Lower EL (AArch64)
+    vector_entry arm64_sync_handler
+    vector_entry arm64_irq_handler
+    vector_entry arm64_fiq_handler
+    vector_entry arm64_err_handler
+
+    // Lower EL (AArch32)
+    vector_entry arm64_sync_handler
+    vector_entry arm64_irq_handler
+    vector_entry arm64_fiq_handler
+    vector_entry arm64_err_handler
+
+.macro save_all
     sub sp, sp, #(36 * 8)
     stp x0, x1, [sp, #(0 * 8)]
     stp x2, x3, [sp, #(2 * 8)]
@@ -45,6 +51,7 @@ arm64_vector_common:
     stp x26, x27, [sp, #(26 * 8)]
     stp x28, x29, [sp, #(28 * 8)]
     str x30, [sp, #(30 * 8)]
+    
     mrs x0, sp_el0
     str x0, [sp, #(31 * 8)]
     mrs x0, elr_el1
@@ -55,10 +62,14 @@ arm64_vector_common:
     str x0, [sp, #(34 * 8)]
     mrs x0, far_el1
     str x0, [sp, #(35 * 8)]
+.endm
 
-    mov x0, sp
-    bl arm64_exception_dispatch
-
+.macro restore_all
+    ldr x0, [sp, #(33 * 8)] // spsr_el1
+    msr spsr_el1, x0
+    ldr x0, [sp, #(32 * 8)] // elr_el1
+    msr elr_el1, x0
+    
     ldp x0, x1, [sp, #(0 * 8)]
     ldp x2, x3, [sp, #(2 * 8)]
     ldp x4, x5, [sp, #(4 * 8)]
@@ -77,4 +88,32 @@ arm64_vector_common:
     ldr x30, [sp, #(30 * 8)]
     add sp, sp, #(36 * 8)
     eret
+.endm
 
+arm64_sync_handler:
+    save_all
+    mov x0, sp
+    mov x1, #0 // SYNC
+    bl arm64_exception_dispatch
+    restore_all
+
+arm64_irq_handler:
+    save_all
+    mov x0, sp
+    mov x1, #1 // IRQ
+    bl arm64_exception_dispatch
+    restore_all
+
+arm64_fiq_handler:
+    save_all
+    mov x0, sp
+    mov x1, #2 // FIQ
+    bl arm64_exception_dispatch
+    restore_all
+
+arm64_err_handler:
+    save_all
+    mov x0, sp
+    mov x1, #3 // ERROR
+    bl arm64_exception_dispatch
+    restore_all

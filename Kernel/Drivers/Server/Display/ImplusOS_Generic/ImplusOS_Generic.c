@@ -1,3 +1,4 @@
+// Kernel/Drivers/Server/Display/ImplusOS_Generic/ImplusOS_Generic.c
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,6 +25,17 @@ static const driver_binary_t *g_driver_api = NULL;
 #define free g_driver_api->free
 #define map_mmio_virt g_driver_api->map_mmio_virt
 #define memcpy g_driver_api->memcpy
+#define memset g_driver_api->memset
+
+static int driver_module_strcmp(const char *a, const char *b) {
+    while (*a && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return (int)(unsigned char)(*a) - (int)(unsigned char)(*b);
+}
+#define strcmp driver_module_strcmp
+
 #else
 #include <string.h>
 #endif
@@ -307,14 +319,21 @@ static const driver_module_descriptor_t g_generic_fb_module = {
 #undef free
 #undef map_mmio_virt
 #undef memcpy
+#undef memset
+#undef strcmp
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api) {
-    if (!api || !api->malloc || !api->free ||
-        !api->map_mmio_virt || !api->memcpy) {
+    if (!api) return NULL;
+    api->serial_write_string("Display: Initializing...\n");
+
+    if (!api->malloc || !api->free ||
+        !api->map_mmio_virt || !api->memcpy || !api->memset) {
+        api->serial_write_string("Display: API missing!\n");
         return NULL;
     }
 
     g_driver_api = api;
+    api->serial_write_string("Display: Initialized.\n");
     return &g_generic_fb_module;
 }
 

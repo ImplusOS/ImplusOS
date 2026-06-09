@@ -2004,11 +2004,18 @@ static const driver_module_descriptor_t g_fat32_module = {
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
 {
-    if (!api || !api->disk_read || !api->disk_write || !api->disk_get_partition_lba ||
+    if (!api) return NULL;
+    
+    api->serial_write_string("FAT32: Initializing...\n");
+    
+    if (!api->disk_read || !api->disk_write || !api->disk_get_partition_lba ||
          !api->memset || !api->memcpy)
         return NULL;
+    
     g_driver_api = api;
     spinlock_init(&g_fat32_lock);
+    
+    api->serial_write_string("FAT32: Initialized.\n");
     return &g_fat32_module;
 }
 #endif

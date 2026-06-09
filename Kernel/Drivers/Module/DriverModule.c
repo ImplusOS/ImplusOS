@@ -251,6 +251,7 @@ bool driver_module_manager_load_by_name(const char *name,
         return true;
     }
 
+    serial_write_string("DEBUG: Loading module image...\n");
     elf_module_load_policy_t policy = {
         .max_file_size = max_file_size,
         .max_image_size = max_image_size,
@@ -262,8 +263,10 @@ bool driver_module_manager_load_by_name(const char *name,
                                                   state->file_size,
                                                   &policy,
                                                   &module_image)) {
+        serial_write_string("DEBUG: Load failed.\n");
         return false;
     }
+    serial_write_string("DEBUG: Load successful.\n");
 
     state->loaded = 1u;
     state->entry = module_image.entry;
@@ -313,16 +316,36 @@ static bool driver_module_activate(module_state_t *state)
         return false;
     }
 
+    serial_write_string("Activating driver: ");
+    serial_write_string(state->name);
+    serial_write_string("\n");
+
+    serial_write_string("DEBUG: Before load_by_name\n");
     uint64_t entry = 0;
     if (!driver_module_manager_load_by_name(state->name,
                                             DRIVER_MODULE_MAX_FILE_SIZE,
                                             DRIVER_MODULE_MAX_IMAGE_SIZE,
                                             &entry)) {
+        serial_write_string("DEBUG: Load failed.\n");
+        serial_write_string("Failed to load image for: ");
+        serial_write_string(state->name);
+        serial_write_string("\n");
         return false;
     }
+    serial_write_string("DEBUG: Load by name successful.\n");
 
+    serial_write_string("Calling init function for: ");
+    serial_write_string(state->name);
+    serial_write_string("\n");
+
+    serial_write_string("DEBUG: Before init_fn\n");
     driver_module_init_fn_t init_fn = (driver_module_init_fn_t)(uintptr_t)entry;
     const driver_module_descriptor_t *descriptor = init_fn(&g_driver_api);
+    serial_write_string("DEBUG: After init_fn\n");
+
+    serial_write_string("Init function returned for: ");
+    serial_write_string(state->name);
+    serial_write_string("\n");
     if (descriptor == NULL ||
         descriptor->magic != DRIVER_DESCRIPTOR_MAGIC ||
         descriptor->version < DRIVER_DESCRIPTOR_VERSION ||
@@ -356,8 +379,23 @@ bool driver_module_init_all(void)
         if (!g_modules[i].present) {
             continue;
         }
+        serial_write_string("DEBUG: Preparing to init: ");
+        serial_write_string(g_modules[i].name);
+        serial_write_string("\n");
+        
+        serial_write_string("Initializing driver: ");
+        serial_write_string(g_modules[i].name);
+        serial_write_string("\n");
+        
         if (!driver_module_activate(&g_modules[i])) {
+            serial_write_string("Failed to initialize driver: ");
+            serial_write_string(g_modules[i].name);
+            serial_write_string("\n");
             all_ok = false;
+        } else {
+            serial_write_string("Driver initialized: ");
+            serial_write_string(g_modules[i].name);
+            serial_write_string("\n");
         }
     }
     return all_ok;

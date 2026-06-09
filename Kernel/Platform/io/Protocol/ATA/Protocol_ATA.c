@@ -370,10 +370,10 @@ static void ata_delay(uint16_t ctrl_port) {
 }
 
 static void ata_soft_reset(uint16_t ctrl_port) {
-    outb(ctrl_port, 0x0Cu); // SRST=1, nIEN=1
-    for (int i = 0; i < 100; i++) inb(ctrl_port); // ~10us
-    outb(ctrl_port, 0x08u); // SRST=0, nIEN=1
-    for (int i = 0; i < 20000; i++) inb(ctrl_port); // ~2ms
+    outb(ctrl_port, 0x0Cu);
+    for (int i = 0; i < 100; i++) inb(ctrl_port);
+    outb(ctrl_port, 0x08u);
+    for (int i = 0; i < 20000; i++) inb(ctrl_port);
 }
 
 static bool ata_status_is_absent(uint8_t st)

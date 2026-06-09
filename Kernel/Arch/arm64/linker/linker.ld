@@ -3,6 +3,9 @@ ENTRY(kernel_main)
 SECTIONS
 {
     . = 0x40080000;
+    
+    _kernel_start = .;
+    
     .text : ALIGN(4096) {
         *(.text.arm64_vectors)
         *(.text*)
@@ -13,4 +16,6 @@ SECTIONS
         *(COMMON)
         *(.bss*)
     }
+    
+    _kernel_end = .;
 }

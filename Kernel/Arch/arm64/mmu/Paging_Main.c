@@ -33,16 +33,18 @@ static uint64_t table_desc(uint64_t table)
 static uint64_t block_desc(uint64_t phys, int device)
 {
     uint64_t attr = device ? ARM64_BLOCK_ATTR_DEVICE : ARM64_BLOCK_ATTR_NORMAL;
+    uint64_t pxn = device ? ARM64_BLOCK_PXN : 0;
     return (phys & ~(ARM64_L1_BLOCK_SIZE - 1ULL)) |
            ARM64_DESC_VALID | ARM64_BLOCK_AF | ARM64_BLOCK_SH_INNER |
-           ARM64_BLOCK_AP_RW_EL1 | attr | ARM64_BLOCK_PXN | ARM64_BLOCK_UXN;
+           ARM64_BLOCK_AP_RW_EL1 | attr | pxn | ARM64_BLOCK_UXN;
 }
 
 void init_paging(void)
 {
     for (uint64_t i = 0; i < ARM64_TABLE_ENTRIES; ++i) {
         g_l0[i] = 0;
-        g_l1_identity[i] = block_desc(i * ARM64_L1_BLOCK_SIZE, 0);
+        int is_device = (i == 0) ? 1 : 0;
+        g_l1_identity[i] = block_desc(i * ARM64_L1_BLOCK_SIZE, is_device);
     }
 
     g_l0[0] = table_desc((uint64_t)(uintptr_t)g_l1_identity);
@@ -50,7 +52,8 @@ void init_paging(void)
 
     write_sysreg_mair(0xFF00ULL);
     write_sysreg_tcr((16ULL << 0) | (16ULL << 16) | (0ULL << 14) | (2ULL << 30) |
-                     (3ULL << 12) | (3ULL << 28) | (1ULL << 8) | (1ULL << 24));
+                     (3ULL << 12) | (3ULL << 28) | (1ULL << 8) | (1ULL << 24) |
+                                    (5ULL << 32));
     write_sysreg_ttbr0(g_kernel_ttbr);
     write_sysreg_ttbr1(g_kernel_ttbr);
     __asm__ volatile("dsb ish; isb; tlbi vmalle1; dsb ish; isb" ::: "memory");

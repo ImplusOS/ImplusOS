@@ -1,30 +1,73 @@
 #include "Exception.h"
 #include "CPU.h"
 #include "IDT_Main.h"
+#include "Arch/arm64/interrupt/GIC.h"
 #include "Core/syscall/Syscall_Main.h"
 #include "Debug/panic/Panic.h"
+#include "Debug/serial/Serial.h"
 
 #define ESR_EC_SHIFT 26
 #define ESR_EC_MASK  0x3FU
 #define ESR_EC_SVC64 0x15U
+
+static interrupt_handler_t g_interrupt_handlers[1024];
 
 void arm64_exception_init(void)
 {
     arm64_set_exception_vector((void *)arm64_exception_vector_table);
 }
 
-void arm64_exception_dispatch(arm64_exception_frame_t *frame)
+static void handle_irq(arm64_exception_frame_t *frame) {
+    (void)frame;
+    uint32_t iar = arm64_gic_read_iar();
+    uint32_t irq = iar & 0x3FFu;
+
+    if (irq < 1020) {
+        if (irq == 30) {
+            static int count = 0;
+            if (++count >= 60) {
+                serial_write_string("arm64: Timer IRQ 30 heartbeat\n");
+                count = 0;
+            }
+        }
+
+        if (irq < 1024 && g_interrupt_handlers[irq]) {
+            g_interrupt_handlers[irq]();
+        }
+    }
+
+    arm64_gic_eoi(iar);
+}
+
+void arm64_exception_dispatch(arm64_exception_frame_t *frame, uint64_t type)
 {
-    uint32_t ec = (uint32_t)((frame->esr_el1 >> ESR_EC_SHIFT) & ESR_EC_MASK);
-    if (ec == ESR_EC_SVC64) {
-        uint64_t nr = frame->x[8];
-        uint64_t result_frame[1] = {0};
-        (void)syscall_dispatch((uint64_t)(uintptr_t)result_frame, nr,
-                               frame->x[0], frame->x[1], frame->x[2],
-                               frame->x[3], frame->x[4]);
-        frame->x[0] = result_frame[0];
+    if (type == 1 || type == 5 || type == 9 || type == 13) {
+        handle_irq(frame);
         return;
     }
+
+    if (type == 0 || type == 4 || type == 8 || type == 12) {
+        uint32_t ec = (uint32_t)((frame->esr_el1 >> ESR_EC_SHIFT) & ESR_EC_MASK);
+        if (ec == ESR_EC_SVC64) {
+            uint64_t nr = frame->x[8];
+            uint64_t result_frame[1] = {0};
+            (void)syscall_dispatch((uint64_t)(uintptr_t)result_frame, nr,
+                                   frame->x[0], frame->x[1], frame->x[2],
+                                   frame->x[3], frame->x[4]);
+            frame->x[0] = result_frame[0];
+            return;
+        }
+    }
+    
+    serial_write_string("\nUnhandled arm64 exception! Type: ");
+    serial_write_uint64(type);
+    serial_write_string(" ESR: ");
+    serial_write_uint64(frame->esr_el1);
+    serial_write_string(" FAR: ");
+    serial_write_uint64(frame->far_el1);
+    serial_write_string(" ELR: ");
+    serial_write_uint64(frame->elr_el1);
+    serial_write_string("\n");
     kernel_panic("Unhandled arm64 exception", "arm64_exception_dispatch");
 }
 
@@ -40,8 +83,9 @@ void init_idt_per_cpu(void)
 
 void register_interrupt_handler(int vector, interrupt_handler_t handler)
 {
-    (void)vector;
-    (void)handler;
+    if (vector >= 0 && vector < 1024) {
+        g_interrupt_handlers[vector] = handler;
+    }
 }
 
 void init_gdt(void)

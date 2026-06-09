@@ -9,4 +9,5 @@ AAVMF_CODE.fd
 AAVMF_VARS.fd
 .DS_Store
 edk2/
-my_notepad.md
+Notepad
+.aider*

@@ -3,17 +3,24 @@
 #include "Platform/acpi/ACPI.h"
 
 #define GICD_CTLR       0x0000
+#define GICD_IGROUPR    0x0080
 #define GICD_ISENABLER  0x0100
 #define GICD_ICENABLER  0x0180
 #define GICD_IPRIORITYR 0x0400
 #define GICD_ITARGETSR  0x0800
 #define GICC_CTLR       0x0000
 #define GICC_PMR        0x0004
+#define GICC_IAR        0x000C
 #define GICC_EOIR       0x0010
 
 static volatile uint32_t *g_gicd;
 static volatile uint32_t *g_gicc;
 static int g_gic_ready;
+
+static inline uint32_t mmio_read32(volatile uint32_t *base, uint64_t off)
+{
+    return base[off / 4];
+}
 
 static inline void mmio_write32(volatile uint32_t *base, uint64_t off, uint32_t value)
 {
@@ -29,16 +36,17 @@ int arm64_gic_init(uint64_t gicd_base, uint64_t gicr_base, uint64_t gicc_base)
 
     mmio_write32(g_gicd, GICD_CTLR, 0);
     for (uint32_t i = 0; i < 32; ++i) {
+        mmio_write32(g_gicd, GICD_IGROUPR + i * 4, 0xFFFFFFFFu);
         mmio_write32(g_gicd, GICD_ICENABLER + i * 4, 0xFFFFFFFFu);
     }
     for (uint32_t i = 0; i < 256; ++i) {
-        mmio_write32(g_gicd, GICD_IPRIORITYR + i, 0xA0u);
+        mmio_write32(g_gicd, GICD_IPRIORITYR + i * 4, 0xA0A0A0A0u);
     }
-    mmio_write32(g_gicd, GICD_CTLR, 1);
+    mmio_write32(g_gicd, GICD_CTLR, 3);
 
     if (g_gicc) {
         mmio_write32(g_gicc, GICC_PMR, 0xFFu);
-        mmio_write32(g_gicc, GICC_CTLR, 1);
+        mmio_write32(g_gicc, GICC_CTLR, 3);
     }
 
     g_gic_ready = 1;
@@ -48,6 +56,12 @@ int arm64_gic_init(uint64_t gicd_base, uint64_t gicr_base, uint64_t gicc_base)
 void arm64_gic_eoi(uint32_t irq)
 {
     if (g_gicc) mmio_write32(g_gicc, GICC_EOIR, irq);
+}
+
+uint32_t arm64_gic_read_iar(void)
+{
+    if (g_gicc) return mmio_read32(g_gicc, GICC_IAR);
+    return 0x3FFu;
 }
 
 int arm64_gic_route_irq(uint32_t irq, uint32_t vector)
@@ -75,7 +89,7 @@ void arm64_gic_unmask_irq(uint32_t irq)
 static int arm64_interrupt_configure(const void *firmware_info)
 {
     (void)firmware_info;
-    return arm64_gic_init(0x08000000ULL, 0x080A0000ULL, 0);
+    return arm64_gic_init(0x08000000ULL, 0, 0x08010000ULL);
 }
 
 static int arm64_using_local_timer(void)

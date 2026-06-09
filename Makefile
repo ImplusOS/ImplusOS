@@ -60,9 +60,9 @@ INSTALL_MANIFEST     := $(INSTALL_PAYLOAD_DIR)/MANIFEST.txt
 IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
 ESP_IMAGE       := $(IMAGE_DIR)/esp.img
 
-BOOT_RESOURCE_DIR := $(firstword $(wildcard BootManager1/Resource BootManager/Resource))
+BOOT_RESOURCE_DIR := $(firstword $(wildcard BootManager/Resource))
 ifeq ($(BOOT_RESOURCE_DIR),)
-$(error BootManager resource directory not found. Expected BootManager1/Resource or BootManager/Resource.)
+$(error BootManager resource directory not found. Expected BootManager/Resource.)
 endif
 
 BOOTLOADER_DSC := BootLoader/Configuration/ImplusOSBootLoader.dsc
@@ -360,15 +360,15 @@ QEMU_COMMON := \
 	-device usb-mouse,bus=xhci.0 \
 	-serial stdio \
 	-display cocoa \
-	-device virtio-gpu-pci
+	-device virtio-gpu-pci \
+	-device ramfb
 	
 QEMU_USB := \
 	-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick
 
 QEMU_DISK := \
-	-drive file=$(IMAGE),format=raw,if=none,id=disk0 \
-	-device ide-hd,drive=disk0,bus=sata.0
+    -drive file=$(IMAGE),media=cdrom,format=raw,index=0
 
 run_uefi_usb:
 	@if [ "$(ARCH)" = "arm64" ]; then \

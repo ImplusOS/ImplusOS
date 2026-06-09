@@ -15,7 +15,8 @@ static uint64_t  g_max_pages       = 0;
 static uint32_t  g_alloc_page_recursion_depth_bsp = 0;
 int paging_swap_reclaim_one_page(void);
 
-
+extern char _kernel_start[];
+extern char _kernel_end[];
 
 #define PAGE_BITMAP_STATIC_SIZE 1048576U
 #define PAGE_BITMAP_CAPACITY_PAGES ((uint64_t)PAGE_BITMAP_STATIC_SIZE * 8ULL)
@@ -153,9 +154,7 @@ static void mark_pages(uint64_t start_page, uint64_t page_count, uint8_t used)
 
 static int is_usable_memory_type(uint32_t type)
 {
-    return (type == EFI_BOOT_SERVICES_CODE) ||
-           (type == EFI_BOOT_SERVICES_DATA) ||
-           (type == EFI_CONVENTIONAL_MEMORY);
+    return (type == EFI_CONVENTIONAL_MEMORY);
 }
 
 void init_physical_memory(void *memory_map, size_t map_size, size_t desc_size,
@@ -209,6 +208,9 @@ void init_physical_memory(void *memory_map, size_t map_size, size_t desc_size,
         }
     }
 
+    uint64_t kernel_start_page = ((uint64_t)(uintptr_t)_kernel_start) / PAGE_SIZE;
+    uint64_t kernel_end_page   = (((uint64_t)(uintptr_t)_kernel_end) + PAGE_SIZE - 1) / PAGE_SIZE;
+    mark_pages(kernel_start_page, kernel_end_page - kernel_start_page, 1);
 
     uint64_t free_pages = 0;
     for (uint64_t i = 0; i < g_max_pages; i++) {
@@ -255,7 +257,7 @@ void memory_init(void)
         }
     }
  
-     heap_start->magic       = HEAP_MAGIC_FREE;
+    heap_start->magic       = HEAP_MAGIC_FREE;
     heap_start->size        = ((uint64_t)heap_page_count * PAGE_SIZE) - sizeof(memory_block_t);
     heap_start->is_free     = 1;
     heap_start->is_sensitive = 0;
