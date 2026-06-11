@@ -1,4 +1,3 @@
-// Kernel/Drivers/Server/Display/ImplusOS_Generic/ImplusOS_Generic.c
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -324,16 +323,13 @@ static const driver_module_descriptor_t g_generic_fb_module = {
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api) {
     if (!api) return NULL;
-    api->serial_write_string("Display: Initializing...\n");
 
     if (!api->malloc || !api->free ||
         !api->map_mmio_virt || !api->memcpy || !api->memset) {
-        api->serial_write_string("Display: API missing!\n");
         return NULL;
     }
 
     g_driver_api = api;
-    api->serial_write_string("Display: Initialized.\n");
     return &g_generic_fb_module;
 }
 

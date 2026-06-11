@@ -17,7 +17,6 @@ include Core/Makefile
 include MemoryManagement/Makefile
 include Platform/Makefile
 include Drivers/Makefile
-include FileSystem/Makefile
 include Network/Makefile
 include IPC/Makefile
 include Debug/Makefile

@@ -24,6 +24,27 @@ static uint32_t              g_detected_disks_indices[IO_MAX_DISKS];
 static uint32_t              g_detected_disk_count  = 0;
 static bool                  g_disk_scan_done       = false;
 
+static bool detected_disk_append(const block_device_t *device, uint32_t dev_index) {
+    if (!device || g_detected_disk_count >= IO_MAX_DISKS) return false;
+    g_detected_disks[g_detected_disk_count]         = device;
+    g_detected_disks_indices[g_detected_disk_count] = dev_index;
+    g_detected_disk_count++;
+    return true;
+}
+
+static uint32_t block_device_detected_count(const block_device_t *device) {
+    if (!device) return 0;
+
+    uint32_t dev_count = 1;
+    if (device->get_device_count)
+        dev_count = device->get_device_count();
+
+    if (dev_count == 0 && device->is_working && device->is_working())
+        dev_count = 1;
+
+    return dev_count;
+}
+
 static void copy_string(char *dst, uint32_t dst_size, const char *src) {
     if (!dst || dst_size == 0) return;
     uint32_t i = 0;
@@ -160,7 +181,9 @@ static const block_device_t *block_device_probe_one(
     uint32_t              saved_dev_index = g_current_device_index;
 
     if (!device || !device->init) return NULL;
-    if (!device->init(0))         return NULL;
+    if (!device->init(0)) {
+        return NULL;
+    }
 
     uint32_t dev_count = 1;
     if (device->get_device_count)
@@ -307,15 +330,10 @@ static void disk_scan_devices(void) {
         const block_device_t *device = &g_block_devices[i];
 
         if (device == g_current_block_device) {
-            uint32_t dev_count = 1;
-            if (device->get_device_count)
-                dev_count = device->get_device_count();
+            uint32_t dev_count = block_device_detected_count(device);
 
             for (uint32_t d = 0; d < dev_count; ++d) {
-                if (g_detected_disk_count >= IO_MAX_DISKS) break;
-                g_detected_disks[g_detected_disk_count]         = device;
-                g_detected_disks_indices[g_detected_disk_count] = d;
-                g_detected_disk_count++;
+                if (!detected_disk_append(device, d)) break;
             }
             continue;
         }
@@ -323,15 +341,10 @@ static void disk_scan_devices(void) {
         if (!device->init || !device->init(0)) continue;
         if (device->is_working && !device->is_working()) continue;
 
-        uint32_t dev_count = 1;
-        if (device->get_device_count)
-            dev_count = device->get_device_count();
+        uint32_t dev_count = block_device_detected_count(device);
 
         for (uint32_t d = 0; d < dev_count; ++d) {
-            if (g_detected_disk_count >= IO_MAX_DISKS) break;
-            g_detected_disks[g_detected_disk_count]         = device;
-            g_detected_disks_indices[g_detected_disk_count] = d;
-            g_detected_disk_count++;
+            if (!detected_disk_append(device, d)) break;
         }
     }
 

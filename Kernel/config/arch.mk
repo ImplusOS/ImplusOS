@@ -4,17 +4,19 @@ ifeq ($(ARCH),x86_64)
 CC := x86_64-elf-gcc
 LD := x86_64-elf-ld
 NASM := nasm
+ARCH_DIR := Arch/x86_64
 ARCH_CFLAGS := -mcmodel=large -mno-red-zone -DPLATFORM_X86_64
 ARCH_ASM_FORMAT := elf64
 KERNEL_LDSCRIPT := Arch/x86_64/linker/linker.ld
-endif
-
-ifeq ($(ARCH),arm64)
+else ifeq ($(ARCH),arm64)
 CC := aarch64-elf-gcc
 LD := aarch64-elf-ld
 NASM := false
+ARCH_DIR := Arch/arm64
 ARCH_CFLAGS := -mstrict-align -mno-outline-atomics -DPLATFORM_ARM64
 KERNEL_LDSCRIPT := Arch/arm64/linker/linker.ld
+else
+$(error Unsupported ARCH: $(ARCH))
 endif
 
 KERNEL_CFLAGS := \

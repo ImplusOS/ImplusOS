@@ -75,6 +75,43 @@ typedef struct {
 } __attribute__((packed)) madt_iso_t; 
 
 typedef struct {
+    madt_entry_header_t h;
+    uint16_t reserved;
+    uint32_t cpu_interface_number;
+    uint32_t acpi_processor_uid;
+    uint32_t flags;
+    uint32_t parking_protocol_version;
+    uint32_t performance_interrupt_gsiv;
+    uint64_t parked_address;
+    uint64_t physical_base_address;
+    uint64_t gicv_base_address;
+    uint64_t gich_base_address;
+    uint32_t vgic_maintenance_interrupt;
+    uint64_t gicr_base_address;
+    uint64_t mpidr;
+    uint8_t  processor_power_efficiency_class;
+    uint8_t  reserved2;
+    uint16_t spe_overflow_interrupt;
+} __attribute__((packed)) madt_gicc_t;
+
+typedef struct {
+    madt_entry_header_t h;
+    uint16_t reserved;
+    uint32_t gic_id;
+    uint64_t physical_base_address;
+    uint32_t system_vector_base;
+    uint8_t  gic_version;
+    uint8_t  reserved2[3];
+} __attribute__((packed)) madt_gicd_t;
+
+typedef struct {
+    madt_entry_header_t h;
+    uint16_t reserved;
+    uint64_t discovery_range_base_address;
+    uint32_t discovery_range_length;
+} __attribute__((packed)) madt_gicr_t;
+
+typedef struct {
     sdt_header_t header;
     uint32_t firmware_ctrl;
     uint32_t dsdt;
@@ -294,6 +331,36 @@ static void parse_madt(const madt_t *madt)
                 }
                 break;
             }
+            case 11: {
+                if (hdr->length >= offsetof(madt_gicc_t, gicr_base_address) &&
+                    g_info.gicc_base == 0) {
+                    const madt_gicc_t *gicc = (const madt_gicc_t *)hdr;
+                    if ((gicc->flags & 0x1u) != 0u) {
+                        g_info.gicc_base = gicc->physical_base_address;
+                        if (hdr->length >= offsetof(madt_gicc_t, mpidr) &&
+                            g_info.gicr_base == 0) {
+                            g_info.gicr_base = gicc->gicr_base_address;
+                        }
+                    }
+                }
+                break;
+            }
+            case 12: {
+                if (hdr->length >= sizeof(madt_gicd_t)) {
+                    const madt_gicd_t *gicd = (const madt_gicd_t *)hdr;
+                    g_info.gicd_base = gicd->physical_base_address;
+                    g_info.gic_version = gicd->gic_version;
+                }
+                break;
+            }
+            case 14: {
+                if (hdr->length >= sizeof(madt_gicr_t)) {
+                    const madt_gicr_t *gicr = (const madt_gicr_t *)hdr;
+                    g_info.gicr_base = gicr->discovery_range_base_address;
+                    g_info.gicr_length = gicr->discovery_range_length;
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -315,6 +382,11 @@ int acpi_init(const BOOT_INFO *boot_info)
     g_info.ioapic_gsi_base = 0;
     g_info.pit_level_trigger = 0;
     g_info.pit_active_low = 0;
+    g_info.gicd_base = 0;
+    g_info.gicc_base = 0;
+    g_info.gicr_base = 0;
+    g_info.gicr_length = 0;
+    g_info.gic_version = 0;
  
     if (boot_info == NULL || boot_info->AcpiRsdpAddress == 0) {
         return -1;

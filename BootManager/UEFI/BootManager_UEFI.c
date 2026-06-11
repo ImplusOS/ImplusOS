@@ -265,6 +265,61 @@ static BOOLEAN GuidsAreEqual(EFI_GUID *g1, EFI_GUID *g2) {
     return TRUE;
 }
 
+
+static UINTN DevicePathNodeLengthLocal(const EFI_DEVICE_PATH_PROTOCOL *Node) {
+    return (UINTN)Node->Length[0] | ((UINTN)Node->Length[1] << 8);
+}
+
+static BOOLEAN DevicePathIsPrefixOf(
+    EFI_DEVICE_PATH_PROTOCOL *Prefix,
+    EFI_DEVICE_PATH_PROTOCOL *Path
+) {
+    if (!Prefix || !Path) return FALSE;
+
+    BOOLEAN SawNode = FALSE;
+
+    while (!IsDevicePathEnd(Prefix)) {
+        if (IsDevicePathEnd(Path)) return FALSE;
+
+        UINTN PrefixLen = DevicePathNodeLengthLocal(Prefix);
+        UINTN PathLen   = DevicePathNodeLengthLocal(Path);
+        if (PrefixLen < sizeof(EFI_DEVICE_PATH_PROTOCOL) ||
+            PrefixLen != PathLen) return FALSE;
+        SawNode = TRUE;
+        if (memcmp(Prefix, Path, PrefixLen) != 0) return FALSE;
+
+        Prefix = NextDevicePathNode(Prefix);
+        Path   = NextDevicePathNode(Path);
+    }
+
+    return SawNode;
+}
+
+static BOOLEAN HandlesReferToSameBootDevice(
+    EFI_SYSTEM_TABLE *ST,
+    EFI_HANDLE        CandidateHandle,
+    EFI_HANDLE        BootDeviceHandle
+) {
+    if (!CandidateHandle || !BootDeviceHandle) return FALSE;
+    if (CandidateHandle == BootDeviceHandle) return TRUE;
+
+    EFI_DEVICE_PATH_PROTOCOL *CandidatePath = NULL;
+    EFI_DEVICE_PATH_PROTOCOL *BootPath      = NULL;
+
+    EFI_STATUS Status = uefi_call_wrapper(
+        ST->BootServices->HandleProtocol, 3,
+        CandidateHandle, &gEfiDevicePathProtocolGuid, (VOID **)&CandidatePath);
+    if (EFI_ERROR(Status) || !CandidatePath) return FALSE;
+
+    Status = uefi_call_wrapper(
+        ST->BootServices->HandleProtocol, 3,
+        BootDeviceHandle, &gEfiDevicePathProtocolGuid, (VOID **)&BootPath);
+    if (EFI_ERROR(Status) || !BootPath) return FALSE;
+
+    return DevicePathIsPrefixOf(CandidatePath, BootPath) ||
+           DevicePathIsPrefixOf(BootPath, CandidatePath);
+}
+
 static BOOTLOADER_HANDOFF *FindBootloaderHandoff(EFI_SYSTEM_TABLE *ST) {
     EFI_GUID handoff_guid = IMPLUSOS_BOOT_HANDOFF_GUID;
     for (UINTN i = 0; i < ST->NumberOfTableEntries; ++i) {
@@ -421,7 +476,8 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
         }
 
         for (UINTN i = 0; i < Count; i++) {
-            if (Handles[i] == DeviceHandle) continue;
+            if (Handles[i] == DeviceHandle ||
+                !HandlesReferToSameBootDevice(ST, Handles[i], DeviceHandle)) continue;
             EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
             uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
                 Handles[i], &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
@@ -438,7 +494,8 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
         }
 
         for (UINTN i = 0; i < Count; i++) {
-            if (Handles[i] == DeviceHandle) continue;
+            if (Handles[i] == DeviceHandle ||
+                !HandlesReferToSameBootDevice(ST, Handles[i], DeviceHandle)) continue;
             EFI_DEVICE_PATH_PROTOCOL *DP = NULL;
             Status = uefi_call_wrapper(
                 ST->BootServices->HandleProtocol, 3,
@@ -495,19 +552,13 @@ static void DiscoverAcpiRsdp(EFI_SYSTEM_TABLE *ST, BOOT_INFO *BootInfo) {
     }
 }
 
-static EFI_FILE_PROTOCOL *OpenFsRootFromHandle(EFI_HANDLE Handle, EFI_SYSTEM_TABLE *ST) {
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Fs   = NULL;
-    EFI_FILE_PROTOCOL               *Root = NULL;
-    EFI_STATUS Status = uefi_call_wrapper(
-        ST->BootServices->HandleProtocol, 3,
-        Handle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
-    if (EFI_ERROR(Status) || !Fs) return NULL;
-    Status = uefi_call_wrapper(Fs->OpenVolume, 2, Fs, &Root);
-    if (EFI_ERROR(Status)) return NULL;
-    return Root;
-}
-
-static EFI_STATUS LoadFromISO(EFI_SYSTEM_TABLE *ST, const char *IsoPath, VOID **Buffer, UINTN *Size) {
+static EFI_STATUS LoadFromISO(
+    EFI_SYSTEM_TABLE *ST,
+    EFI_HANDLE        BootDeviceHandle,
+    const char       *IsoPath,
+    VOID            **Buffer,
+    UINTN            *Size
+) {
     UINTN       Count   = 0;
     EFI_HANDLE *Handles = NULL;
     EFI_STATUS  Status  = uefi_call_wrapper(ST->BootServices->LocateHandleBuffer, 5,
@@ -516,6 +567,11 @@ static EFI_STATUS LoadFromISO(EFI_SYSTEM_TABLE *ST, const char *IsoPath, VOID **
 
     EFI_STATUS Result = EFI_NOT_FOUND;
     for (UINTN i = 0; i < Count; i++) {
+        if (BootDeviceHandle &&
+            !HandlesReferToSameBootDevice(ST, Handles[i], BootDeviceHandle)) {
+            continue;
+        }
+
         EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
         uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
             Handles[i], &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
@@ -626,7 +682,11 @@ static EFI_STATUS LoadFromISO(EFI_SYSTEM_TABLE *ST, const char *IsoPath, VOID **
     return Result;
 }
 
-static EFI_STATUS PreloadDriversFromISO(EFI_SYSTEM_TABLE *ST, BOOT_INFO *BootInfo) {
+static EFI_STATUS PreloadDriversFromISO(
+    EFI_SYSTEM_TABLE *ST,
+    EFI_HANDLE        BootDeviceHandle,
+    BOOT_INFO        *BootInfo
+) {
     UINTN       Count   = 0;
     EFI_HANDLE *Handles = NULL;
     EFI_STATUS  Status  = uefi_call_wrapper(ST->BootServices->LocateHandleBuffer, 5,
@@ -634,6 +694,11 @@ static EFI_STATUS PreloadDriversFromISO(EFI_SYSTEM_TABLE *ST, BOOT_INFO *BootInf
     if (EFI_ERROR(Status) || !Handles) return Status;
 
     for (UINTN i = 0; i < Count; i++) {
+        if (BootDeviceHandle &&
+            !HandlesReferToSameBootDevice(ST, Handles[i], BootDeviceHandle)) {
+            continue;
+        }
+
         EFI_BLOCK_IO_PROTOCOL *Bio = NULL;
         uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
             Handles[i], &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
@@ -973,6 +1038,53 @@ static void UefiElfFree(uint64_t address, size_t pages, void *ctx)
                       (EFI_PHYSICAL_ADDRESS)address, (UINTN)pages);
 }
 
+#ifndef EM_X86_64
+#define EM_X86_64 62
+#endif
+
+#ifndef EM_AARCH64
+#define EM_AARCH64 183
+#endif
+
+static UINT16 GetNativeElfMachine(void)
+{
+#if defined(__x86_64__) || defined(__amd64__) || defined(_M_X64)
+    return EM_X86_64;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return EM_AARCH64;
+#else
+    return 0;
+#endif
+}
+
+static EFI_STATUS ValidateKernelElfMachine(VOID *KernelImage, UINTN KernelImageSize)
+{
+    if (!KernelImage || KernelImageSize < sizeof(Elf64_Ehdr))
+        return EFI_INVALID_PARAMETER;
+
+    UINT8 *Ident = (UINT8 *)KernelImage;
+    if (Ident[0] != 0x7F || Ident[1] != 'E' ||
+        Ident[2] != 'L'  || Ident[3] != 'F') {
+        return EFI_LOAD_ERROR;
+    }
+
+    if (Ident[4] != 2) {
+        return EFI_UNSUPPORTED;
+    }
+
+    UINT16 ExpectedMachine = GetNativeElfMachine();
+    if (ExpectedMachine == 0) {
+        return EFI_SUCCESS;
+    }
+
+    Elf64_Ehdr *Header = (Elf64_Ehdr *)KernelImage;
+    if (Header->e_machine != ExpectedMachine) {
+        return EFI_UNSUPPORTED;
+    }
+
+    return EFI_SUCCESS;
+}
+
 EFI_STATUS LoadKernelELF(
     EFI_SYSTEM_TABLE *ST,
     VOID             *KernelImage,
@@ -984,8 +1096,12 @@ EFI_STATUS LoadKernelELF(
 
     *EntryPoint = 0;
 
+    EFI_STATUS Status = ValidateKernelElfMachine(KernelImage, KernelImageSize);
+    if (EFI_ERROR(Status))
+        return Status;
+
     VOID *ImageCopy = NULL;
-    EFI_STATUS Status = uefi_call_wrapper(
+    Status = uefi_call_wrapper(
         ST->BootServices->AllocatePool, 3,
         EfiLoaderData, KernelImageSize, &ImageCopy);
     if (EFI_ERROR(Status) || !ImageCopy) {
@@ -1385,7 +1501,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
             }
         }
         if (!loaded) {
-            if (!EFI_ERROR(LoadFromISO(ST,
+            if (!EFI_ERROR(LoadFromISO(ST, LoadedImage->DeviceHandle,
                     "BootManager/Resource/Images/BootLogo.bmp",
                     &BmpBuf, &BmpSize)))
                 loaded = TRUE;
@@ -1412,7 +1528,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
         }
 
         if (!loaded) {
-            LoadFromISO(ST,
+            LoadFromISO(ST, LoadedImage->DeviceHandle,
                 "BootManager/Resource/Fonts/NotoSansJP-Regular.ttf",
                 &FontBuffer, &FontSize);
         }
@@ -1460,39 +1576,23 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     if (Root != NULL) {
         Status = uefi_call_wrapper(Root->Open, 5, Root, &KernelFile,
             L"Kernel\\Kernel_Main.ELF", EFI_FILE_MODE_READ, 0);
-    } else {
-        Status = EFI_NOT_FOUND;
-    }
-
-    if (EFI_ERROR(Status)) {
-        UINTN       Count   = 0;
-        EFI_HANDLE *Handles = NULL;
-        Status = uefi_call_wrapper(ST->BootServices->LocateHandleBuffer, 5,
-            ByProtocol, &gEfiSimpleFileSystemProtocolGuid, NULL, &Count, &Handles);
-        if (!EFI_ERROR(Status) && Handles) {
-            for (UINTN i = 0; i < Count; i++) {
-                EFI_FILE_PROTOCOL *AltRoot = OpenFsRootFromHandle(Handles[i], ST);
-                if (!AltRoot) continue;
-                Status = uefi_call_wrapper(AltRoot->Open, 5, AltRoot, &KernelFile,
-                    L"Kernel\\Kernel_Main.ELF", EFI_FILE_MODE_READ, 0);
-                if (!EFI_ERROR(Status)) {
-                    KernelRoot = AltRoot;
-                    break;
-                } else {
-                    uefi_call_wrapper(AltRoot->Close, 1, AltRoot);
-                }
-            }
-            uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
+        if (!EFI_ERROR(Status)) {
+            KernelRoot = Root;
         }
     } else {
-        KernelRoot = Root;
+        Status = EFI_NOT_FOUND;
     }
 
     if (KernelRoot && !EFI_ERROR(Status)) {
         Status = LoadFileToMemoryBelow4G(ST, KernelFile, &KernelBuffer, &KernelSize);
         uefi_call_wrapper(KernelFile->Close, 1, KernelFile);
     } else {
-        Status = LoadFromISO(ST, "Kernel/Kernel_Main.ELF", &KernelBuffer, &KernelSize);
+        KernelRoot = NULL;
+        Status = LoadFromISO(ST, LoadedImage->DeviceHandle,
+            "Kernel/Kernel_Main.ELF", &KernelBuffer, &KernelSize);
+        if (!EFI_ERROR(Status)) {
+            BootInfo.PartitionStartLBA = 0;
+        }
     }
 
     EFI_STATUS LoadStatus = LoadKernelELF(ST, KernelBuffer, KernelSize, &KernelEntry);
@@ -1506,7 +1606,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     if (KernelRoot) {
         Status = PreloadDriverModules(ST, KernelRoot, &BootInfo);
     } else {
-        Status = PreloadDriversFromISO(ST, &BootInfo);
+        Status = PreloadDriversFromISO(ST, LoadedImage->DeviceHandle, &BootInfo);
     }
 
     Status = ExitBootServicesComplete(ImageHandle, ST, &BootInfo);

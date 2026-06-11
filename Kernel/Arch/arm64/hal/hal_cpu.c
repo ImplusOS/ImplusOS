@@ -281,12 +281,76 @@ void hal_cpu_write_fs_base(uint64_t val)
 
 void hal_cpu_save_fpu(uint8_t *state)
 {
-    (void)state;
+    if (state == NULL) {
+        return;
+    }
+
+    __asm__ volatile("mrs x9, cpacr_el1\n"
+                     "orr x10, x9, #(3 << 20)\n"
+                     "msr cpacr_el1, x10\n"
+                     "isb\n"
+                     "stp q0, q1, [%0, #(16 *  0)]\n"
+                     "stp q2, q3, [%0, #(16 *  2)]\n"
+                     "stp q4, q5, [%0, #(16 *  4)]\n"
+                     "stp q6, q7, [%0, #(16 *  6)]\n"
+                     "stp q8, q9, [%0, #(16 *  8)]\n"
+                     "stp q10, q11, [%0, #(16 * 10)]\n"
+                     "stp q12, q13, [%0, #(16 * 12)]\n"
+                     "stp q14, q15, [%0, #(16 * 14)]\n"
+                     "stp q16, q17, [%0, #(16 * 16)]\n"
+                     "stp q18, q19, [%0, #(16 * 18)]\n"
+                     "stp q20, q21, [%0, #(16 * 20)]\n"
+                     "stp q22, q23, [%0, #(16 * 22)]\n"
+                     "stp q24, q25, [%0, #(16 * 24)]\n"
+                     "stp q26, q27, [%0, #(16 * 26)]\n"
+                     "stp q28, q29, [%0, #(16 * 28)]\n"
+                     "stp q30, q31, [%0, #(16 * 30)]\n"
+                     "mrs x10, fpsr\n"
+                     "str w10, [%0, #(16 * 32)]\n"
+                     "mrs x10, fpcr\n"
+                     "str w10, [%0, #(16 * 32 + 8)]\n"
+                     "msr cpacr_el1, x9\n"
+                     "isb\n"
+                     :
+                     : "r"(state)
+                     : "x9", "x10", "memory");
 }
 
 void hal_cpu_restore_fpu(uint8_t *state)
 {
-    (void)state;
+    if (state == NULL) {
+        return;
+    }
+
+    __asm__ volatile("mrs x9, cpacr_el1\n"
+                     "orr x10, x9, #(3 << 20)\n"
+                     "msr cpacr_el1, x10\n"
+                     "isb\n"
+                     "ldp q0, q1, [%0, #(16 *  0)]\n"
+                     "ldp q2, q3, [%0, #(16 *  2)]\n"
+                     "ldp q4, q5, [%0, #(16 *  4)]\n"
+                     "ldp q6, q7, [%0, #(16 *  6)]\n"
+                     "ldp q8, q9, [%0, #(16 *  8)]\n"
+                     "ldp q10, q11, [%0, #(16 * 10)]\n"
+                     "ldp q12, q13, [%0, #(16 * 12)]\n"
+                     "ldp q14, q15, [%0, #(16 * 14)]\n"
+                     "ldp q16, q17, [%0, #(16 * 16)]\n"
+                     "ldp q18, q19, [%0, #(16 * 18)]\n"
+                     "ldp q20, q21, [%0, #(16 * 20)]\n"
+                     "ldp q22, q23, [%0, #(16 * 22)]\n"
+                     "ldp q24, q25, [%0, #(16 * 24)]\n"
+                     "ldp q26, q27, [%0, #(16 * 26)]\n"
+                     "ldp q28, q29, [%0, #(16 * 28)]\n"
+                     "ldp q30, q31, [%0, #(16 * 30)]\n"
+                     "ldr w10, [%0, #(16 * 32)]\n"
+                     "msr fpsr, x10\n"
+                     "ldr w10, [%0, #(16 * 32 + 8)]\n"
+                     "msr fpcr, x10\n"
+                     "msr cpacr_el1, x9\n"
+                     "isb\n"
+                     :
+                     : "r"(state)
+                     : "x9", "x10", "memory");
 }
 
 #else

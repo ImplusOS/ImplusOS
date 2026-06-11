@@ -1,9 +1,13 @@
 #include "kernel/boot_info.h"
+#include "kernel/platform.h"
 #include "MemoryManagement/Memory_Main.h"
 #include "mmu/Paging_Main.h"
 #include "smp/SMP_Main.h"
+#ifdef PLATFORM_X86_64
 #include "cpu/IDT_Main.h"
 #include "cpu/GDT_Main.h"
+#include "virt/VMX.h"
+#endif
 #include "Platform/io/IO_Main.h"
 #include "Drivers/Module/DriverModule.h"
 #include "Drivers/Module/InputManager.h"
@@ -32,8 +36,8 @@
 #include "Network/network_main.h"
 #include "Debug/serial/Serial.h"
 #include <stdio.h>
-#include "virt/VMX.h"
 #include "interfaces/arch_ops.h"
+#include "interfaces/timer_hal.h"
 
 static BOOT_INFO g_boot_info_copy;
 
@@ -45,7 +49,10 @@ __attribute__((aligned(16))) static uint8_t kernel_stack[0x40000];
 static uint64_t user_entry = 0;
 extern const arch_ops_t *arch_ops_get(void);
 
-#include "Debug/serial/Serial.h"
+const BOOT_INFO *kernel_get_boot_info(void)
+{
+    return &g_boot_info_copy;
+}
 
 static inline void kernel_arch_halt(void)
 {
@@ -158,7 +165,7 @@ void kernel_boot_screen_color(uint32_t color)
 
 static void load_spinner_timer(uint64_t tick)
 {
-    (void)tick;
+    load_bar_tick(tick);
     load_bar_update();
 }
 
@@ -198,15 +205,15 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         boot_info->MemoryMapDescriptorSize,
         0
     );
+    physical_memory_reserve_region(
+        boot_info->FrameBufferBase,
+        boot_info->FrameBufferSize
+    );
 
     init_paging();
-    serial_write_string("Paging Initialized");
     memory_init();
-    serial_write_string("Memory Initialized");
     acpi_init(boot_info);
-    serial_write_string("ACPI Initialized");
     platform_interrupts_configure(acpi_get_info());
-    serial_write_string("Platfrom Initialized");
 
     const timer_hal_t *timer = NULL;
 #ifdef PLATFORM_X86_64
@@ -214,19 +221,15 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
 #elif defined(PLATFORM_ARM64)
     timer = &generic_timer_hal;
 #endif
-    timer_init(timer, 60);
-    serial_write_string("Timer Initialized");
+    timer_init(timer);
     syscall_init();
-    serial_write_string("Syscall Initialized");
     smp_init();
-    serial_write_string("SMP Initialized");
 
 #ifdef PLATFORM_X86_64
     {
         const arch_ops_t *ops = arch_ops_get();
         if (ops && ops->virtualization_init) {
             (void)ops->virtualization_init();
-            serial_write_string("Virtualization Initialized");
         }
     }
 #endif
@@ -235,19 +238,17 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         const arch_ops_t *ops = arch_ops_get();
         if (ops && ops->enable_interrupts) {
             ops->enable_interrupts();
-            serial_write_string("Interrupt Enabled");
         }
     }
-#ifdef PLATFORM_X86_64
+#if defined(PLATFORM_X86_64) || defined(PLATFORM_ARM64)
     timer_switch_lapic();
-    serial_write_string("lapic Initialized");
 #endif
+    timer_start_clock();
 
     driver_module_manager_init(boot_info);
-    serial_write_string("driver module manager Initialized\n");
-    serial_write_string("Initializing all driver modules...\n");
+    uint64_t driver_init_irq_flags = irq_save_disable();
     driver_module_init_all();
-    serial_write_string("All driver modules initialized.\n");
+    irq_restore(driver_init_irq_flags);
 
     driver_boot_framebuffer_t boot_fb = {
         .addr = (void *)(uintptr_t)boot_info->FrameBufferBase,
@@ -258,21 +259,15 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         .bytes_per_pixel = 4
     };
     driver_select_set_boot_framebuffer(&boot_fb);
-    serial_write_string("Selected FrameBuffer");
     debugger_init(boot_info);
-    serial_write_string("Debugger Initialized");
-
     input_manager_init();
-    serial_write_string("Input Initialized");
 
     if (!disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType)) {
         kernel_panic("Disk Protocol initialization failed", "kernel_main");
     }
-    serial_write_string("Disk Initialized");
 
     bool fs_ready = false;
     if (all_fs_initialize()) {
-        serial_write_string("FileSystem Initialized");
         fs_ready = true;
     }
 
@@ -280,17 +275,12 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");
     }
     driver_manager_display_init();
-    serial_write_string("Driver Manager Display Initialized");
     wm_kernel_init();
-    serial_write_string("WindowManager Initialized");
     process_manager_init();
-    serial_write_string("Process Initialized");
     ipc_init();
-    serial_write_string("IPC Initialized");
     syscall_file_init();
-    serial_write_string("Syscall Initialized");
     network_stack_init();
-    serial_write_string("Network Stack Initialized");
+    timer_start_services();
     fb_snapshot_create(boot_info);
     load_bar_finish();
 
@@ -304,16 +294,18 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     }
 
     if (fs_ready) {
+        serial_write_string("Loading Userland");
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
             while (1) { kernel_arch_halt(); }
         }
     }
-
+    
+    serial_write_string("Entering Userland");
     uint64_t user_rsp = process_get_current_user_rsp();
     uint64_t saved_rsp = process_get_current_saved_rsp();
     uint64_t user_cr3 = process_get_current_cr3();
 
-    if (user_rsp == 0 || saved_rsp == 0 || user_cr3 == 0) {
+    if (user_rsp == 0 || saved_rsp == 0 || user_cr3 == 0 || user_entry == 0) {
         const arch_ops_t *ops = arch_ops_get();
         if (ops && ops->disable_interrupts) {
             ops->disable_interrupts();
@@ -324,7 +316,12 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     {
         const arch_ops_t *ops = arch_ops_get();
         if (ops) {
+#ifdef PLATFORM_ARM64
+        serial_write_string("Enter Userland");
+            ops->enter_user_mode(user_entry, user_rsp, user_cr3);
+#else
             ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
+#endif
         }
     }
 
@@ -343,17 +340,13 @@ void kernel_main(BOOT_INFO *boot_info)
     }
 
     serial_init();
-    serial_write_string("Serial Initialized");
 
     if (boot_info != NULL) {
-        serial_write_string("Boot info received, copying to kernel space");
         memcpy(&g_boot_info_copy, boot_info, sizeof(BOOT_INFO));
         boot_info = &g_boot_info_copy;
     }
-    serial_write_string("Boot info copied");
     kernel_panic_init(boot_info);
 
-    serial_write_string("Setting up kernel stack and switching to it");
     uintptr_t sp = (uintptr_t)(kernel_stack + sizeof(kernel_stack));
     sp &= ~0xFULL;
 

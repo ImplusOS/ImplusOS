@@ -2,13 +2,13 @@
 #include "kernel/boot_info.h"
 #include <stdint.h>
 #include <stdbool.h>
-#include "Drivers/Module/DriverManager.h"
 
 #define SPINNER_RADIUS_MIN   10u
 #define SPINNER_RADIUS_MAX   15u
 #define SPINNER_THICKNESS    5u
 #define SPINNER_MARGIN_PX    48u
-#define SPINNER_UPDATE_TICKS 2u
+#define SPINNER_UPDATE_TICKS 1u
+#define SPINNER_MAX_DRAIN_TICKS 4u
 
 
 #define COLOR_BG       0x000000u
@@ -29,6 +29,8 @@ static uint32_t g_spinner_backbuffer[MAX_BOX_SIZE * MAX_BOX_SIZE];
 
 static volatile uint8_t  g_ready = 0;
 static volatile uint32_t g_tick_accum = 0;
+static volatile uint32_t g_pending_ticks = 0;
+static volatile uint32_t g_draw_busy = 0;
 
 static uint32_t g_anim_tick = 0;
 static uint32_t g_head = 2800;
@@ -74,13 +76,8 @@ static void spinner_clear_box(void) {
 }
 
 static void flush_backbuffer(void) {
-    uint32_t* fb = NULL;
-    if (driver_manager_display_is_ready()) {
-        fb = (uint32_t*)driver_manager_display_get_framebuffer();
-    } else {
-        fb = g_framebuffer;
-    }
-    
+    uint32_t* fb = g_framebuffer;
+
     if (fb != NULL) {
         for (uint32_t j = 0; j < g_box_h; ++j) {
             uint32_t* dst_row = fb + (g_box_y + j) * g_pixels_per_scanline + g_box_x;
@@ -89,10 +86,6 @@ static void flush_backbuffer(void) {
                 dst_row[i] = src_row[i];
             }
         }
-    }
-
-    if (driver_manager_display_is_ready()) {
-        driver_manager_display_present();
     }
 }
 
@@ -166,6 +159,9 @@ static void spinner_draw(void) {
     draw_track_fast();
 
     uint32_t dist = (g_head >= g_tail) ? (g_head - g_tail) : (36000 + g_head - g_tail);
+    if (dist == 0) {
+        dist = 1;
+    }
     int32_t cr_base = SPINNER_THICKNESS / 2;
 
     uint32_t step = 120; 
@@ -201,6 +197,48 @@ static void spinner_draw(void) {
     flush_backbuffer();
 }
 
+static bool spinner_step(void) {
+    if (!g_ready) return false;
+
+    g_tick_accum++;
+    if (g_tick_accum < SPINNER_UPDATE_TICKS) return false;
+    g_tick_accum = 0;
+
+    uint32_t phase = g_anim_tick % 180;
+
+    uint32_t base_spd = 120;
+    g_head += base_spd;
+    g_tail += base_spd;
+
+    int32_t extra = get_sin(phase * 2);
+    if (extra > 0) {
+        g_head += (extra / 64);
+    } else {
+        g_tail -= (extra / 64);
+    }
+
+    g_head %= 36000;
+    g_tail %= 36000;
+    g_anim_tick++;
+    return true;
+}
+
+static void spinner_update_once(void) {
+    if (!g_ready) {
+        return;
+    }
+
+    if (__atomic_exchange_n(&g_draw_busy, 1u, __ATOMIC_ACQUIRE) != 0u) {
+        return;
+    }
+
+    if (spinner_step()) {
+        spinner_draw();
+    }
+
+    __atomic_store_n(&g_draw_busy, 0u, __ATOMIC_RELEASE);
+}
+
 void load_bar_init(BOOT_INFO* boot_info) {
     if (!boot_info || boot_info->FrameBufferBase == 0) return;
 
@@ -232,6 +270,8 @@ void load_bar_init(BOOT_INFO* boot_info) {
     g_head = 28000;
     g_tail = 27000;
     g_tick_accum = 0;
+    g_pending_ticks = 0;
+    g_draw_busy = 0;
     g_ready = 1;
 
     spinner_draw();
@@ -242,40 +282,31 @@ void load_bar_set_target(uint32_t percent) {
 }
 
 void load_bar_update(void) {
-    if (!g_ready) return;
-
-    g_tick_accum++;
-    if (g_tick_accum < SPINNER_UPDATE_TICKS) return;
-    g_tick_accum = 0;
-
-    uint32_t phase = g_anim_tick % 180;
-    
-    uint32_t base_spd = 120;
-    g_head += base_spd;
-    g_tail += base_spd;
-    
-    int32_t extra = get_sin(phase * 2); 
-    if (extra > 0) {
-        g_head += (extra / 64);
-    } else {
-        g_tail -= (extra / 64);
+    uint32_t ticks = __atomic_exchange_n(&g_pending_ticks, 0u, __ATOMIC_ACQUIRE);
+    if (ticks == 0) {
+        ticks = 1;
+    } else if (ticks > SPINNER_MAX_DRAIN_TICKS) {
+        ticks = SPINNER_MAX_DRAIN_TICKS;
     }
-    
-    g_head %= 36000;
-    g_tail %= 36000;
-    g_anim_tick++;
 
-    spinner_draw();
+    while (ticks-- != 0u) {
+        spinner_update_once();
+    }
 }
 
 void load_bar_tick(uint64_t tick) {
     (void)tick;
-    load_bar_update();
+    __atomic_add_fetch(&g_pending_ticks, 1u, __ATOMIC_RELEASE);
 }
 
 void load_bar_finish(void) {
     if (!g_ready) return;
+    if (__atomic_exchange_n(&g_draw_busy, 1u, __ATOMIC_ACQUIRE) != 0u) {
+        g_ready = 0;
+        return;
+    }
     spinner_clear_box();
     flush_backbuffer();
     g_ready = 0;
+    __atomic_store_n(&g_draw_busy, 0u, __ATOMIC_RELEASE);
 }

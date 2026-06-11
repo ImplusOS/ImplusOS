@@ -1,6 +1,7 @@
 #include "Drivers/Client/PS2/PS2_Input.h"
 
 #include "Platform/io/IO_Main.h"
+#include "kernel/platform.h"
 #ifdef IMPLUS_DRIVER_MODULE
 #include "Drivers/Module/DriverBinary.h"
 #endif
@@ -77,6 +78,15 @@ static driver_mouse_event_t g_mouse_queue[PS2_QUEUE_SIZE];
 static uint32_t g_mouse_head = 0;
 static uint32_t g_mouse_tail = 0;
 static uint32_t g_mouse_count = 0;
+
+static bool ps2_platform_supported(void)
+{
+#if defined(PLATFORM_X86_64)
+    return true;
+#else
+    return false;
+#endif
+}
 
 static int controller_wait_input_clear(uint32_t spins)
 {
@@ -391,6 +401,10 @@ bool ps2_input_init(void)
     g_keyboard_head = g_keyboard_tail = g_keyboard_count = 0;
     g_mouse_head = g_mouse_tail = g_mouse_count = 0;
 
+    if (!ps2_platform_supported()) {
+        return false;
+    }
+
     (void)controller_write_command(PS2_CMD_DISABLE_PORT1);
     (void)controller_write_command(PS2_CMD_DISABLE_PORT2);
     controller_flush_output();
@@ -606,6 +620,10 @@ static const driver_module_descriptor_t g_ps2_module = {
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
 {
+    if (!ps2_platform_supported()) {
+        return NULL;
+    }
+
     if (api == NULL || api->inb == NULL || api->outb == NULL) {
         return NULL;
     }

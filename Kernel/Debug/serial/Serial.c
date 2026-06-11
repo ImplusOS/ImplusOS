@@ -1,55 +1,59 @@
-#include <stdbool.h>
+#include "Serial.h"
+
+#include <stddef.h>
 #include <stdint.h>
 
-#define UART0_BASE 0x09000000UL
+#include "interfaces/uart_hal.h"
 
-#define UART_DR   (*(volatile uint32_t *)(UART0_BASE + 0x00))
-#define UART_FR   (*(volatile uint32_t *)(UART0_BASE + 0x18))
-#define UART_IBRD (*(volatile uint32_t *)(UART0_BASE + 0x24))
-#define UART_FBRD (*(volatile uint32_t *)(UART0_BASE + 0x28))
-#define UART_LCRH (*(volatile uint32_t *)(UART0_BASE + 0x2C))
-#define UART_CR   (*(volatile uint32_t *)(UART0_BASE + 0x30))
+static const uart_hal_t *g_uart = NULL;
 
-#define UART_FR_TXFF (1 << 5)
+static void serial_backend_init(void)
+{
+    if (g_uart == NULL) {
+        g_uart = uart_hal_get();
+    }
+}
 
-static void uart_write_char(char c) {
-    uint32_t timeout = 0x100000;
-    while (UART_FR & UART_FR_TXFF) {
-        if (--timeout == 0) {
-            return;
-        }
+void serial_init(void)
+{
+    serial_backend_init();
+    if (g_uart && g_uart->init) {
+        g_uart->init(115200);
+    }
+}
+
+void serial_write_char(char c)
+{
+    serial_backend_init();
+    if (!g_uart || !g_uart->write_char) {
+        return;
+    }
+    g_uart->write_char(c);
+}
+
+void serial_write_string(const char *str)
+{
+    if (!str) {
+        return;
     }
 
-    UART_DR = (uint32_t)c;
-}
+    serial_backend_init();
+    if (!g_uart) {
+        return;
+    }
 
-void serial_init(void) {
-    UART_CR = 0x00000000;
-
-    UART_IBRD = 26;
-    UART_FBRD = 3;
-
-    UART_LCRH = (3 << 5);
-
-    UART_CR = (1 << 0) | (1 << 8) | (1 << 9);
-}
-
-void serial_write_char(char c) {
-    uart_write_char(c);
-}
-
-void serial_write_string(const char* str) {
-    if (!str) return;
+    if (g_uart->write_string) {
+        g_uart->write_string(str);
+        return;
+    }
 
     while (*str) {
-        if (*str == '\n') {
-            uart_write_char('\r');
-        }
-        uart_write_char(*str++);
+        serial_write_char(*str++);
     }
 }
 
-static void serial_write_hex(uint64_t value, uint8_t nibbles) {
+static void serial_write_hex(uint64_t value, uint8_t nibbles)
+{
     static const char hex[] = "0123456789ABCDEF";
 
     serial_write_string("0x");
@@ -59,23 +63,28 @@ static void serial_write_hex(uint64_t value, uint8_t nibbles) {
     }
 }
 
-void serial_write_uint64(uint64_t value) {
+void serial_write_uint64(uint64_t value)
+{
     serial_write_hex(value, 16u);
 }
 
-void serial_write_uint32(uint32_t value) {
+void serial_write_uint32(uint32_t value)
+{
     serial_write_hex(value, 8u);
 }
 
-void serial_write_uint16(uint16_t value) {
+void serial_write_uint16(uint16_t value)
+{
     serial_write_hex(value, 4u);
 }
 
-void serial_write_uint8(uint8_t value) {
+void serial_write_uint8(uint8_t value)
+{
     serial_write_hex(value, 2u);
 }
 
-void serial_write_dec16(uint16_t v) {
+void serial_write_dec16(uint16_t v)
+{
     char buf[6];
     int i = (int)sizeof(buf);
     buf[--i] = '\0';

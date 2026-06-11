@@ -1,12 +1,27 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../../../FileSystem/FAT32_BPB.h"
 
 #define FAT32_MAX_SECTOR_SIZE       4096u
 #define FAT32_CLUSTER_BUFFER_SIZE   65536u
 #define FAT32_PATH_MAX              512u
 #define FAT32_NAME_MAX              260u
+
+#pragma pack(push, 1)
+typedef struct {
+    uint16_t bytes_per_sector;
+    uint8_t  sectors_per_cluster;
+    uint8_t  _reserved0;
+    uint16_t reserved_sectors;
+    uint8_t  num_fats;
+    uint8_t  _reserved1;
+    uint32_t fat_size_sectors;
+    uint32_t root_cluster;
+    uint16_t fs_info_sector;
+    uint16_t backup_boot_sector;
+    uint32_t total_sectors;
+} FAT32_BPB;
+#pragma pack(pop)
 
 typedef struct {
     uint32_t first_cluster;

@@ -8,6 +8,7 @@
 #include "Core/sync/Spinlock.h"
 #include "Core/syscall/Syscall_File.h"
 #include "Core/syscall/Syscall_Main.h"
+#include "interfaces/hal_cpu.h"
 #include "smp/SMP_Main.h"
 #include <string.h>
 #include "Debug/serial/Serial.h"
@@ -31,6 +32,7 @@
 
 #define PROCESS_CONTEXT_QWORDS SYSCALL_FRAME_QWORDS
 #define PROCESS_ELF_MAX_SIZE (20ULL * 1024ULL * 1024ULL)
+#define PROCESS_FPU_STATE_SIZE 544U
 
 #define IA32_FS_BASE 0xC0000100U
 
@@ -69,20 +71,12 @@ static inline void process_cpu_halt(void)
 
 static inline void process_fpu_save(uint8_t *state)
 {
-#if defined(__aarch64__)
-    (void)state;
-#else
-    __asm__ volatile("fxsave64 %0" : "=m"(*(uint8_t (*)[512])state) :: "memory");
-#endif
+    hal_cpu_save_fpu(state);
 }
 
 static inline void process_fpu_restore(uint8_t *state)
 {
-#if defined(__aarch64__)
-    (void)state;
-#else
-    __asm__ volatile("fxrstor64 %0" :: "m"(*(uint8_t (*)[512])state) : "memory");
-#endif
+    hal_cpu_restore_fpu(state);
 }
 
 typedef struct {
@@ -97,7 +91,7 @@ typedef struct __attribute__((aligned(16))) {
     uint64_t entry;
     uint64_t saved_rsp;
     uint64_t saved_user_rsp;
-    uint8_t  fpu_state[512] __attribute__((aligned(16)));
+    uint8_t  fpu_state[PROCESS_FPU_STATE_SIZE] __attribute__((aligned(16)));
 
     uint64_t fs_base;
 
@@ -120,6 +114,7 @@ typedef struct __attribute__((aligned(16))) {
     int32_t exit_status;
     user_alloc_t user_allocs[PROCESS_USER_ALLOC_MAX];
     uint64_t signal_handlers[PROCESS_SIGNAL_MAX];
+    uint32_t pending_signals;
 } process_t;
 
 typedef struct {
@@ -150,13 +145,13 @@ static spinlock_t g_process_table_lock;
 static uint32_t g_timeslice_ticks = 4;
 static int g_timeslice_resched = 0;
 
-static void initialize_fpu_state(uint8_t fpu_state[512])
+static void initialize_fpu_state(uint8_t *fpu_state)
 {
     if (fpu_state == NULL) {
         return;
     }
 
-    memset(fpu_state, 0, 512);
+    memset(fpu_state, 0, PROCESS_FPU_STATE_SIZE);
     fpu_state[0] = 0x7F;
     fpu_state[1] = 0x03;
     fpu_state[24] = 0x80;
@@ -293,6 +288,7 @@ static void reset_process_slot(process_t *proc)
     for (uint32_t i = 0; i < PROCESS_SIGNAL_MAX; ++i) {
         proc->signal_handlers[i] = 0;
     }
+    proc->pending_signals = 0;
 }
 
 static void release_process_resources(process_t *proc)
@@ -327,6 +323,72 @@ static void release_process_resources(process_t *proc)
     }
     for (uint32_t i = 0; i < PROCESS_SIGNAL_MAX; ++i) {
         proc->signal_handlers[i] = 0;
+    }
+    proc->pending_signals = 0;
+}
+
+static int process_push_signal_frame_locked(process_t *proc, int32_t signum)
+{
+    if (proc == NULL || signum <= 0 || signum >= PROCESS_SIGNAL_MAX) {
+        return -1;
+    }
+
+    uint64_t handler = proc->signal_handlers[(uint32_t)signum];
+    if (handler == 0) {
+        proc->exit_status = 128 + signum;
+        proc->state = PROCESS_STATE_ZOMBIE;
+        return -1;
+    }
+
+#if defined(__x86_64__)
+    uint64_t *frame = (uint64_t *)(uintptr_t)proc->saved_rsp;
+    if (frame == NULL || proc->saved_user_rsp < (USER_STACK_BASE + 16ULL)) {
+        proc->exit_status = 128 + signum;
+        proc->state = PROCESS_STATE_ZOMBIE;
+        return -1;
+    }
+
+    uint64_t old_rip = frame[SYSCALL_FRAME_RCX];
+    uint64_t new_user_rsp = (proc->saved_user_rsp - 8ULL) & ~0xFULL;
+    new_user_rsp -= 8ULL;
+    if (new_user_rsp < proc->user_stack_base || new_user_rsp >= proc->user_stack_top) {
+        proc->exit_status = 128 + signum;
+        proc->state = PROCESS_STATE_ZOMBIE;
+        return -1;
+    }
+
+    uint64_t old_cr3 = paging_get_active_cr3();
+    paging_switch_cr3(proc->cr3);
+    *(uint64_t *)(uintptr_t)new_user_rsp = old_rip;
+    paging_switch_cr3(old_cr3);
+
+    frame[SYSCALL_FRAME_RCX] = handler;
+    frame[SYSCALL_FRAME_RDI] = (uint64_t)(uint32_t)signum;
+    proc->saved_user_rsp = new_user_rsp;
+    proc->pending_signals &= ~(1u << (uint32_t)signum);
+    return 0;
+#else
+    proc->exit_status = 128 + signum;
+    proc->state = PROCESS_STATE_ZOMBIE;
+    return -1;
+#endif
+}
+
+static void process_deliver_pending_signals_locked(process_t *proc)
+{
+    if (proc == NULL || proc->pending_signals == 0) {
+        return;
+    }
+
+    for (uint32_t signum = 1; signum < PROCESS_SIGNAL_MAX; ++signum) {
+        uint32_t bit = 1u << signum;
+        if ((proc->pending_signals & bit) == 0u) {
+            continue;
+        }
+        if (process_push_signal_frame_locked(proc, (int32_t)signum) < 0) {
+            proc->pending_signals &= ~bit;
+        }
+        break;
     }
 }
 
@@ -1004,6 +1066,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
     }
 
     if (!request_switch && current->state != PROCESS_STATE_DEAD) {
+        process_deliver_pending_signals_locked(current);
         uint64_t return_saved_rsp = current->saved_rsp;
         uint64_t return_user_rsp = current->saved_user_rsp;
         current->state = PROCESS_STATE_RUNNING;
@@ -1029,6 +1092,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
 
     current_pid_set(next_pid);
     process_t *next = &g_processes[current_pid_get()];
+    process_deliver_pending_signals_locked(next);
     next->state = PROCESS_STATE_RUNNING;
     next->timeslice = g_timeslice_ticks;
     g_timeslice_resched = 0;
@@ -1073,6 +1137,7 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
 
     current_pid_set(next_pid);
     process_t *next = &g_processes[current_pid_get()];
+    process_deliver_pending_signals_locked(next);
     next->state = PROCESS_STATE_RUNNING;
     next->timeslice = g_timeslice_ticks;
     g_timeslice_resched = 0;
@@ -1170,9 +1235,16 @@ int process_user_cstring_length(const char *str, uint64_t max_len, uint64_t *len
         return -1;
     }
 
+    uint64_t current_page = (uint64_t)(uintptr_t)str & ~0xFFFULL;
+    if (!process_user_buffer_is_valid((const void *)(uintptr_t)current_page, 1)) {
+        return -1;
+    }
+
     for (uint64_t i = 0; i < max_len; ++i) {
-        if (i == 0 || (((uintptr_t)&str[i] & 0xFFF) == 0)) {
-            if (!process_user_buffer_is_valid(&str[i], 1)) {
+        uint64_t addr = (uint64_t)(uintptr_t)&str[i];
+        if ((addr & ~0xFFFULL) != current_page) {
+            current_page = addr & ~0xFFFULL;
+            if (!process_user_buffer_is_valid((const void *)(uintptr_t)current_page, 1)) {
                 return -1;
             }
         }
@@ -1377,15 +1449,17 @@ int process_signal_deliver(int32_t pid, int32_t signum)
     }
 
     process_t *proc = &g_processes[pid];
-    uint64_t handler = proc->signal_handlers[(uint32_t)signum];
-
-    spinlock_unlock(&g_process_table_lock);
-    irq_restore(irq_flags);
-
-    if (handler == 0) {
-        return 0;
+    if (proc->state == PROCESS_STATE_UNUSED ||
+        proc->state == PROCESS_STATE_DEAD ||
+        proc->state == PROCESS_STATE_ZOMBIE) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
     }
 
+    proc->pending_signals |= (1u << (uint32_t)signum);
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
     return 0;
 }
 

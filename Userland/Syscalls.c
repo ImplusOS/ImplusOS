@@ -317,6 +317,11 @@ __attribute__((unused)) int64_t file_seek(int32_t fd, int64_t offset, int32_t wh
                                                       (uint64_t)whence));
 }
 
+void serial_write_char(char c)
+{
+    (void)syscall1(SYSCALL_SERIAL_PUTCHAR, (uint64_t)(uint8_t)c);
+}
+
 void serial_write_string(const char *str)
 {
     (void)syscall1(SYSCALL_SERIAL_PUTS, (uint64_t)str);
@@ -1267,6 +1272,7 @@ void *kvm_mmap(int32_t fd, uint64_t offset, uint64_t size)
 #define SYSCALL_GET_DISK_COUNT    216ULL
 #define SYSCALL_RAW_BLOCK_READ    217ULL
 #define SYSCALL_RAW_BLOCK_WRITE   218ULL
+#define SYSCALL_GET_BOOT_FONT     219ULL
 
 int64_t os_get_cpu_info(system_cpu_info_t *out_info)
 {
@@ -1330,6 +1336,13 @@ int64_t os_raw_block_write(uint32_t disk_index, uint32_t lba, const void *buffer
                     (uint64_t)lba,
                     (uint64_t)(uintptr_t)buffer,
                     (uint64_t)sectors);
+}
+
+int64_t os_get_boot_font(void *buffer, uint64_t capacity)
+{
+    return syscall2(SYSCALL_GET_BOOT_FONT,
+                    (uint64_t)(uintptr_t)buffer,
+                    capacity);
 }
 
 int64_t os_get_device_count(uint32_t *out_count)

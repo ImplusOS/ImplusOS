@@ -20,7 +20,7 @@ extern char _kernel_end[];
 
 #define PAGE_BITMAP_STATIC_SIZE 1048576U
 #define PAGE_BITMAP_CAPACITY_PAGES ((uint64_t)PAGE_BITMAP_STATIC_SIZE * 8ULL)
-static uint8_t g_page_bitmap_static[PAGE_BITMAP_STATIC_SIZE];
+static uint8_t g_page_bitmap_static[PAGE_BITMAP_STATIC_SIZE] __attribute__((aligned(8)));
 
 enum {
     EFI_LOADER_CODE        = 1,
@@ -39,6 +39,7 @@ typedef struct memory_block {
     uint8_t  is_free;
     uint8_t  is_sensitive;
     uint16_t reserved;
+    struct memory_block *prev;
     struct memory_block *next;
 } memory_block_t;
 
@@ -65,6 +66,13 @@ static uint32_t   g_oom_pages     = 0;
 static inline uint64_t align_up(uint64_t value, uint64_t align)
 {
     return (value + align - 1ull) & ~(align - 1ull);
+}
+
+static inline uint64_t align_page_index_up(uint64_t value, uint32_t align_pages)
+{
+    uint64_t align = (align_pages == 0) ? 1ULL : (uint64_t)align_pages;
+    uint64_t rem = value % align;
+    return (rem == 0) ? value : (value + align - rem);
 }
 
 static inline uint8_t page_bitmap_get(uint64_t page_index)
@@ -101,7 +109,11 @@ static memory_block_t *split_block_if_needed(memory_block_t *block, uint64_t siz
         new_block->size      = block->size - size - sizeof(memory_block_t);
         new_block->is_free   = 1;
         new_block->is_sensitive = 0;
+        new_block->prev      = block;
         new_block->next      = block->next;
+        if (new_block->next != NULL) {
+            new_block->next->prev = new_block;
+        }
 
         block->size = size;
         block->next = new_block;
@@ -150,6 +162,46 @@ static void mark_pages(uint64_t start_page, uint64_t page_count, uint8_t used)
     for (uint64_t i = start_page; i < end_page; i++) {
         page_bitmap_set(i, used);
     }
+}
+
+static uint64_t page_bitmap_find_free_from_hint(uint64_t hint)
+{
+    if (g_page_bitmap == NULL || g_max_pages == 0) {
+        return UINT64_MAX;
+    }
+
+    uint64_t total_words = (g_max_pages + 63ULL) >> 6;
+    uint64_t start_word = hint >> 6;
+
+    for (uint64_t pass = 0; pass < total_words; ++pass) {
+        uint64_t word_index = (start_word + pass) % total_words;
+        uint64_t base_page = word_index << 6;
+        uint64_t word = ((const uint64_t *)g_page_bitmap)[word_index];
+        if (word == UINT64_MAX) {
+            continue;
+        }
+
+        uint64_t start_bit = 0;
+        if (word_index == start_word) {
+            start_bit = hint & 63ULL;
+            if (start_bit != 0) {
+                uint64_t low_mask = (1ULL << start_bit) - 1ULL;
+                word |= low_mask;
+            }
+        }
+
+        for (uint64_t bit = start_bit; bit < 64ULL; ++bit) {
+            uint64_t page = base_page + bit;
+            if (page >= g_max_pages) {
+                return UINT64_MAX;
+            }
+            if ((word & (1ULL << bit)) == 0ULL) {
+                return page;
+            }
+        }
+    }
+
+    return UINT64_MAX;
 }
 
 static int is_usable_memory_type(uint32_t type)
@@ -229,6 +281,21 @@ void init_physical_memory(void *memory_map, size_t map_size, size_t desc_size,
     }
 }
 
+void physical_memory_reserve_region(uint64_t base, uint64_t size)
+{
+    if (g_page_bitmap == NULL || size == 0) {
+        return;
+    }
+
+    uint64_t start_page = base / PAGE_SIZE;
+    uint64_t end_page = (base + size + PAGE_SIZE - 1ULL) / PAGE_SIZE;
+    if (end_page <= start_page) {
+        return;
+    }
+
+    mark_pages(start_page, end_page - start_page, 1);
+}
+
 void memory_init(void)
 {
     if (heap_initialized) {
@@ -261,12 +328,12 @@ void memory_init(void)
     heap_start->size        = ((uint64_t)heap_page_count * PAGE_SIZE) - sizeof(memory_block_t);
     heap_start->is_free     = 1;
     heap_start->is_sensitive = 0;
+    heap_start->prev        = NULL;
     heap_start->next        = NULL;
     heap_search_hint        = heap_start;
 
     heap_initialized  = 1;
     used_memory       = 0;
-    page_alloc_hint   = 0;
     g_oom_total       = 0;
     g_oom_malloc      = 0;
     g_oom_pages       = 0;
@@ -313,15 +380,17 @@ void free(void *ptr)
     if (block->next != NULL && block->next->is_free) {
         block->size += sizeof(memory_block_t) + block->next->size;
         block->next  = block->next->next;
-    }
-    if (addr > heap_start_addr + sizeof(memory_block_t)) {
-        memory_block_t *prev = heap_start;
-        while (prev != NULL && prev->next != block) prev = prev->next;
-        if (prev != NULL && prev->is_free) {
-            prev->size += sizeof(memory_block_t) + block->size;
-            prev->next  = block->next;
-            block = prev;
+        if (block->next != NULL) {
+            block->next->prev = block;
         }
+    }
+    if (block->prev != NULL && block->prev->is_free) {
+        block->prev->size += sizeof(memory_block_t) + block->size;
+        block->prev->next = block->next;
+        if (block->next != NULL) {
+            block->next->prev = block->prev;
+        }
+        block = block->prev;
     }
     heap_search_hint = block;
     spinlock_unlock(&heap_lock);
@@ -434,15 +503,13 @@ void *alloc_page(void) {
     }
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&page_lock);
-    for (uint64_t offset = 0; offset < g_max_pages; offset++) {
-        uint64_t i = ((uint64_t)page_alloc_hint + offset) % g_max_pages;
-        if (page_bitmap_get(i) == 0u) {
-            page_bitmap_set(i, 1u);
-            page_alloc_hint  = (uint32_t)((i + 1) % g_max_pages);
-            spinlock_unlock(&page_lock);
-            irq_restore(irq_flags);
-            return (void *)(i * PAGE_SIZE);
-        }
+    uint64_t page = page_bitmap_find_free_from_hint((uint64_t)page_alloc_hint);
+    if (page != UINT64_MAX) {
+        page_bitmap_set(page, 1u);
+        page_alloc_hint  = (uint32_t)((page + 1ULL) % g_max_pages);
+        spinlock_unlock(&page_lock);
+        irq_restore(irq_flags);
+        return (void *)(page * PAGE_SIZE);
     }
     spinlock_unlock(&page_lock);
     irq_restore(irq_flags);
@@ -456,8 +523,12 @@ void *alloc_page(void) {
 }
 
 void *alloc_contiguous_pages(uint32_t page_count, uint32_t align_pages) {
-    if (g_page_bitmap == NULL || page_count == 0) return NULL;
-    if ((uint64_t)page_count > g_max_pages) return NULL;
+    if (g_page_bitmap == NULL || page_count == 0) {
+        return NULL;
+    }
+    if ((uint64_t)page_count > g_max_pages) {
+        return NULL;
+    }
     if (g_alloc_page_recursion_depth_bsp >= MAX_ALLOC_PAGE_RECURSION_DEPTH) {
         ++g_oom_pages;
         memory_report_oom("alloc_contiguous_pages (recursion limit)", (uint64_t)page_count * PAGE_SIZE);
@@ -467,9 +538,29 @@ void *alloc_contiguous_pages(uint32_t page_count, uint32_t align_pages) {
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&page_lock);
     uint64_t limit = g_max_pages - (uint64_t)page_count;
-    for (uint64_t start = 0; start <= limit; ++start) {
-        if ((start % align_pages) != 0) continue;
-        uint32_t run = 0;
+    uint64_t start = align_page_index_up((uint64_t)page_alloc_hint, align_pages);
+    if (start > limit) start = 0;
+    uint64_t wrapped_limit = start;
+    int wrapped = 0;
+    while (start <= limit) {
+        if (wrapped && start >= wrapped_limit) break;
+        if (page_bitmap_get(start) != 0u) {
+            uint64_t next = page_bitmap_find_free_from_hint(start + 1ULL);
+            if (next == UINT64_MAX || next <= start) {
+                if (wrapped) break;
+                start = 0;
+                wrapped = 1;
+                continue;
+            }
+            start = align_page_index_up(next, align_pages);
+            if (start > limit) {
+                if (wrapped) break;
+                start = 0;
+                wrapped = 1;
+            }
+            continue;
+        }
+        uint32_t run = 1;
         while (run < page_count && page_bitmap_get(start + run) == 0u) ++run;
         if (run != page_count) { start += run; continue; }
         for (uint32_t i = 0; i < page_count; ++i) page_bitmap_set(start + i, 1u);

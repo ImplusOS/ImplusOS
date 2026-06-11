@@ -2,23 +2,23 @@
 
 #include "cpu/CPU.h"
 #include "cpu/Exception.h"
+#include "mmu/Paging_Main.h"
 
 static void arm64_init_cpu_tables(void)
 {
     arm64_exception_init();
 }
 
-static void arm64_enter_user_mode(uint64_t saved_rsp, uint64_t user_rsp, uint64_t address_space)
+static void arm64_enter_user_mode(uint64_t user_entry, uint64_t user_rsp, uint64_t address_space)
 {
-    (void)saved_rsp;
-    (void)address_space;
+    paging_switch_cr3(address_space);
     __asm__ volatile(
         "msr sp_el0, %0\n"
         "msr elr_el1, %1\n"
         "mov x0, #0\n"
         "msr spsr_el1, x0\n"
         "eret\n"
-        :: "r"(user_rsp), "r"(saved_rsp)
+        :: "r"(user_rsp), "r"(user_entry)
         : "x0", "memory");
 }
 
@@ -42,4 +42,3 @@ const arch_ops_t *arch_ops_get(void)
 {
     return &g_arm64_arch_ops;
 }
-

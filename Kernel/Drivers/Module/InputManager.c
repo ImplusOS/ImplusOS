@@ -1,7 +1,7 @@
 #include "InputManager.h"
+#include "Debug/serial/Serial.h"
 
 #include "DeviceRegistry.h"
-#include "Debug/serial/Serial.h"
 
 #define INPUT_MAX_DRIVERS 8u
 
@@ -11,12 +11,18 @@ static volatile uint32_t g_poll_pending = 0;
 
 static void input_manager_add_driver(const driver_input_t *drv)
 {
-    if (drv == 0 || g_driver_count >= INPUT_MAX_DRIVERS) {
+    if (drv == 0) {
         return;
     }
+
+    if (g_driver_count >= INPUT_MAX_DRIVERS) {
+        return;
+    }
+
     if (drv->init != 0) {
         drv->init();
     }
+
     g_drivers[g_driver_count++] = drv;
 }
 
@@ -30,19 +36,24 @@ void input_manager_init(void)
 
     for (uint32_t i = 0;; ++i) {
         const device_t *dev = device_registry_find_by_index(DEVICE_TYPE_INPUT, i);
+
         if (dev == 0) {
             break;
         }
+
         input_manager_add_driver((const driver_input_t *)dev->ops);
     }
 
     for (uint32_t i = 0;; ++i) {
         const device_t *dev = device_registry_find_by_index(DEVICE_TYPE_USB, i);
         const usb_master_vtable_t *usb;
+
         if (dev == 0) {
             break;
         }
+
         usb = (const usb_master_vtable_t *)dev->ops;
+
         input_manager_add_driver(&usb->input);
     }
 }

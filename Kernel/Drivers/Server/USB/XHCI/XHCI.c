@@ -117,6 +117,15 @@ static inline void xhci_relax_poll(uint32_t *spins)
 static bool xhci_wait_for_portsc(uint32_t port, uint32_t mask,
                                  uint32_t expected, uint32_t timeout_ms)
 {
+#if defined(__aarch64__)
+    for (uint32_t elapsed = 0; elapsed < timeout_ms; ++elapsed) {
+        if ((g_op->ports[port].portsc & mask) == expected) {
+            return true;
+        }
+        xhci_delay_ms(1);
+    }
+    return ((g_op->ports[port].portsc & mask) == expected);
+#else
     uint64_t start = xhci_read_tsc();
     uint64_t limit = (uint64_t)timeout_ms * g_tsc_per_ms;
     uint32_t spins = 0;
@@ -128,10 +137,20 @@ static bool xhci_wait_for_portsc(uint32_t port, uint32_t mask,
         xhci_relax_poll(&spins);
     }
     return ((g_op->ports[port].portsc & mask) == expected);
+#endif
 }
 
 static bool xhci_wait_for_usbsts(uint32_t mask, uint32_t expected, uint32_t timeout_ms)
 {
+#if defined(__aarch64__)
+    for (uint32_t elapsed = 0; elapsed < timeout_ms; ++elapsed) {
+        if ((g_op->usbsts & mask) == expected) {
+            return true;
+        }
+        xhci_delay_ms(1);
+    }
+    return ((g_op->usbsts & mask) == expected);
+#else
     uint64_t start = xhci_read_tsc();
     uint64_t limit = (uint64_t)timeout_ms * g_tsc_per_ms;
     uint32_t spins = 0;
@@ -143,10 +162,20 @@ static bool xhci_wait_for_usbsts(uint32_t mask, uint32_t expected, uint32_t time
         xhci_relax_poll(&spins);
     }
     return ((g_op->usbsts & mask) == expected);
+#endif
 }
 
 static bool xhci_wait_for_usbcmd(uint32_t mask, uint32_t expected, uint32_t timeout_ms)
 {
+#if defined(__aarch64__)
+    for (uint32_t elapsed = 0; elapsed < timeout_ms; ++elapsed) {
+        if ((g_op->usbcmd & mask) == expected) {
+            return true;
+        }
+        xhci_delay_ms(1);
+    }
+    return ((g_op->usbcmd & mask) == expected);
+#else
     uint64_t start = xhci_read_tsc();
     uint64_t limit = (uint64_t)timeout_ms * g_tsc_per_ms;
     uint32_t spins = 0;
@@ -158,6 +187,7 @@ static bool xhci_wait_for_usbcmd(uint32_t mask, uint32_t expected, uint32_t time
         xhci_relax_poll(&spins);
     }
     return ((g_op->usbcmd & mask) == expected);
+#endif
 }
 
 static void xhci_store_completion(uint8_t slot_id, uint8_t ep_idx, uint32_t cc)
@@ -185,35 +215,31 @@ static inline bool xhci_interrupt_pending(void)
     return (g_intr->iman & XHCI_IMAN_IP) != 0;
 }
 
-static void xhci_wait_for_work(uint64_t rflags, uint32_t *idle_spins)
+static bool xhci_wait_for_work(uint64_t rflags, uint32_t *idle_spins)
 {
-    #if defined(__aarch64__)
-        if ((rflags & (1ull << 7)) != 0) {
-            hal_cpu_pause();
-            return;
-        }
-    #else
-        if ((rflags & (1ull << 9)) == 0) {
-            hal_cpu_pause();
-        return;
-        }
-    #endif
-    
+    (void)rflags;
+
     if (xhci_interrupt_pending()) {
         hal_cpu_pause();
-        return;
+        return false;
     }
 
     if ((*idle_spins & 0x7u) != 0) {
         hal_cpu_pause();
         (*idle_spins)++;
-        return;
+        return false;
     }
 
-    hal_cpu_enable_interrupts();
-    hal_cpu_halt();
-    hal_cpu_disable_interrupts();
+#if defined(__x86_64__)
+    __asm__ volatile("sti\n"
+                     "hlt\n"
+                     "cli"
+                     ::: "memory");
+#else
+    xhci_delay_ms(1);
+#endif
     (*idle_spins)++;
+    return true;
 }
 
 static uint8_t xhci_take_completion(uint8_t slot_id, uint8_t ep_idx)
@@ -276,6 +302,9 @@ static inline uint64_t xhci_read_tsc(void) {
 }
 
 static void xhci_calibrate_tsc(void) {
+#if defined(__aarch64__)
+    g_tsc_per_ms = 1;
+#else
     if (g_api && g_api->timer_msleep) {
         uint64_t t0 = xhci_read_tsc();
         g_api->timer_msleep(10);
@@ -284,6 +313,7 @@ static void xhci_calibrate_tsc(void) {
             g_tsc_per_ms = (t1 - t0) / 10;
         }
     }
+#endif
 }
 
 static void xhci_tsc_busy_ms(uint32_t ms) {
@@ -445,19 +475,30 @@ static bool xhci_wait_event(uint32_t expected_type,
                              uint32_t *status_out,
                              uint32_t timeout_ms)
 {
+#if !defined(__aarch64__)
     uint64_t tsc_per_ms = g_tsc_per_ms;
     uint64_t tsc_abs0 = xhci_read_tsc();
+#endif
 
     bool result = false;
     uint64_t rflags;
     uint32_t idle_spins = 0;
+#if defined(__aarch64__)
+    uint32_t elapsed_ms = 0;
+#endif
     
     rflags = hal_cpu_save_interrupts();
 
     while (1) {
+#if defined(__aarch64__)
+        if (elapsed_ms >= timeout_ms) {
+            break;
+        }
+#else
         if (xhci_read_tsc() - tsc_abs0 >= (uint64_t)timeout_ms * tsc_per_ms) {
             break;
         }
+#endif
 
         spinlock_lock(&g_xhci_lock);
 
@@ -484,7 +525,11 @@ static bool xhci_wait_event(uint32_t expected_type,
         volatile xhci_trb_t *trb = &g_evt_ring[g_evt_deq];
         if ((trb->control & 1u) != g_evt_cycle) {
             spinlock_unlock(&g_xhci_lock);
-            xhci_wait_for_work(rflags, &idle_spins);
+            if (xhci_wait_for_work(rflags, &idle_spins)) {
+#if defined(__aarch64__)
+                ++elapsed_ms;
+#endif
+            }
             continue;
         }
 
@@ -684,7 +729,9 @@ void xhci_init(void)
     spinlock_init(&g_xhci_lock);
     spinlock_init(&g_dma_bounce_lock);
     g_ready = false;
+
     xhci_calibrate_tsc();
+
     g_cap = NULL;
     g_op = NULL;
     g_db = NULL;
@@ -707,7 +754,13 @@ void xhci_init(void)
     uint8_t xhci_bus = 0, xhci_dev = 0, xhci_func = 0;
     bool    found = false;
 
-    for (uint16_t b = 0; b < 256 && !found; b++) {
+#if defined(__aarch64__)
+    const uint16_t pci_bus_limit = 1;
+#else
+    const uint16_t pci_bus_limit = 256;
+#endif
+
+    for (uint16_t b = 0; b < pci_bus_limit && !found; b++) {
         for (uint8_t d = 0; d < 32 && !found; d++) {
             for (uint8_t f = 0; f < 8 && !found; f++) {
                 uint32_t id = g_api->pci_read_config((uint8_t)b, d, f, 0x00);
@@ -761,14 +814,22 @@ void xhci_init(void)
 
     xhci_take_ownership();
 
-    if (!xhci_wait_for_usbsts(XHCI_STS_CNR, 0u, 2000u)) return;
+    if (!xhci_wait_for_usbsts(XHCI_STS_CNR, 0u, 2000u)) {
+        return;
+    }
 
     g_op->usbcmd &= ~(1u << 0);
-    if (!xhci_wait_for_usbsts(XHCI_STS_HCH, XHCI_STS_HCH, 2000u)) return;
+    if (!xhci_wait_for_usbsts(XHCI_STS_HCH, XHCI_STS_HCH, 2000u)) {
+        return;
+    }
 
     g_op->usbcmd |= (1u << 1);
-    if (!xhci_wait_for_usbcmd(XHCI_CMD_HCRST, 0u, 2000u)) return;
-    if (!xhci_wait_for_usbsts(XHCI_STS_CNR, 0u, 2000u)) return;
+    if (!xhci_wait_for_usbcmd(XHCI_CMD_HCRST, 0u, 2000u)) {
+        return;
+    }
+    if (!xhci_wait_for_usbsts(XHCI_STS_CNR, 0u, 2000u)) {
+        return;
+    }
 
     uint32_t db_offset  = g_cap->dboff  & ~0x3u;
     uint32_t rts_offset = g_cap->rtsoff & ~0x1Fu;
@@ -861,7 +922,9 @@ void xhci_init(void)
     (void)g_op->usbsts;
 
     g_op->usbcmd |= (1u << 0);
-    if (!xhci_wait_for_usbsts(XHCI_STS_HCH, 0u, 1000u)) return;
+    if (!xhci_wait_for_usbsts(XHCI_STS_HCH, 0u, 1000u)) {
+        return;
+    }
 
     g_api->memset(g_slot_map, 0, sizeof(g_slot_map));
     g_api->memset(g_addr_from_slot, 0, sizeof(g_addr_from_slot));

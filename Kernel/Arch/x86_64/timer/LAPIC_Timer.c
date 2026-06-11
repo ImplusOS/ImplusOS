@@ -12,10 +12,8 @@
 #define PIT_COMMAND       0x43
 #define PIT_BASE_FREQ     1193182U
 
-static uint32_t g_lapic_initial_count = 0;
 static uint32_t g_timer_hz = 0;
 static void (*g_timer_callback)(void) = NULL;
-static int g_using_lapic = 0;
 static volatile uint64_t g_ticks = 0;
 
 static void pit_set_frequency(uint32_t hz) {
@@ -36,8 +34,6 @@ static void pit_set_frequency(uint32_t hz) {
     outb(PIT_CHANNEL0_DATA, (uint8_t)((divisor >> 8) & 0xFF));
 
     g_timer_hz = clamped_hz;
-    
-    serial_write_string("x86_64: PIT frequency set successfully.\n");
 }
 
 static void lapic_timer_handler(void) {
@@ -48,7 +44,6 @@ static void lapic_timer_handler(void) {
 }
 
 static void lapic_timer_hal_init(uint32_t hz) {
-    serial_write_string("x86_64: Initializing LAPIC/PIT Timer HAL\n");
     g_timer_hz = hz;
     register_interrupt_handler(VECTOR_TIMER, lapic_timer_handler);
     
@@ -81,9 +76,29 @@ static void lapic_set_handler(void (*handler)(void)) {
     g_timer_callback = handler;
 }
 
+static void lapic_disable_irq(void) {
+    platform_interrupts_mask_pit();
+
+    if (!platform_interrupts_using_lapic()) {
+        uint8_t master_mask = inb(0x21);
+        master_mask |= 0x01u;
+        outb(0x21, master_mask);
+    }
+}
+
+static void lapic_switch_to_local(void) {
+    if (!platform_interrupts_using_lapic() || !lapic_is_present()) {
+        return;
+    }
+
+    platform_interrupts_route_pit();
+}
+
 const timer_hal_t lapic_timer_hal = {
     .init = lapic_timer_hal_init,
     .get_ticks = lapic_get_ticks,
     .msleep = lapic_msleep,
-    .set_handler = lapic_set_handler
+    .set_handler = lapic_set_handler,
+    .disable_irq = lapic_disable_irq,
+    .switch_to_local = lapic_switch_to_local
 };

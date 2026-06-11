@@ -2,13 +2,14 @@
 #include "../../IO_Main.h"
 #include "Drivers/Module/DriverManager.h"
 #include "Drivers/Client/USB/USB_Driver_API.h"
-#include "Debug/serial/Serial.h"
 #include "Core/timer/Timer.h"
 
 static bool g_usb_ms_working = false;
 
 bool usb_ms_init(uint64_t partition_lba) {
     g_usb_ms_working = false;
+
+    usb_driver_client_init();
 
     uint8_t probe_buf[512];
     

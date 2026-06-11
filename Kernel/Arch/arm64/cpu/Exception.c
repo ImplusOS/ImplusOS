@@ -23,14 +23,6 @@ static void handle_irq(arm64_exception_frame_t *frame) {
     uint32_t irq = iar & 0x3FFu;
 
     if (irq < 1020) {
-        if (irq == 30) {
-            static int count = 0;
-            if (++count >= 60) {
-                serial_write_string("arm64: Timer IRQ 30 heartbeat\n");
-                count = 0;
-            }
-        }
-
         if (irq < 1024 && g_interrupt_handlers[irq]) {
             g_interrupt_handlers[irq]();
         }
@@ -50,11 +42,13 @@ void arm64_exception_dispatch(arm64_exception_frame_t *frame, uint64_t type)
         uint32_t ec = (uint32_t)((frame->esr_el1 >> ESR_EC_SHIFT) & ESR_EC_MASK);
         if (ec == ESR_EC_SVC64) {
             uint64_t nr = frame->x[8];
-            uint64_t result_frame[1] = {0};
+            syscall_set_user_rsp(frame->sp_el0);
+            uint64_t result_frame[SYSCALL_FRAME_QWORDS] = {0};
             (void)syscall_dispatch((uint64_t)(uintptr_t)result_frame, nr,
                                    frame->x[0], frame->x[1], frame->x[2],
                                    frame->x[3], frame->x[4]);
             frame->x[0] = result_frame[0];
+            frame->sp_el0 = syscall_get_user_rsp();
             return;
         }
     }

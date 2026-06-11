@@ -6,7 +6,6 @@
 #include "MassStorage/MassStorage.h"
 #include "HID/USB_HID.h"
 #include "Drivers/Module/DriverBinary.h"
-#include "Debug/serial/Serial.h"
 
 const driver_binary_t *g_api = NULL;
 
@@ -666,12 +665,12 @@ static void usb_master_init(void)
 
     if (g_api) g_api->memset(g_dev_hc, 0, sizeof(g_dev_hc));
     g_default_hc = USB_HC_NONE;
-    
+
     xhci_init();
     if (xhci_is_ready()) {
         usb_set_hc_type(USB_HC_XHCI);
     }
-    
+
     ehci_init();
     if (g_hc_type == USB_HC_NONE && ehci_get_num_ports() > 0) {
         usb_set_hc_type(USB_HC_EHCI);
@@ -689,7 +688,7 @@ static void usb_master_init(void)
     if (g_hc_type == USB_HC_NONE && g_uhci_ready) {
         usb_set_hc_type(USB_HC_UHCI);
     }
-    
+
     usb_hid_init();
     usb_core_init();
     bot_init();

@@ -28,6 +28,7 @@
 #define FONT_SIZE_LARGE      20
 #define MENU_ITEM_HEIGHT     34
 #define PROGRESS_BAR_HEIGHT  22
+#define RECOVERY_FONT_MAX_SIZE (6u * 1024u * 1024u)
 
 #define KEY_UP   258
 #define KEY_DOWN 259
@@ -45,11 +46,18 @@
 #define C_SUBTEXT 0xFFA0A0A0u
 
 static stbtt_fontinfo g_font_info     = {0};
-static uint8_t       *g_font_data     = NULL;
+static uint8_t        g_font_storage[RECOVERY_FONT_MAX_SIZE];
+static uint8_t       *g_font_data     = g_font_storage;
 static uint32_t       g_font_data_size = 0;
 static bool           g_font_loaded   = false;
 
-static void puts_serial(const char *s) { serial_write_string(s); }
+static void puts_serial(const char *s)
+{
+    if (!s) return;
+    while (*s) {
+        serial_write_char(*s++);
+    }
+}
 
 static int uint64_to_str(uint64_t val, char *buf)
 {
@@ -60,6 +68,15 @@ static int uint64_to_str(uint64_t val, char *buf)
     for (int i = 0; i < len; i++) buf[i] = tmp[len - 1 - i];
     buf[len] = '\0';
     return len;
+}
+
+static int int64_to_str(int64_t val, char *buf)
+{
+    if (val < 0) {
+        buf[0] = '-';
+        return 1 + uint64_to_str((uint64_t)(-(val + 1)) + 1u, buf + 1);
+    }
+    return uint64_to_str((uint64_t)val, buf);
 }
 
 static void format_size(uint64_t bytes, char *buf)
@@ -93,33 +110,39 @@ static void format_percent(int pct, char *buf)
     buf[i++] = '%'; buf[i] = '\0';
 }
 
-static int init_font(void)
+static int load_font_from_path(const char *path)
 {
-    if (g_font_loaded) return 0;
-
     file_stat_t stat;
     memset(&stat, 0, sizeof(stat));
-    if (file_stat(RECOVERY_FONT_PATH, &stat) < 0 || !stat.exists) {
-        puts_serial("Warning: font file not found\n");
+    if (file_stat(path, &stat) < 0 || !stat.exists || stat.size == 0) {
+        return -1;
+    }
+    if (stat.size > RECOVERY_FONT_MAX_SIZE) {
+        puts_serial("Warning: font file too large, skipping\n");
         return -1;
     }
 
-    g_font_data = (uint8_t *)malloc(stat.size);
-    if (!g_font_data) { puts_serial("Error: OOM for font\n"); return -1; }
+    g_font_data = g_font_storage;
 
-    int32_t fd = file_open(RECOVERY_FONT_PATH, 0);
+    int32_t fd = file_open(path, 0);
     if (fd < 0) {
         puts_serial("Error: cannot open font\n");
-        free(g_font_data); g_font_data = NULL;
         return -1;
     }
 
-    int64_t read_len = file_read(fd, g_font_data, stat.size);
+    uint32_t total = 0;
+    while (total < stat.size) {
+        int64_t n = file_read(fd, g_font_data + total, stat.size - total);
+        if (n <= 0) {
+            break;
+        }
+        total += (uint32_t)n;
+    }
     file_close(fd);
 
-    if (read_len != (int64_t)stat.size) {
+    if (total != stat.size) {
         puts_serial("Error: short font read\n");
-        free(g_font_data); g_font_data = NULL;
+        g_font_data_size = 0;
         return -1;
     }
 
@@ -128,13 +151,75 @@ static int init_font(void)
     if (!stbtt_InitFont(&g_font_info, g_font_data,
                         stbtt_GetFontOffsetForIndex(g_font_data, 0))) {
         puts_serial("Error: stbtt_InitFont failed\n");
-        free(g_font_data); g_font_data = NULL;
+        g_font_data_size = 0;
         return -1;
     }
 
     g_font_loaded = true;
-    puts_serial("Font loaded\n");
+    puts_serial("Font loaded: ");
+    puts_serial(path);
+    puts_serial("\n");
     return 0;
+}
+
+static int load_font_from_boot_info(void)
+{
+    int64_t size = os_get_boot_font(NULL, 0);
+    if (size <= 0) {
+        return -1;
+    }
+    if ((uint64_t)size > RECOVERY_FONT_MAX_SIZE) {
+        puts_serial("Warning: boot font too large, skipping\n");
+        return -1;
+    }
+
+    g_font_data = g_font_storage;
+
+    int64_t copied = os_get_boot_font(g_font_data, (uint64_t)size);
+    if (copied != size) {
+        puts_serial("Error: cannot copy boot font\n");
+        g_font_data_size = 0;
+        return -1;
+    }
+
+    int offset = stbtt_GetFontOffsetForIndex(g_font_data, 0);
+    if (offset < 0 ||
+        !stbtt_InitFont(&g_font_info, g_font_data, offset)) {
+        puts_serial("Error: boot font is invalid\n");
+        g_font_data_size = 0;
+        return -1;
+    }
+
+    g_font_data_size = (uint32_t)size;
+    g_font_loaded = true;
+    puts_serial("Font loaded: boot info\n");
+    return 0;
+}
+
+static int init_font(void)
+{
+    static const char *paths[] = {
+        RECOVERY_FONT_PATH,
+        "/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Fonts/NotoSansJP-Regular.ttf",
+        "/BootManager/Fonts/NotoSansJP-Regular.ttf",
+        "/Fonts/NotoSansJP-Regular.ttf",
+        NULL
+    };
+
+    if (g_font_loaded) return 0;
+
+    for (int i = 0; paths[i]; i++) {
+        if (load_font_from_path(paths[i]) == 0) {
+            return 0;
+        }
+    }
+
+    if (load_font_from_boot_info() == 0) {
+        return 0;
+    }
+
+    puts_serial("Warning: recovery font file not found\n");
+    return -1;
 }
 
 static uint32_t blend_pixel(uint32_t src, uint32_t dst, uint8_t alpha)
@@ -600,13 +685,23 @@ static void run_recovery(void)
     puts_serial("\n");
 
     uint32_t count = 0;
-    if (os_get_disk_count(&count) < 0 || count == 0) {
+    int64_t disk_count_status = os_get_disk_count(&count);
+    if (disk_count_status < 0 || count == 0) {
+        char buf[24];
+        puts_serial("Disk count syscall status: ");
+        int64_to_str(disk_count_status, buf); puts_serial(buf);
+        puts_serial(", count: ");
+        uint64_to_str(count, buf); puts_serial(buf);
+        puts_serial("\n");
         puts_serial("Error: no disks reported by kernel.\n");
         wait_for_reboot(C_RED, "No disks detected",
                         "No storage devices were found. "
                         "Check connections and reboot.");
         return;
     }
+    puts_serial("Disk count: ");
+    char count_buf[21];
+    uint64_to_str(count, count_buf); puts_serial(count_buf); puts_serial("\n");
 
     system_disk_info_t *disks =
         (system_disk_info_t *)malloc(sizeof(system_disk_info_t) * count);

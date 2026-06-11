@@ -1,5 +1,6 @@
 #include "Syscall_Main.h"
 #include "Syscall_File.h"
+#include "kernel/boot_info.h"
 #include "kernel/status.h"
 #include "kernel/system_info.h"
 #include "Drivers/Module/DriverManager.h"
@@ -34,6 +35,7 @@ typedef struct {
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #define SYSCALL_MAX_PATH_LEN    512U
 #define SYSCALL_MAX_PUTS_LEN    1024U
@@ -60,6 +62,24 @@ static inline void syscall_arch_disable_interrupts(void)
     __asm__ volatile("msr daifset, #0xf" ::: "memory");
 #else
     __asm__ volatile("cli" ::: "memory");
+#endif
+}
+
+static inline void syscall_arch_user_access_begin(void)
+{
+#if defined(__x86_64__)
+    if ((hal_cpu_read_cr(4) & (1ULL << 21)) != 0) {
+        __asm__ volatile("stac" ::: "memory");
+    }
+#endif
+}
+
+static inline void syscall_arch_user_access_end(void)
+{
+#if defined(__x86_64__)
+    if ((hal_cpu_read_cr(4) & (1ULL << 21)) != 0) {
+        __asm__ volatile("clac" ::: "memory");
+    }
 #endif
 }
 
@@ -249,6 +269,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         goto pre_schedule;
     }
 
+    syscall_arch_user_access_begin();
     switch (num) {
         case SYSCALL_SERIAL_PUTCHAR:
             serial_write_char((char)arg1);
@@ -1174,7 +1195,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         }
         case SYSCALL_TKILL: {
             int32_t target_pid = (int32_t)arg1;
-            int32_t rc = process_terminate(target_pid);
+            int32_t rc = process_signal_deliver(target_pid, (int32_t)arg2);
             set_syscall_i32(saved_rsp, rc);
             break;
         }
@@ -1404,6 +1425,37 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
 
+        case SYSCALL_GET_BOOT_FONT: {
+            extern const BOOT_INFO *kernel_get_boot_info(void);
+            const BOOT_INFO *boot_info = kernel_get_boot_info();
+            uint64_t font_addr = boot_info ? boot_info->FontDataAddress : 0;
+            uint64_t font_size = boot_info ? boot_info->FontDataSize : 0;
+
+            if (font_addr == 0 || font_size == 0) {
+                set_syscall_result(saved_rsp, 0);
+                break;
+            }
+
+            void *buffer = (void *)(uintptr_t)arg1;
+            uint64_t capacity = arg2;
+            if (buffer == NULL || capacity == 0) {
+                set_syscall_result(saved_rsp, font_size);
+                break;
+            }
+            if (capacity < font_size) {
+                syscall_fail(saved_rsp, num, OS_STATUS_INVALID_ARG, "boot_font_buffer_too_small");
+                break;
+            }
+            if (!user_buffer_ok(buffer, font_size)) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_boot_font_buffer");
+                break;
+            }
+
+            memcpy(buffer, (const void *)(uintptr_t)font_addr, (size_t)font_size);
+            set_syscall_result(saved_rsp, font_size);
+            break;
+        }
+
         case SYSCALL_GET_DEVICE_INFO: {
             extern os_status_t sysinfo_get_device_info(uint32_t, system_device_t *);
             uint32_t index = (uint32_t)arg1;
@@ -1459,6 +1511,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
     }
 
 pre_schedule:
+    syscall_arch_user_access_end();
     syscall_arch_disable_interrupts();
 
     if (process_timeslice_expired()) {

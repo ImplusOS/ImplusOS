@@ -9,25 +9,21 @@
 .endm
 
 arm64_exception_vector_table:
-    // Current EL with SP0
     vector_entry arm64_sync_handler
     vector_entry arm64_irq_handler
     vector_entry arm64_fiq_handler
     vector_entry arm64_err_handler
 
-    // Current EL with SPx
     vector_entry arm64_sync_handler
     vector_entry arm64_irq_handler
     vector_entry arm64_fiq_handler
     vector_entry arm64_err_handler
 
-    // Lower EL (AArch64)
     vector_entry arm64_sync_handler
     vector_entry arm64_irq_handler
     vector_entry arm64_fiq_handler
     vector_entry arm64_err_handler
-
-    // Lower EL (AArch32)
+    
     vector_entry arm64_sync_handler
     vector_entry arm64_irq_handler
     vector_entry arm64_fiq_handler
@@ -65,10 +61,12 @@ arm64_exception_vector_table:
 .endm
 
 .macro restore_all
-    ldr x0, [sp, #(33 * 8)] // spsr_el1
+    ldr x0, [sp, #(33 * 8)]
     msr spsr_el1, x0
-    ldr x0, [sp, #(32 * 8)] // elr_el1
+    ldr x0, [sp, #(32 * 8)]
     msr elr_el1, x0
+    ldr x0, [sp, #(31 * 8)]
+    msr sp_el0, x0
     
     ldp x0, x1, [sp, #(0 * 8)]
     ldp x2, x3, [sp, #(2 * 8)]
@@ -93,27 +91,27 @@ arm64_exception_vector_table:
 arm64_sync_handler:
     save_all
     mov x0, sp
-    mov x1, #0 // SYNC
+    mov x1, #0
     bl arm64_exception_dispatch
     restore_all
 
 arm64_irq_handler:
     save_all
     mov x0, sp
-    mov x1, #1 // IRQ
+    mov x1, #1
     bl arm64_exception_dispatch
     restore_all
 
 arm64_fiq_handler:
     save_all
     mov x0, sp
-    mov x1, #2 // FIQ
+    mov x1, #2
     bl arm64_exception_dispatch
     restore_all
 
 arm64_err_handler:
     save_all
     mov x0, sp
-    mov x1, #3 // ERROR
+    mov x1, #3
     bl arm64_exception_dispatch
     restore_all

@@ -546,7 +546,7 @@ static bool ata_wait_ready(uint32_t timeout) {
     while (timeout--) {
         uint8_t st = inb(g_ata_status);
         if (ata_status_is_absent(st)) return false;
-        if (!(st & ATA_SR_BSY) && (st & 0x40u)) return true; // 0x40 is DRDY
+        if (!(st & ATA_SR_BSY) && (st & 0x40u)) return true;
     }
     return false;
 }

@@ -33,10 +33,69 @@ static inline uint64_t irq_save_disable(void) { return hal_cpu_save_interrupts()
 static inline void irq_restore(uint64_t flags) { hal_cpu_restore_interrupts(flags); }
 #endif
 
+#if defined(__aarch64__)
+#define ARM64_QEMU_VIRT_PCI_ECAM_BASE 0x4010000000ULL
+#define ARM64_PCI_ECAM_BUS_SHIFT      20u
+#define ARM64_PCI_ECAM_DEVICE_SHIFT   15u
+#define ARM64_PCI_ECAM_FUNC_SHIFT     12u
+#define ARM64_PCI_ECAM_BUS_SIZE       (1ULL << ARM64_PCI_ECAM_BUS_SHIFT)
+#define ARM64_PCI_ECAM_BUS_COUNT      256u
+
+static volatile uint8_t *g_arm64_pci_ecam = NULL;
+static uint8_t g_arm64_pci_bus_mapped[ARM64_PCI_ECAM_BUS_COUNT];
+
+static bool arm64_pci_ensure_bus_mapped(uint8_t bus)
+{
+    if (g_arm64_pci_bus_mapped[bus] != 0u) {
+        return true;
+    }
+    if (g_driver_api == NULL || g_driver_api->map_mmio_virt == NULL) {
+        return false;
+    }
+
+    uint64_t bus_base = ARM64_QEMU_VIRT_PCI_ECAM_BASE +
+                        ((uint64_t)bus * ARM64_PCI_ECAM_BUS_SIZE);
+    if (g_driver_api->map_mmio_virt(bus_base) == NULL) {
+        return false;
+    }
+
+    g_arm64_pci_bus_mapped[bus] = 1u;
+    if (g_arm64_pci_ecam == NULL) {
+        g_arm64_pci_ecam = (volatile uint8_t *)(uintptr_t)ARM64_QEMU_VIRT_PCI_ECAM_BASE;
+    }
+    return true;
+}
+
+static volatile uint32_t *arm64_pci_config_addr(uint8_t bus,
+                                                uint8_t device,
+                                                uint8_t func,
+                                                uint8_t offset)
+{
+    if (!arm64_pci_ensure_bus_mapped(bus) || g_arm64_pci_ecam == NULL) {
+        return NULL;
+    }
+
+    uint64_t ecam_offset =
+        ((uint64_t)bus << ARM64_PCI_ECAM_BUS_SHIFT) |
+        ((uint64_t)device << ARM64_PCI_ECAM_DEVICE_SHIFT) |
+        ((uint64_t)func << ARM64_PCI_ECAM_FUNC_SHIFT) |
+        ((uint64_t)offset & 0xFCu);
+
+    return (volatile uint32_t *)(g_arm64_pci_ecam + ecam_offset);
+}
+#else
 static spinlock_t g_pci_lock = {0};
+#endif
 
 uint32_t pci_read_config(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset)
 {
+#if defined(__aarch64__)
+    volatile uint32_t *addr = arm64_pci_config_addr(bus, device, func, offset);
+    if (addr == NULL) {
+        return 0xFFFFFFFFu;
+    }
+    return *addr;
+#else
     uint32_t address = (1u << 31) |
                        ((uint32_t)bus << 16) |
                        ((uint32_t)device << 11) |
@@ -50,10 +109,18 @@ uint32_t pci_read_config(uint8_t bus, uint8_t device, uint8_t func, uint8_t offs
     spinlock_unlock(&g_pci_lock);
     irq_restore(flags);
     return val;
+#endif
 }
 
 void pci_write_config(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset, uint32_t value)
 {
+#if defined(__aarch64__)
+    volatile uint32_t *addr = arm64_pci_config_addr(bus, device, func, offset);
+    if (addr == NULL) {
+        return;
+    }
+    *addr = value;
+#else
     uint32_t address = (1u << 31) |
                        ((uint32_t)bus << 16) |
                        ((uint32_t)device << 11) |
@@ -66,6 +133,7 @@ void pci_write_config(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset,
     outl(PCI_CONFIG_DATA, value);
     spinlock_unlock(&g_pci_lock);
     irq_restore(flags);
+#endif
 }
 
 uint32_t pci_read_bar(uint8_t bus, uint8_t device, uint8_t func, uint8_t bar_index)
@@ -185,6 +253,12 @@ static const pci_driver_t g_pci_driver = {
 static void pci_driver_shutdown(void)
 {
     g_driver_api = NULL;
+#if defined(__aarch64__)
+    g_arm64_pci_ecam = NULL;
+    for (uint32_t i = 0; i < ARM64_PCI_ECAM_BUS_COUNT; ++i) {
+        g_arm64_pci_bus_mapped[i] = 0u;
+    }
+#endif
 }
 
 static const driver_module_descriptor_t g_pci_module = {

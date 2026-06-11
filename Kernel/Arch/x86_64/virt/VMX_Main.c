@@ -22,6 +22,7 @@ static void    *g_vmxon_region = NULL;
 static uint32_t g_vmcs_revision = 0;
 static spinlock_t g_vmx_lock;
 vmx_regs_t *g_vmx_current_guest_regs = NULL;
+static uint8_t g_vmx_host_fpu_state[512] __attribute__((aligned(16)));
 
  
 static uint8_t g_vmx_host_stack[16384] __attribute__((aligned(16)));
@@ -814,6 +815,7 @@ int vmx_vcpu_run(vmx_vcpu_t *vcpu)
     while (1) {
         int rc;
         g_vmx_current_guest_regs = &vcpu->guest_regs;
+        hal_cpu_save_fpu(g_vmx_host_fpu_state);
         if (!vcpu->launched) {
             rc = vmx_vmlaunch_asm(&vcpu->guest_regs);
             if (rc == 0) {
@@ -822,6 +824,7 @@ int vmx_vcpu_run(vmx_vcpu_t *vcpu)
         } else {
             rc = vmx_vmresume_asm(&vcpu->guest_regs);
         }
+        hal_cpu_restore_fpu(g_vmx_host_fpu_state);
         g_vmx_current_guest_regs = NULL;
 
         if (rc != 0) {

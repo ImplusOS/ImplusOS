@@ -5,7 +5,6 @@
 #include "interfaces/timer_hal.h"
 #include "Core/process/ProcessManager.h"
 #include "Core/window/WindowManager_Kernel.h"
-#include "Debug/serial/Serial.h"
 #include "Drivers/Module/InputManager.h"
 #include "Network/network_main.h"
 #include "smp/SMP_Main.h"
@@ -14,39 +13,63 @@ static const timer_hal_t* g_timer_hal = NULL;
 static volatile uint64_t g_tick_count = 0;
 static timer_callback_t g_tick_callback = NULL;
 static int g_timer_initialized = 0;
+static volatile uint32_t g_timer_clock_started = 0;
+static volatile uint32_t g_timer_services_started = 0;
 static uint32_t g_requested_hz = 0;
 
-static void timer_core_handler(void) {
-    process_on_timer_tick();
+#define TIMER_DEFAULT_HZ 60u
 
+static void timer_core_handler(void) {
     if (smp_get_current_cpu_id() == 0) {
         g_tick_count++;
-        
-        input_manager_schedule_poll();
-        network_stack_on_timer_tick();
-        wm_kernel_on_timer();
 
-        timer_callback_t cb = g_tick_callback;
-        if (cb) {
-            cb(g_tick_count);
+        if (__atomic_load_n(&g_timer_clock_started, __ATOMIC_ACQUIRE) != 0u) {
+            timer_callback_t cb = g_tick_callback;
+            if (cb) {
+                cb(g_tick_count);
+            }
+        }
+
+        if (__atomic_load_n(&g_timer_services_started, __ATOMIC_ACQUIRE) != 0u) {
+            process_on_timer_tick();
+            input_manager_schedule_poll();
+            network_stack_on_timer_tick();
+            wm_kernel_on_timer();
         }
     }
 }
 
-void timer_init(const timer_hal_t* hal, uint32_t hz) {
+void timer_init(const timer_hal_t* hal) {
     if (g_timer_initialized) {
         return;
     }
 
     g_timer_hal = hal;
-    g_requested_hz = hz;
+    g_requested_hz = TIMER_DEFAULT_HZ;
 
-    if (g_timer_hal) {
-        g_timer_hal->set_handler(timer_core_handler);
-        g_timer_hal->init(hz);
+    if (g_timer_hal && g_timer_hal->init) {
+        if (g_timer_hal->set_handler) {
+            g_timer_hal->set_handler(timer_core_handler);
+        }
+        g_timer_hal->init(g_requested_hz);
     }
 
     g_timer_initialized = 1;
+}
+
+void timer_start_clock(void) {
+    if (!g_timer_initialized) {
+        return;
+    }
+    if (__atomic_load_n(&g_timer_clock_started, __ATOMIC_ACQUIRE) != 0u) {
+        return;
+    }
+    __atomic_store_n(&g_timer_clock_started, 1u, __ATOMIC_RELEASE);
+}
+
+void timer_start_services(void) {
+    timer_start_clock();
+    __atomic_store_n(&g_timer_services_started, 1u, __ATOMIC_RELEASE);
 }
 
 void timer_set_callback(timer_callback_t cb) {
@@ -54,30 +77,30 @@ void timer_set_callback(timer_callback_t cb) {
 }
 
 uint64_t timer_ticks(void) {
-    if (g_timer_hal) {
-        // We can either use HAL's get_ticks or our own g_tick_count.
-        // The original Timer.c had its own g_tick_count updated in handler.
-        return g_tick_count;
+    if (g_timer_hal && g_timer_hal->get_ticks) {
+        return g_timer_hal->get_ticks();
     }
-    return 0;
+    return g_tick_count;
 }
 
 uint32_t timer_hz(void) {
-    return (g_requested_hz != 0) ? g_requested_hz : 60;
+    return (g_requested_hz != 0) ? g_requested_hz : TIMER_DEFAULT_HZ;
 }
 
 void timer_disable_irq0(void) {
-    /* TODO: arm64 implementation of disabling timer IRQ if needed */
-    // For x86_64, this was PIT specific. HAL should handle this if it's HW specific.
+    if (g_timer_hal && g_timer_hal->disable_irq) {
+        g_timer_hal->disable_irq();
+    }
 }
 
 void timer_switch_lapic(void) {
-    /* TODO: arm64 - this is x86_64 specific. 
-       The HAL implementation for x86_64 can choose to use LAPIC. */
+    if (g_timer_hal && g_timer_hal->switch_to_local) {
+        g_timer_hal->switch_to_local();
+    }
 }
 
 void timer_apic_sleep_ms(uint32_t ms) {
-    if (g_timer_hal) {
+    if (g_timer_hal && g_timer_hal->msleep) {
         g_timer_hal->msleep(ms);
     }
 }

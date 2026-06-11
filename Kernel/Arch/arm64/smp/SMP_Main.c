@@ -1,7 +1,9 @@
 #include "SMP_Main.h"
 #include "PSCI.h"
+#include "kernel/config.h"
 
 static volatile uint32_t g_cpu_count = 1;
+static volatile uint32_t g_cpu_possible = 1;
 static volatile int32_t g_current_pid[64];
 
 static inline uint64_t read_mpidr(void)
@@ -14,6 +16,13 @@ static inline uint64_t read_mpidr(void)
 void smp_init(void)
 {
     g_cpu_count = 1;
+    g_cpu_possible = OS_CONFIG_SMP_ENABLED ? (uint32_t)OS_CONFIG_SMP_MAX_CPUS : 1u;
+    if (g_cpu_possible == 0u) {
+        g_cpu_possible = 1u;
+    }
+    for (uint32_t i = 0; i < 64u; ++i) {
+        g_current_pid[i] = -1;
+    }
 }
 
 uint32_t smp_get_cpu_count(void)
@@ -23,7 +32,7 @@ uint32_t smp_get_cpu_count(void)
 
 uint32_t smp_get_possible_cpu_count(void)
 {
-    return g_cpu_count;
+    return g_cpu_possible;
 }
 
 uint32_t smp_get_current_cpu_id(void)
@@ -55,4 +64,3 @@ void smp_set_current_pid(int32_t pid)
     uint32_t cpu = smp_get_current_cpu_id();
     if (cpu < 64) g_current_pid[cpu] = pid;
 }
-

@@ -65,6 +65,7 @@ void *process_user_alloc(uint32_t size);
 int process_user_free(void *ptr);
 void *process_user_mmap(uint64_t length, uint64_t flags);
 uint64_t process_signal_set_handler(int32_t signum, uint64_t handler);
+int process_signal_deliver(int32_t pid, int32_t signum);
 int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options);
 int32_t process_getppid(void);
 int32_t process_get_parent_pid(int32_t pid);

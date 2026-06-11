@@ -73,16 +73,47 @@ static stbtt_fontinfo g_font;
 static int g_font_loaded = 0;
 
 static int load_font(const char *path) {
+    file_stat_t st;
+    if (file_stat(path, &st) < 0 || !st.exists || st.is_dir ||
+        st.size == 0 || st.size > sizeof(g_font_buffer)) {
+        return -1;
+    }
+
     int32_t fd = file_open(path, 0);
     if (fd < 0) return -1;
-    int64_t size = file_read(fd, g_font_buffer, sizeof(g_font_buffer));
+
+    uint32_t total = 0;
+    while (total < st.size) {
+        int64_t n = file_read(fd, g_font_buffer + total, st.size - total);
+        if (n <= 0) {
+            file_close(fd);
+            return -1;
+        }
+        total += (uint32_t)n;
+    }
+
     file_close(fd);
-    if (size <= 0) return -1;
+
     int offset = stbtt_GetFontOffsetForIndex(g_font_buffer, 0);
     if (offset < 0) return -1;
     if (!stbtt_InitFont(&g_font, g_font_buffer, offset)) return -1;
     g_font_loaded = 1;
     return 0;
+}
+
+static int load_default_font(void) {
+    static const char *const paths[] = {
+        "/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Fonts/NotoSansJP-Regular.ttf",
+        "/BootManager/Resource/Fonts/NotoSansJP-Regular.ttf",
+    };
+
+    for (uint32_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        if (load_font(paths[i]) == 0) {
+            return 0;
+        }
+    }
+
+    return -1;
 }
 
 #define WP_PATH "/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Background.png"
@@ -794,7 +825,7 @@ void _start(void) {
     write_boot_count(boot_count);
 
     draw_background();
-    load_font("/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Fonts/NotoSansJP-Regular.ttf");
+    load_default_font();
 
     if (first_boot) {
         draw_text_centered("はじめまして。サービスを開始中です。", 0, 42.0f, 0xFFFFFF);

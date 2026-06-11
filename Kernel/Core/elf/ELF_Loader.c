@@ -12,7 +12,6 @@
 #include "Core/sync/Spinlock.h"
 #include "Core/vfs/VFS.h"
 #include "Debug/printf/printf.h"
-#include "Debug/serial/Serial.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -39,62 +38,51 @@
 
 #define SHN_UNDEF 0
 
-/* -----------------------------------------------------------------------
- * x86-64 relocation types  (System V ABI, psABI supplement)
- * --------------------------------------------------------------------- */
-#define R_X86_64_NONE      0   /* 処理不要                                */
-#define R_X86_64_64        1   /* S + A          → 64-bit絶対           */
-#define R_X86_64_PC32      2   /* S + A - P      → 32-bit PC相対        */
-#define R_X86_64_COPY      5   /* 動的コピー（カーネルモジュール禁止）    */
-#define R_X86_64_GLOB_DAT  6   /* S + A          → 64-bit GOTエントリ   */
-#define R_X86_64_JUMP_SLOT 7   /* S              → PLTエントリ          */
-#define R_X86_64_RELATIVE  8   /* B + A          → 64-bit相対           */
-#define R_X86_64_PC64      24  /* S + A - P      → 64-bit PC相対        */
-#define R_X86_64_PLT32     4   /* L + A - P → PC相対32(PLT、モジュールではPC32として処理) */
-#define R_X86_64_32        10  /* S + A          → 32-bit符号なし絶対   */
-#define R_X86_64_32S       11  /* S + A          → 32-bit符号付き絶対   */
+#define R_X86_64_NONE      0
+#define R_X86_64_64        1
+#define R_X86_64_PC32      2
+#define R_X86_64_COPY      5
+#define R_X86_64_GLOB_DAT  6
+#define R_X86_64_JUMP_SLOT 7
+#define R_X86_64_RELATIVE  8
+#define R_X86_64_PC64      24
+#define R_X86_64_PLT32     4
+#define R_X86_64_32        10
+#define R_X86_64_32S       11
 
-/* -----------------------------------------------------------------------
- * AArch64 relocation types  (ELF for the Arm 64-bit Architecture)
- * --------------------------------------------------------------------- */
-#define R_AARCH64_NONE           0    /* 処理不要                                        */
-#define R_AARCH64_ABS64          257  /* S + A          → 64-bit絶対                   */
-#define R_AARCH64_ABS32          258  /* S + A          → 32-bit絶対（範囲チェック付き）*/
-#define R_AARCH64_ABS16          259  /* S + A          → 16-bit絶対（範囲チェック付き）*/
-#define R_AARCH64_PREL64         260  /* S + A - P      → 64-bit PC相対                */
-#define R_AARCH64_PREL32         261  /* S + A - P      → 32-bit PC相対                */
-#define R_AARCH64_PREL16         262  /* S + A - P      → 16-bit PC相対（範囲チェック）*/
+#define R_AARCH64_NONE           0
+#define R_AARCH64_ABS64          257
+#define R_AARCH64_ABS32          258
+#define R_AARCH64_ABS16          259
+#define R_AARCH64_PREL64         260
+#define R_AARCH64_PREL32         261
+#define R_AARCH64_PREL16         262
 
-/* MOVZ/MOVK 即値パッチ (Gn = Nビット目16bit窓) */
-#define R_AARCH64_MOVW_UABS_G0        263  /* S + A の [15:0]  → MOVZ/MOVK imm16     */
-#define R_AARCH64_MOVW_UABS_G0_NC     264  /* S + A の [15:0]  → (範囲チェックなし)  */
-#define R_AARCH64_MOVW_UABS_G1        265  /* S + A の [31:16] → MOVZ/MOVK imm16     */
-#define R_AARCH64_MOVW_UABS_G1_NC     266  /* S + A の [31:16] → (範囲チェックなし)  */
-#define R_AARCH64_MOVW_UABS_G2        267  /* S + A の [47:32] → MOVZ/MOVK imm16     */
-#define R_AARCH64_MOVW_UABS_G2_NC     268  /* S + A の [47:32] → (範囲チェックなし)  */
-#define R_AARCH64_MOVW_UABS_G3        269  /* S + A の [63:48] → MOVZ/MOVK imm16     */
+#define R_AARCH64_MOVW_UABS_G0        263
+#define R_AARCH64_MOVW_UABS_G0_NC     264
+#define R_AARCH64_MOVW_UABS_G1        265
+#define R_AARCH64_MOVW_UABS_G1_NC     266
+#define R_AARCH64_MOVW_UABS_G2        267
+#define R_AARCH64_MOVW_UABS_G2_NC     268
+#define R_AARCH64_MOVW_UABS_G3        269
 
-/* ADRP + ADD / ADRP + LDR 系 */
-#define R_AARCH64_ADR_PREL_PG_HI21    275  /* (S + A の Page) - (P の Page) → ADRP imm21 */
-#define R_AARCH64_ADR_PREL_PG_HI21_NC 276  /* 同上（範囲チェックなし）                   */
-#define R_AARCH64_ADD_ABS_LO12_NC     277  /* S + A の [11:0]  → ADD  imm12             */
-#define R_AARCH64_LDST8_ABS_LO12_NC   278  /* S + A の [11:0]  → LDR/STR 8bit  imm12   */
+#define R_AARCH64_ADR_PREL_PG_HI21    275
+#define R_AARCH64_ADR_PREL_PG_HI21_NC 276
+#define R_AARCH64_ADD_ABS_LO12_NC     277
+#define R_AARCH64_LDST8_ABS_LO12_NC   278
 
-/* B / BL 系 */
-#define R_AARCH64_JUMP26              282  /* S + A - P → B    imm26 (±128 MiB)        */
-#define R_AARCH64_CALL26              283  /* S + A - P → BL   imm26 (±128 MiB)        */
+#define R_AARCH64_JUMP26              282
+#define R_AARCH64_CALL26              283
 
-/* LDR/STR 系 (他の幅) */
-#define R_AARCH64_LDST16_ABS_LO12_NC  284  /* S + A の [11:1]  → LDR/STR 16bit imm12  */
-#define R_AARCH64_LDST32_ABS_LO12_NC  285  /* S + A の [11:2]  → LDR/STR 32bit imm12  */
-#define R_AARCH64_LDST64_ABS_LO12_NC  286  /* S + A の [11:3]  → LDR/STR 64bit imm12  */
-#define R_AARCH64_LDST128_ABS_LO12_NC 299  /* S + A の [11:4]  → LDR/STR 128bit imm12 */
+#define R_AARCH64_LDST16_ABS_LO12_NC  284
+#define R_AARCH64_LDST32_ABS_LO12_NC  285
+#define R_AARCH64_LDST64_ABS_LO12_NC  286
+#define R_AARCH64_LDST128_ABS_LO12_NC 299
 
-/* 動的リンク用 (カーネルモジュールでは禁止) */
 #define R_AARCH64_COPY       1024
 #define R_AARCH64_GLOB_DAT   1025
 #define R_AARCH64_JUMP_SLOT  1026
-#define R_AARCH64_RELATIVE   1027  /* delta(S) + A → 64-bit (PIE用)                    */
+#define R_AARCH64_RELATIVE   1027
 
 #define ELF_PAGE_SIZE 4096ULL
 
@@ -262,7 +250,7 @@ static bool elf_validate_ehdr_arch(const Elf64_Ehdr *ehdr,
         return false;
     }
 
-    return true;  /* 元コードの typo "return true;zz" を修正 */
+    return true;
 }
 
 static void safe_memcpy(void *dest, const void *src, size_t n) {
@@ -273,17 +261,34 @@ static void safe_memcpy(void *dest, const void *src, size_t n) {
     }
 }
 
-/* -----------------------------------------------------------------------
- * sym_value_for_reloc
- *
- * リロケーションエントリのシンボルインデックスを解決し、
- * ランタイムアドレス（load_bias + st_value）を *sym_addr_out に返す。
- *
- * sym_index == 0（シンボルなしのリロケーション）の場合は
- * must_have_symbol = false で呼ぶこと。
- * SHN_UNDEF シンボルは *sym_addr_out = 0 として true を返す
- * （後続でゼロ書き込みとする動的リンク慣習に従う）。
- * --------------------------------------------------------------------- */
+static void sync_instruction_cache_range(uintptr_t start, uintptr_t end)
+{
+#if defined(PLATFORM_ARM64)
+    if (end <= start) {
+        return;
+    }
+
+    uint64_t ctr;
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+    uint64_t dcache_line = 4ULL << ((ctr >> 16) & 0xFULL);
+    uint64_t icache_line = 4ULL << (ctr & 0xFULL);
+    uintptr_t dstart = start & ~(uintptr_t)(dcache_line - 1ULL);
+    uintptr_t istart = start & ~(uintptr_t)(icache_line - 1ULL);
+
+    for (uintptr_t p = dstart; p < end; p += dcache_line) {
+        __asm__ volatile("dc cvau, %0" :: "r"(p) : "memory");
+    }
+    __asm__ volatile("dsb ish" ::: "memory");
+    for (uintptr_t p = istart; p < end; p += icache_line) {
+        __asm__ volatile("ic ivau, %0" :: "r"(p) : "memory");
+    }
+    __asm__ volatile("dsb ish; isb" ::: "memory");
+#else
+    (void)start;
+    (void)end;
+#endif
+}
+
 static bool sym_value_for_reloc(const Elf64_Sym *symbols,
                                 uint32_t         symbol_count,
                                 uint32_t         sym_index,
@@ -308,24 +313,6 @@ static bool sym_value_for_reloc(const Elf64_Sym *symbols,
     return true;
 }
 
-/* -----------------------------------------------------------------------
- * AArch64 命令パッチ用ヘルパー
- *
- * AArch64 の多くのリロケーションは、特定の命令フィールドのビット列を
- * 部分的に書き換える。以下は各命令フォーマットへのビット挿入関数。
- * --------------------------------------------------------------------- */
-
-/*
- * aarch64_patch_movzk
- * MOVZ / MOVK 命令の imm16 フィールド [20:5] を value の下位16ビットで更新する。
- * 命令レイアウト:
- *   [31]    sf  (64bit=1)
- *   [30:29] opc (MOVZ=10, MOVK=11)
- *   [28:23] 100101
- *   [22:21] hw  (シフト量 hw*16)
- *   [20:5]  imm16  ← ここを書き換える
- *   [4:0]   Rd
- */
 static bool aarch64_patch_movzk(void *insn_ptr, uint16_t value)
 {
     uint32_t insn;
@@ -335,21 +322,8 @@ static bool aarch64_patch_movzk(void *insn_ptr, uint16_t value)
     return true;
 }
 
-/*
- * aarch64_patch_adrp
- * ADRP 命令の imm21 フィールドを書き換える（ページオフセット付き相対アドレス）。
- * imm21 = imm_hi[23:5] || imm_lo[30:29]  （ビット連結）
- * 命令レイアウト:
- *   [31]    1
- *   [30:29] immlo (下位 2 bit)
- *   [28:24] 10000
- *   [23:5]  immhi (上位 19 bit)
- *   [4:0]   Rd
- * page_delta は符号付き21ビット値（4KiB単位ページ差分）。
- */
 static bool aarch64_patch_adrp(void *insn_ptr, int64_t page_delta)
 {
-    /* ±4GiB (= ±2^20 pages × 4KiB) が到達可能範囲 */
     if (page_delta < -(1LL << 20) || page_delta >= (1LL << 20)) {
         return false;
     }
@@ -366,11 +340,6 @@ static bool aarch64_patch_adrp(void *insn_ptr, int64_t page_delta)
     return true;
 }
 
-/*
- * aarch64_patch_add_imm12
- * ADD (immediate) 命令の imm12 フィールド [21:10] を書き換える。
- * value は 12 ビット符号なし整数でなければならない（[11:0] のみ使用）。
- */
 static bool aarch64_patch_add_imm12(void *insn_ptr, uint64_t value)
 {
     uint32_t imm12 = (uint32_t)(value & 0xFFFu);
@@ -381,23 +350,11 @@ static bool aarch64_patch_add_imm12(void *insn_ptr, uint64_t value)
     return true;
 }
 
-/*
- * aarch64_patch_ldst_imm12
- * LDR / STR (immediate, unsigned offset) 命令の imm12 フィールド [21:10] を書き換える。
- * アクセス幅に応じてビットシフトが異なるため、shift_bits で指定する。
- *   8bit  アクセス → shift_bits = 0
- *   16bit アクセス → shift_bits = 1
- *   32bit アクセス → shift_bits = 2
- *   64bit アクセス → shift_bits = 3
- *   128bit アクセス → shift_bits = 4
- * value はバイトアドレスの下位12ビット。アクセス幅で割り切れる必要がある。
- */
 static bool aarch64_patch_ldst_imm12(void *insn_ptr,
                                      uint64_t value,
                                      unsigned shift_bits)
 {
     uint64_t byte_off = value & 0xFFFu;
-    /* アライメント確認 */
     if (shift_bits > 0 && (byte_off & ((1u << shift_bits) - 1u)) != 0) {
         return false;
     }
@@ -409,19 +366,12 @@ static bool aarch64_patch_ldst_imm12(void *insn_ptr,
     return true;
 }
 
-/*
- * aarch64_patch_branch26
- * B / BL 命令の imm26 フィールド [25:0] を書き換える。
- * オフセットは命令アドレスからのバイト差を 4 で割った値（±128 MiB）。
- */
 static bool aarch64_patch_branch26(void *insn_ptr, int64_t byte_delta)
 {
-    /* 4バイトアライメント確認 */
     if (byte_delta & 3) {
         return false;
     }
     int64_t instr_delta = byte_delta >> 2;
-    /* ±2^25 の範囲チェック */
     if (instr_delta < -(1LL << 25) || instr_delta >= (1LL << 25)) {
         return false;
     }
@@ -433,12 +383,6 @@ static bool aarch64_patch_branch26(void *insn_ptr, int64_t byte_delta)
     return true;
 }
 
-/* -----------------------------------------------------------------------
- * apply_relocations
- *
- * 単一の RELA セクションを処理する。
- * x86-64 / AArch64 双方のリロケーションタイプを網羅する。
- * --------------------------------------------------------------------- */
 static bool apply_relocations(const uint8_t     *image,
                                uint64_t           file_size,
                                const Elf64_Shdr  *rel_sec,
@@ -489,19 +433,14 @@ static bool apply_relocations(const uint8_t     *image,
         uint32_t sym_index = elf64_r_sym(rela->r_info);
 
 #if defined(PLATFORM_ARM64)
-        /* ----------------------------------------------------------------
-         * AArch64 リロケーション処理
-         * ---------------------------------------------------------------- */
         switch (type) {
 
-        /* ---- 何もしない ---- */
         case R_AARCH64_NONE:
             continue;
 
-        /* ---- 64ビット絶対値 ---- */
         case R_AARCH64_ABS64:
-        case R_AARCH64_GLOB_DAT:  /* GOT エントリ: S + A */
-        case R_AARCH64_JUMP_SLOT: /* PLT エントリ: S      */
+        case R_AARCH64_GLOB_DAT:
+        case R_AARCH64_JUMP_SLOT:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
                 if (!runtime_range_ok(runtime_start, image_span,
@@ -511,11 +450,10 @@ static bool apply_relocations(const uint8_t     *image,
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
                                          sym_index, load_bias,
-                                         /*must_have_symbol=*/true,
+                                         true,
                                          &sym_addr)) {
                     return false;
                 }
-                /* SHN_UNDEF: ゼロで埋める（外部シンボル未解決） */
                 uint64_t res64 = (sym_addr == 0 && type != R_AARCH64_ABS64)
                                  ? 0ULL
                                  : (uint64_t)((int64_t)sym_addr + rela->r_addend);
@@ -523,7 +461,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 32ビット絶対値（範囲チェック必須）---- */
         case R_AARCH64_ABS32:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -537,7 +474,6 @@ static bool apply_relocations(const uint8_t     *image,
                     return false;
                 }
                 int64_t result = (int64_t)sym_addr + rela->r_addend;
-                /* AArch64 ABI: 符号なし32ビット範囲 [0, 2^32) */
                 if (result < 0 || result > (int64_t)UINT32_MAX) {
                     return false;
                 }
@@ -546,7 +482,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 16ビット絶対値（範囲チェック必須）---- */
         case R_AARCH64_ABS16:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -568,7 +503,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 64ビット PC相対 ---- */
         case R_AARCH64_PREL64:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -588,7 +522,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 32ビット PC相対（範囲チェック付き）---- */
         case R_AARCH64_PREL32:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -612,7 +545,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 16ビット PC相対（範囲チェック付き）---- */
         case R_AARCH64_PREL16:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -636,10 +568,8 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- PIE 用 load_bias 相対 ---- */
         case R_AARCH64_RELATIVE:
             {
-                /* RELATIVE は必ずシンボルインデックス 0 */
                 if (sym_index != 0) {
                     return false;
                 }
@@ -653,7 +583,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- MOVZ/MOVK: 符号なし64ビット絶対値の各16ビット窓 ---- */
         case R_AARCH64_MOVW_UABS_G0:
         case R_AARCH64_MOVW_UABS_G0_NC:
         case R_AARCH64_MOVW_UABS_G1:
@@ -674,7 +603,6 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t value = (uint64_t)((int64_t)sym_addr + rela->r_addend);
 
-                /* 窓の選択: G0=[15:0], G1=[31:16], G2=[47:32], G3=[63:48] */
                 unsigned shift;
                 switch (type) {
                 case R_AARCH64_MOVW_UABS_G0:
@@ -686,14 +614,12 @@ static bool apply_relocations(const uint8_t     *image,
                 default:                         shift = 48; break;
                 }
 
-                /* _NC ではない場合: 上位ビットがゼロであること */
                 bool nc = (type == R_AARCH64_MOVW_UABS_G0_NC ||
                            type == R_AARCH64_MOVW_UABS_G1_NC ||
                            type == R_AARCH64_MOVW_UABS_G2_NC);
                 if (!nc) {
                     uint64_t upper_mask = ~((uint64_t)0xFFFFu << shift)
                                          & (shift < 48 ? ~0ULL : 0ULL);
-                    /* G3 は64ビット全体をカバーするため上位チェック不要 */
                     if (shift < 48 && (value & upper_mask) != 0) {
                         return false;
                     }
@@ -706,7 +632,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- ADRP: ページ相対 21ビット ---- */
         case R_AARCH64_ADR_PREL_PG_HI21:
         case R_AARCH64_ADR_PREL_PG_HI21_NC:
             {
@@ -722,11 +647,9 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t target = (uint64_t)((int64_t)sym_addr + rela->r_addend);
 
-                /* ページアドレス（4KiB単位）の差分 */
                 int64_t page_delta = (int64_t)(target >> 12)
                                    - (int64_t)(where_addr >> 12);
 
-                /* _NC ではない場合は範囲チェックを強制 */
                 if (type == R_AARCH64_ADR_PREL_PG_HI21) {
                     if (page_delta < -(1LL << 20) || page_delta >= (1LL << 20)) {
                         return false;
@@ -739,7 +662,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- ADD imm12: ページ内オフセット [11:0] ---- */
         case R_AARCH64_ADD_ABS_LO12_NC:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -759,7 +681,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- LDR/STR imm12: アクセス幅ごとのページ内オフセット ---- */
         case R_AARCH64_LDST8_ABS_LO12_NC:
         case R_AARCH64_LDST16_ABS_LO12_NC:
         case R_AARCH64_LDST32_ABS_LO12_NC:
@@ -784,7 +705,7 @@ static bool apply_relocations(const uint8_t     *image,
                 case R_AARCH64_LDST16_ABS_LO12_NC:  shift = 1; break;
                 case R_AARCH64_LDST32_ABS_LO12_NC:  shift = 2; break;
                 case R_AARCH64_LDST64_ABS_LO12_NC:  shift = 3; break;
-                default:                             shift = 4; break; /* 128bit */
+                default:                             shift = 4; break;
                 }
 
                 if (!aarch64_patch_ldst_imm12((void *)(uintptr_t)where_addr,
@@ -794,7 +715,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- B / BL: ±128 MiB 範囲内ブランチ ---- */
         case R_AARCH64_JUMP26:
         case R_AARCH64_CALL26:
             {
@@ -818,29 +738,22 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 動的コピーリロケーション: カーネルモジュールでは禁止 ---- */
         case R_AARCH64_COPY:
             return false;
 
-        /* ---- 未知のリロケーションタイプは安全のため拒否 ---- */
         default:
             return false;
         }
 
 #elif defined(PLATFORM_X86_64)
-        /* ----------------------------------------------------------------
-         * x86-64 リロケーション処理
-         * ---------------------------------------------------------------- */
         switch (type) {
 
-        /* ---- 何もしない ---- */
         case R_X86_64_NONE:
             continue;
 
-        /* ---- 64ビット絶対値: S + A ---- */
         case R_X86_64_64:
-        case R_X86_64_GLOB_DAT:   /* GOT エントリ */
-        case R_X86_64_JUMP_SLOT:  /* PLT エントリ */
+        case R_X86_64_GLOB_DAT:
+        case R_X86_64_JUMP_SLOT:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
                 if (!runtime_range_ok(runtime_start, image_span,
@@ -853,7 +766,6 @@ static bool apply_relocations(const uint8_t     *image,
                     return false;
                 }
                 if (sym_addr == 0 && type != R_X86_64_64) {
-                    /* SHN_UNDEF: ゼロを書く */
                     uint64_t zero = 0;
                     safe_memcpy((void *)(uintptr_t)where_addr, &zero, sizeof(uint64_t));
                     continue;
@@ -863,7 +775,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- PIE 用 load_bias 相対: B + A ---- */
         case R_X86_64_RELATIVE:
             {
                 if (sym_index != 0) {
@@ -879,9 +790,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 32ビット PC相対: S + A - P ---- */
-        /* R_X86_64_PLT32 は PLT アドレスを使うが、モジュール内では
-         * そのまま PC相対 32ビットとして処理して問題ない              */
         case R_X86_64_PC32:
         case R_X86_64_PLT32:
             {
@@ -906,7 +814,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 64ビット PC相対: S + A - P ---- */
         case R_X86_64_PC64:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -926,7 +833,6 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 32ビット符号なし絶対値: S + A (上位32ビットはゼロであること) ---- */
         case R_X86_64_32:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -940,7 +846,6 @@ static bool apply_relocations(const uint8_t     *image,
                     return false;
                 }
                 int64_t result = (int64_t)sym_addr + rela->r_addend;
-                /* 符号なし32ビット範囲: [0, 2^32) */
                 if (result < 0 || result > (int64_t)UINT32_MAX) {
                     return false;
                 }
@@ -948,8 +853,7 @@ static bool apply_relocations(const uint8_t     *image,
                 safe_memcpy((void *)(uintptr_t)where_addr, &res32, sizeof(uint32_t));
             }
             continue;
-
-        /* ---- 32ビット符号付き絶対値: S + A (64ビットに符号拡張して一致すること) ---- */
+            
         case R_X86_64_32S:
             {
                 uint64_t where_addr = load_bias + rela->r_offset;
@@ -963,7 +867,6 @@ static bool apply_relocations(const uint8_t     *image,
                     return false;
                 }
                 int64_t result = (int64_t)sym_addr + rela->r_addend;
-                /* 符号付き32ビット範囲 */
                 if (result < INT32_MIN || result > INT32_MAX) {
                     return false;
                 }
@@ -972,18 +875,16 @@ static bool apply_relocations(const uint8_t     *image,
             }
             continue;
 
-        /* ---- 動的コピーリロケーション: カーネルモジュールでは禁止 ---- */
         case R_X86_64_COPY:
             return false;
 
-        /* ---- 未知のリロケーションタイプは安全のため拒否 ---- */
         default:
             return false;
         }
 
-#endif /* PLATFORM_X86_64 */
+#endif
 
-    } /* for each relocation */
+    }
 
     return true;
 }
@@ -1117,6 +1018,10 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
             memset(dst + ph->p_filesz, 0,
                    (size_t)(ph->p_memsz - ph->p_filesz));
         }
+        if ((ph->p_flags & PF_X) != 0) {
+            sync_instruction_cache_range((uintptr_t)dst,
+                                         (uintptr_t)(dst + ph->p_memsz));
+        }
 
         paging_switch_cr3(old_cr3);
 
@@ -1222,6 +1127,10 @@ bool elf_loader_load_from_memory(uint64_t target_cr3,
         if (ph->p_memsz > ph->p_filesz) {
             memset(dst + ph->p_filesz, 0,
                    (size_t)(ph->p_memsz - ph->p_filesz));
+        }
+        if ((ph->p_flags & PF_X) != 0) {
+            sync_instruction_cache_range((uintptr_t)dst,
+                                         (uintptr_t)(dst + ph->p_memsz));
         }
         paging_switch_cr3(old_cr3);
         ++load_segments;
@@ -1342,6 +1251,14 @@ bool elf_loader_load_module_image_from_memory(const void *file_data,
 
     uint64_t runtime_start = (uint64_t)(uintptr_t)load_base_ptr;
     uint64_t load_bias     = runtime_start - aligned_min;
+
+#if defined(PLATFORM_ARM64)
+    if (paging_map_kernel_range(runtime_start, image_span, PAGE_RW) < 0) {
+        free_contiguous_pages(load_base_ptr, page_count);
+        return false;
+    }
+#endif
+
     memset(load_base_ptr, 0, (size_t)image_span);
 
     bool ok     = false;
@@ -1404,6 +1321,11 @@ bool elf_loader_load_module_image_from_memory(const void *file_data,
                 }
             }
         }
+    }
+
+    if (!failed) {
+        sync_instruction_cache_range((uintptr_t)load_base_ptr,
+                                     (uintptr_t)load_base_ptr + image_span);
     }
 
     if (!failed) {

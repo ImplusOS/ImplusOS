@@ -5,13 +5,13 @@ ARCH ?= x86_64
 ifeq ($(ARCH),x86_64)
 CC := x86_64-elf-gcc
 LD := x86_64-elf-ld
-DRIVER_ARCH_CFLAGS := -mno-red-zone
+DRIVER_ARCH_CFLAGS := -mno-red-zone -DPLATFORM_X86_64
 endif
 
 ifeq ($(ARCH),arm64)
 CC := aarch64-elf-gcc
 LD := aarch64-elf-ld
-DRIVER_ARCH_CFLAGS := -mstrict-align -mno-outline-atomics
+DRIVER_ARCH_CFLAGS := -mstrict-align -mno-outline-atomics -DPLATFORM_ARM64
 endif
 
 DRIVER_BASE_CFLAGS := \

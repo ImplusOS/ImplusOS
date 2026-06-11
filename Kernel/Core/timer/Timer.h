@@ -6,7 +6,9 @@
 
 typedef void (*timer_callback_t)(uint64_t tick);
 
-void timer_init(const timer_hal_t* hal, uint32_t hz);
+void timer_init(const timer_hal_t* hal);
+void timer_start_clock(void);
+void timer_start_services(void);
 void timer_set_callback(timer_callback_t cb);
 uint64_t timer_ticks(void);
 uint32_t timer_hz(void);

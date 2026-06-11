@@ -324,6 +324,7 @@ image: install_payload recovery_build
 	@mcopy -s -i $(ESP_IMAGE) $(BOOT_RESOURCE_DIR) ::/BootManager
 	@rm -rf $(IMAGE_STAGE_DIR)
 	@mkdir -p \
+		$(IMAGE_STAGE_DIR)/EFI/BOOT \
 		$(IMAGE_STAGE_DIR)/Recovery \
 		$(IMAGE_STAGE_DIR)/Kernel/Driver \
 		$(IMAGE_STAGE_DIR)/Userland \
@@ -335,6 +336,13 @@ image: install_payload recovery_build
 	@cp $(INSTALL_DISK_IMAGE) $(IMAGE_STAGE_DIR)/Recovery/ImplusOS-install.img
 	@cp $(INSTALL_MANIFEST) $(IMAGE_STAGE_DIR)/Recovery/MANIFEST.txt
 	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
+	@if [ "$(ARCH)" = "x86_64" ]; then \
+    	cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTX64.EFI; \
+	else \
+		cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTAA64.EFI; \
+	fi
+
+	@cp $(BOOTMANAGER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTMANAGER.EFI
 	@for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
 		[ -e "$$f" ] || continue; \
 		cp "$$f" $(IMAGE_STAGE_DIR)/Kernel/Driver/; \
@@ -346,6 +354,7 @@ image: install_payload recovery_build
 		-eltorito-alt-boot \
 		-e esp.img \
 		-no-emul-boot \
+		-append_partition 2 0xef $(ESP_IMAGE) \
 		-isohybrid-gpt-basdat \
 		-o $(IMAGE) \
 		$(IMAGE_STAGE_DIR)
@@ -358,6 +367,11 @@ QEMU_COMMON := \
 	-device qemu-xhci,id=xhci \
 	-device usb-kbd,bus=xhci.0 \
 	-device usb-mouse,bus=xhci.0 \
+	-device ahci,id=ahci \
+	-drive if=none,id=disk0,file=disk1.qcow2,format=qcow2 \
+	-device ide-hd,drive=disk0,bus=ahci.0 \
+	-drive if=none,id=disk1,file=disk2.qcow2,format=qcow2 \
+	-device ide-hd,drive=disk1,bus=ahci.1 \
 	-serial stdio \
 	-display cocoa \
 	-device virtio-gpu-pci \

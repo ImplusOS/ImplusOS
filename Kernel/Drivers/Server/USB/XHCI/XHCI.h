@@ -81,14 +81,14 @@ typedef struct {
     volatile uint32_t dboff;
     volatile uint32_t rtsoff;
     volatile uint32_t hccparams2;
-} __attribute__((packed)) xhci_cap_regs_t;
+} xhci_cap_regs_t;
 
 typedef struct {
     volatile uint32_t portsc;
     volatile uint32_t portpmsc;
     volatile uint32_t portli;
     volatile uint32_t porthlpmc;
-} __attribute__((packed)) xhci_port_regs_t;
+} xhci_port_regs_t;
 
 typedef struct {
     volatile uint32_t usbcmd;
@@ -102,7 +102,7 @@ typedef struct {
     volatile uint32_t config;
     volatile uint8_t  rsvd3[0x400 - 0x3C];
     xhci_port_regs_t  ports[];
-} __attribute__((packed)) xhci_op_regs_t;
+} xhci_op_regs_t;
 
 #define XHCI_CMD_RUN   (1u << 0)
 #define XHCI_CMD_HCRST (1u << 1)
@@ -141,7 +141,7 @@ typedef struct {
     volatile uint32_t rsvd;
     volatile uint64_t erstba;
     volatile uint64_t erdp;
-} __attribute__((packed)) xhci_intr_regs_t;
+} xhci_intr_regs_t;
 
 typedef struct {
     volatile uint64_t base;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -16,6 +17,12 @@ typedef struct {
     uint32_t pit_gsi;
     uint8_t  pit_level_trigger;
     uint8_t  pit_active_low;
+
+    uint64_t gicd_base;
+    uint64_t gicc_base;
+    uint64_t gicr_base;
+    uint32_t gicr_length;
+    uint8_t  gic_version;
     
     uint32_t pm1a_cnt_blk;
     uint16_t slp_typ_s5;
