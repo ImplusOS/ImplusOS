@@ -17,6 +17,7 @@ typedef struct {
     uint32_t pit_gsi;
     uint8_t  pit_level_trigger;
     uint8_t  pit_active_low;
+    uint64_t hpet_base;
 
     uint64_t gicd_base;
     uint64_t gicc_base;

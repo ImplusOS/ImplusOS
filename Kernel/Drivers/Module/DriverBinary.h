@@ -6,8 +6,8 @@
 
 #include "kernel/interfaces/device.h"
 
-#define DRIVER_API_VERSION_MAJOR 1u
-#define DRIVER_API_VERSION_MINOR 1u
+#define DRIVER_API_VERSION_MAJOR 2u
+#define DRIVER_API_VERSION_MINOR 0u
 
 #define DRIVER_DESCRIPTOR_MAGIC 0x44525641u
 #define DRIVER_DESCRIPTOR_VERSION 2u
@@ -33,6 +33,7 @@ typedef struct {
     void (*msleep)(uint32_t ms);
     uint32_t (*hz)(void);
     uint64_t (*ticks)(void);
+    uint64_t (*monotonic_ns)(void);
 } driver_api_timer_t;
 
 typedef struct {
@@ -43,6 +44,10 @@ typedef struct {
     uint64_t (*virt_to_phys)(void *virt);
     void *(*memset)(void *s, int c, size_t n);
     void *(*memcpy)(void *dst, const void *src, size_t n);
+    void *(*dma_alloc_ex)(size_t size,
+                          size_t alignment,
+                          uint64_t max_address,
+                          uint64_t *phys_out);
 } driver_api_mem_t;
 
 typedef struct {
@@ -53,13 +58,92 @@ typedef struct {
 } driver_api_io_t;
 
 typedef struct {
-    bool (*disk_read)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
-    bool (*disk_write)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
-    uint32_t (*disk_get_partition_lba)(void);
+    bool (*disk_read)(uint64_t lba, uint8_t *buffer, uint32_t sector_count);
+    bool (*disk_write)(uint64_t lba, const uint8_t *buffer, uint32_t sector_count);
+    uint64_t (*disk_get_partition_lba)(void);
     uint32_t (*pci_read_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset);
     void (*pci_write_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset, uint32_t value);
     void *(*map_mmio_virt)(uint64_t phys_addr);
+    void *(*map_mmio_range)(uint64_t phys_addr, size_t size);
 } driver_api_hw_t;
+
+typedef struct {
+    uint8_t bus;
+    uint8_t device;
+    uint8_t function;
+    uint8_t class_code;
+    uint8_t subclass;
+    uint8_t prog_if;
+    uint8_t revision;
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint8_t interrupt_line;
+    uint8_t interrupt_pin;
+} driver_pci_device_t;
+
+typedef struct {
+    uint64_t address;
+    uint64_t size;
+    uint8_t is_io;
+    uint8_t is_64bit;
+    uint8_t prefetchable;
+    uint8_t reserved;
+} driver_pci_bar_t;
+
+typedef void (*driver_irq_handler_t)(void *context);
+
+typedef struct {
+    uint32_t (*get_device_count)(void);
+    bool (*get_device)(uint32_t index, driver_pci_device_t *out_device);
+    uint32_t (*read_config)(uint8_t bus,
+                            uint8_t device,
+                            uint8_t function,
+                            uint16_t offset);
+    void (*write_config)(uint8_t bus,
+                         uint8_t device,
+                         uint8_t function,
+                         uint16_t offset,
+                         uint32_t value);
+    bool (*get_bar)(uint8_t bus,
+                    uint8_t device,
+                    uint8_t function,
+                    uint8_t bar_index,
+                    driver_pci_bar_t *out_bar);
+    int32_t (*find_capability)(uint8_t bus,
+                               uint8_t device,
+                               uint8_t function,
+                               uint8_t capability_id);
+    bool (*enable_bus_master)(uint8_t bus,
+                              uint8_t device,
+                              uint8_t function);
+    int32_t (*enable_msix)(uint8_t bus,
+                           uint8_t device,
+                           uint8_t function,
+                           uint32_t requested_vectors,
+                           uint32_t *out_vectors);
+    void (*disable_msix)(uint8_t bus,
+                         uint8_t device,
+                         uint8_t function,
+                         const uint32_t *vectors,
+                         uint32_t vector_count);
+    int32_t (*register_irq)(uint32_t vector,
+                            driver_irq_handler_t handler,
+                            void *context);
+    void (*unregister_irq)(uint32_t vector);
+} driver_api_pci_t;
+
+typedef struct {
+    void *(*create)(void);
+    void (*destroy)(void *event);
+    void (*reset)(void *event);
+    void (*signal)(void *event);
+    bool (*wait)(void *event, uint32_t timeout_ms);
+} driver_api_event_t;
+
+typedef struct {
+    uint32_t (*cpu_count)(void);
+    uint32_t (*current_cpu)(void);
+} driver_api_system_t;
 
 typedef struct {
     void (*write_char)(char c);
@@ -112,6 +196,9 @@ typedef struct {
     driver_api_hw_t hw;
     driver_api_debug_t dbg;
     driver_api_hal_t hal;
+    driver_api_pci_t pci;
+    driver_api_event_t event;
+    driver_api_system_t system;
 
     void (*timer_msleep)(uint32_t ms);
     uint32_t (*timer_hz)(void);
@@ -127,9 +214,9 @@ typedef struct {
     void (*outb)(uint16_t port, uint8_t value);
     uint32_t (*inl)(uint16_t port);
     void (*outl)(uint16_t port, uint32_t value);
-    bool (*disk_read)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
-    bool (*disk_write)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
-    uint32_t (*disk_get_partition_lba)(void);
+    bool (*disk_read)(uint64_t lba, uint8_t *buffer, uint32_t sector_count);
+    bool (*disk_write)(uint64_t lba, const uint8_t *buffer, uint32_t sector_count);
+    uint64_t (*disk_get_partition_lba)(void);
     uint32_t (*pci_read_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset);
     void (*pci_write_config)(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset, uint32_t value);
     void *(*map_mmio_virt)(uint64_t phys_addr);
@@ -149,13 +236,77 @@ typedef struct {
                         void (*forward)(driver_mouse_event_t *));
 } driver_input_t;
 
+#define DRIVER_BLOCK_FLAG_WRITABLE  (1u << 0)
+#define DRIVER_BLOCK_FLAG_REMOVABLE (1u << 1)
+#define DRIVER_BLOCK_FLAG_BOOT      (1u << 2)
+#define DRIVER_BLOCK_IDENTITY_PCI_VALID (1u << 0)
+
+typedef enum {
+    DRIVER_BLOCK_TRANSPORT_UNKNOWN = 0,
+    DRIVER_BLOCK_TRANSPORT_ATA,
+    DRIVER_BLOCK_TRANSPORT_USB,
+    DRIVER_BLOCK_TRANSPORT_AHCI,
+    DRIVER_BLOCK_TRANSPORT_NVME,
+    DRIVER_BLOCK_TRANSPORT_VIRTIO,
+} driver_block_transport_t;
+
 typedef struct {
-    bool (*read_sectors)(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
-    bool (*write_sectors)(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
+    uint64_t block_count;
+    uint32_t logical_block_size;
+    uint32_t physical_block_size;
+    uint32_t flags;
+    driver_block_transport_t transport;
+    uint32_t identity_flags;
+    uint16_t pci_segment;
+    uint8_t pci_bus;
+    uint8_t pci_device;
+    uint8_t pci_function;
+    uint8_t reserved0;
+    uint16_t controller_port;
+    uint32_t namespace_id;
+    char model[64];
+    char serial[32];
+} driver_block_info_t;
+
+typedef struct {
+    const char *name;
+    uint32_t priority;
+    bool (*init)(void);
+    bool (*is_ready)(void);
     uint32_t (*get_device_count)(void);
-    bool (*select_device)(uint32_t index);
-    uint64_t (*get_total_bytes)(void);
+    bool (*get_info)(uint32_t device_index, driver_block_info_t *out_info);
+    bool (*read_blocks)(uint32_t device_index,
+                        uint64_t lba,
+                        void *buffer,
+                        uint32_t block_count);
+    bool (*write_blocks)(uint32_t device_index,
+                         uint64_t lba,
+                         const void *buffer,
+                         uint32_t block_count);
+    bool (*flush)(uint32_t device_index);
 } driver_storage_t;
+
+#define DRIVER_AUDIO_FORMAT_S16_LE 1u
+
+typedef struct {
+    uint32_t sample_rate;
+    uint16_t channels;
+    uint16_t format;
+    uint32_t period_bytes;
+    uint32_t period_count;
+} driver_audio_info_t;
+
+typedef struct {
+    const char *name;
+    uint32_t priority;
+    bool (*init)(void);
+    bool (*is_ready)(void);
+    bool (*get_info)(driver_audio_info_t *out_info);
+    bool (*open)(void);
+    int64_t (*write)(const void *pcm, uint64_t bytes);
+    bool (*drain)(uint32_t timeout_ms);
+    void (*close)(void);
+} driver_audio_t;
 
 typedef struct {
     bool (*submit_interrupt_in_async)(uint8_t addr, uint8_t ep_num,

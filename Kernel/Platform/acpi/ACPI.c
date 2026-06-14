@@ -34,6 +34,23 @@ typedef struct {
 } __attribute__((packed)) sdt_header_t;
 
 typedef struct {
+    uint8_t address_space;
+    uint8_t bit_width;
+    uint8_t bit_offset;
+    uint8_t access_size;
+    uint64_t address;
+} __attribute__((packed)) acpi_gas_t;
+
+typedef struct {
+    sdt_header_t header;
+    uint32_t event_timer_block_id;
+    acpi_gas_t base_address;
+    uint8_t hpet_number;
+    uint16_t minimum_tick;
+    uint8_t page_protection;
+} __attribute__((packed)) hpet_table_t;
+
+typedef struct {
     sdt_header_t header;
     uint32_t     lapic_addr;
     uint32_t     flags;
@@ -382,6 +399,7 @@ int acpi_init(const BOOT_INFO *boot_info)
     g_info.ioapic_gsi_base = 0;
     g_info.pit_level_trigger = 0;
     g_info.pit_active_low = 0;
+    g_info.hpet_base = 0;
     g_info.gicd_base = 0;
     g_info.gicc_base = 0;
     g_info.gicr_base = 0;
@@ -436,6 +454,12 @@ int acpi_init(const BOOT_INFO *boot_info)
     const sdt_header_t *fadt_hdr = find_sdt_entry(root, use_xsdt, "FACP");
     if (fadt_hdr != NULL) {
         parse_fadt((const fadt_t *)fadt_hdr);
+    }
+
+    const hpet_table_t *hpet =
+        (const hpet_table_t *)find_sdt_entry(root, use_xsdt, "HPET");
+    if (hpet != NULL && hpet->base_address.address_space == 0u) {
+        g_info.hpet_base = hpet->base_address.address;
     }
 
     g_ready = 1;

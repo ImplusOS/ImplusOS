@@ -1,11 +1,14 @@
 #include "Syscall_Main.h"
 #include "Syscall_File.h"
+#include "Syscall_Socket.h"
 #include "kernel/boot_info.h"
 #include "kernel/status.h"
 #include "kernel/system_info.h"
 #include "Drivers/Module/DriverManager.h"
 #include "Drivers/Module/InputManager.h"
+#include "Drivers/Module/AudioManager.h"
 #include "Core/process/ProcessManager.h"
+#include "Core/memory/SharedMemory.h"
 #include "Core/sysinfo/SystemInfo.h"
 #include "IPC/IPC_Main.h"
 #include "Core/window/WindowManager_Kernel.h"
@@ -19,6 +22,12 @@ typedef struct {
     uint64_t total_ticks;
     uint64_t memory_usage;
 } process_info_kernel_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t size;
+    uint8_t is_dir;
+    uint8_t exists;
+} syscall_file_stat_t;
 #include "mmu/Paging_Main.h"
 #include "Drivers/Module/DriverBinary.h"
 #include "Debug/printf/printf.h"
@@ -30,11 +39,17 @@ typedef struct {
 #include "Core/timer/Timer.h"
 #include "Drivers/RTC/RTC.h"
 #include "Core/vfs/VFS.h"
+#include "Core/usercopy/Usercopy.h"
 #include "kernel/config.h"
 #include "Platform/io/IO_Main.h"
 
+#if defined(__aarch64__)
+#include "cpu/Exception.h"
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define SYSCALL_MAX_PATH_LEN    512U
@@ -42,8 +57,11 @@ typedef struct {
 #define SYSCALL_MAX_IO_BYTES    (32ULL * 1024ULL * 1024ULL)
 #define SYSCALL_MAX_MEM_BYTES   (128ULL * 1024ULL * 1024ULL)
 #define SYSCALL_MAX_ALLOC_BYTES (128ULL * 1024ULL * 1024ULL)
+#define SYSCALL_UDP_MAX_RECV_BYTES (UDP_USER_HEADER_BYTES + 1472U)
 #define SYSCALL_U32_MASK        0xFFFFFFFFULL
 #define WM_FILL_RECT_TRACE      0
+
+static int32_t g_audio_owner_pid = -1;
 
 static const char k_decimal_digits[10] = "0123456789";
 
@@ -85,8 +103,15 @@ static inline void syscall_arch_user_access_end(void)
 
 static void set_syscall_result(uint64_t saved_rsp, uint64_t value)
 {
+#if defined(__aarch64__)
+    arm64_exception_frame_t *frame = (arm64_exception_frame_t *)(uintptr_t)saved_rsp;
+    if (frame != NULL) {
+        frame->x[0] = value;
+    }
+#else
     uint64_t *frame = (uint64_t *)(uintptr_t)saved_rsp;
     frame[SYSCALL_FRAME_RAX] = value;
+#endif
 }
 
 static void set_syscall_status(uint64_t saved_rsp, os_status_t status)
@@ -112,23 +137,137 @@ static int user_buffer_ok(const void *ptr, uint64_t len)
 
 static int copy_user_cstring(char *dst, uint64_t dst_size, const char *src)
 {
-    if (dst == NULL || src == NULL || dst_size < 2ULL) {
-        return -1;
+    return copy_user_cstring_s(dst, dst_size, src);
+}
+
+static int copy_user_to_user(void *dst, const void *src, uint64_t bytes)
+{
+    uint8_t chunk[512];
+    uint64_t copied = 0;
+
+    while (copied < bytes) {
+        uint64_t n = bytes - copied;
+        if (n > sizeof(chunk)) {
+            n = sizeof(chunk);
+        }
+        if (copy_from_user(chunk, (const uint8_t *)src + copied, n) != 0u) {
+            return -1;
+        }
+        if (copy_to_user((uint8_t *)dst + copied, chunk, n) != 0u) {
+            return -1;
+        }
+        copied += n;
     }
 
-    uint64_t len = 0;
-    if (process_user_cstring_length(src, dst_size - 1ULL, &len) < 0) {
-        return -1;
-    }
-    if (len >= dst_size) {
-        return -1;
-    }
-
-    for (uint64_t i = 0; i < len; ++i) {
-        dst[i] = src[i];
-    }
-    dst[len] = '\0';
     return 0;
+}
+
+static int memcmp_user_buffers(const void *lhs, const void *rhs, uint64_t bytes, int *result_out)
+{
+    uint8_t a[256];
+    uint8_t b[256];
+    uint64_t compared = 0;
+
+    if (result_out == NULL) {
+        return -1;
+    }
+    *result_out = 0;
+
+    while (compared < bytes) {
+        uint64_t n = bytes - compared;
+        if (n > sizeof(a)) {
+            n = sizeof(a);
+        }
+        if (copy_from_user(a, (const uint8_t *)lhs + compared, n) != 0u ||
+            copy_from_user(b, (const uint8_t *)rhs + compared, n) != 0u) {
+            return -1;
+        }
+        for (uint64_t i = 0; i < n; ++i) {
+            if (a[i] != b[i]) {
+                *result_out = (int)a[i] - (int)b[i];
+                return 0;
+            }
+        }
+        compared += n;
+    }
+
+    return 0;
+}
+
+static int memset_user_buffer(void *dst, uint8_t value, uint64_t bytes)
+{
+    uint8_t chunk[512];
+    memset(chunk, value, sizeof(chunk));
+
+    uint64_t written = 0;
+    while (written < bytes) {
+        uint64_t n = bytes - written;
+        if (n > sizeof(chunk)) {
+            n = sizeof(chunk);
+        }
+        if (copy_to_user((uint8_t *)dst + written, chunk, n) != 0u) {
+            return -1;
+        }
+        written += n;
+    }
+    return 0;
+}
+
+static int64_t syscall_file_read_to_user(int32_t fd, void *user_buffer, uint64_t len)
+{
+    uint8_t chunk[4096];
+    uint64_t total = 0;
+
+    while (total < len) {
+        uint64_t want = len - total;
+        if (want > sizeof(chunk)) {
+            want = sizeof(chunk);
+        }
+
+        int64_t n = syscall_file_read(fd, chunk, want);
+        if (n < 0) {
+            return (total != 0u) ? (int64_t)total : n;
+        }
+        if (n == 0) {
+            break;
+        }
+        if (copy_to_user((uint8_t *)user_buffer + total, chunk, (uint64_t)n) != 0u) {
+            return (total != 0u) ? (int64_t)total : (int64_t)OS_STATUS_FAULT;
+        }
+        total += (uint64_t)n;
+        if ((uint64_t)n < want) {
+            break;
+        }
+    }
+
+    return (int64_t)total;
+}
+
+static int64_t syscall_file_write_from_user(int32_t fd, const void *user_buffer, uint64_t len)
+{
+    uint8_t chunk[4096];
+    uint64_t total = 0;
+
+    while (total < len) {
+        uint64_t want = len - total;
+        if (want > sizeof(chunk)) {
+            want = sizeof(chunk);
+        }
+        if (copy_from_user(chunk, (const uint8_t *)user_buffer + total, want) != 0u) {
+            return (total != 0u) ? (int64_t)total : (int64_t)OS_STATUS_FAULT;
+        }
+
+        int64_t n = syscall_file_write(fd, chunk, want);
+        if (n < 0) {
+            return (total != 0u) ? (int64_t)total : n;
+        }
+        total += (uint64_t)n;
+        if ((uint64_t)n < want) {
+            break;
+        }
+    }
+
+    return (int64_t)total;
 }
 
 static void syscall_fail(uint64_t saved_rsp,
@@ -151,6 +290,8 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
 
         case SYSCALL_PROCESS_CREATE:
         case SYSCALL_PROCESS_SPAWN_ELF:
+        case SYSCALL_PROCESS_SPAWN_ELF_ARG:
+        case SYSCALL_PROCESS_GET_LAUNCH_ARG:
         case SYSCALL_THREAD_CREATE:
             return PROCESS_CAP_PROCESS;
             
@@ -198,6 +339,19 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
         case SYSCALL_TCP_RECV:
         case SYSCALL_TCP_CLOSE:
         case SYSCALL_TCP_GET_STATE:
+        case SYSCALL_SOCKET_CREATE:
+        case SYSCALL_SOCKET_CONNECT:
+        case SYSCALL_SOCKET_BIND:
+        case SYSCALL_SOCKET_LISTEN:
+        case SYSCALL_SOCKET_ACCEPT:
+        case SYSCALL_SOCKET_SEND:
+        case SYSCALL_SOCKET_RECV:
+        case SYSCALL_SOCKET_CLOSE:
+        case SYSCALL_SOCKET_GET_INFO:
+        case SYSCALL_SOCKET_SET_OPTION:
+        case SYSCALL_SOCKET_GET_OPTION:
+        case SYSCALL_SOCKET_SHUTDOWN:
+        case SYSCALL_SOCKET_LISTEN_EX:
             return PROCESS_CAP_NETWORK;
 
         case SYSCALL_IPC_SEND_MESSAGE:
@@ -288,6 +442,79 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
 
+        case SYSCALL_AUDIO_OPEN: {
+            int32_t pid = process_get_current_pid();
+            if (pid < 0 || g_audio_owner_pid >= 0 ||
+                !audio_manager_open()) {
+                set_syscall_status(saved_rsp, OS_STATUS_ACCESS_DENIED);
+                break;
+            }
+            g_audio_owner_pid = pid;
+            set_syscall_result(saved_rsp, 1u);
+            break;
+        }
+
+        case SYSCALL_AUDIO_GET_INFO: {
+            if (process_get_current_pid() != g_audio_owner_pid) {
+                set_syscall_status(saved_rsp, OS_STATUS_ACCESS_DENIED);
+                break;
+            }
+            driver_audio_info_t info;
+            if (!audio_manager_get_info(&info) ||
+                copy_to_user((void *)(uintptr_t)arg1, &info,
+                             sizeof(info)) != 0u) {
+                set_syscall_status(saved_rsp, OS_STATUS_FAULT);
+                break;
+            }
+            set_syscall_status(saved_rsp, OS_STATUS_OK);
+            break;
+        }
+
+        case SYSCALL_AUDIO_WRITE: {
+            if (process_get_current_pid() != g_audio_owner_pid ||
+                arg2 == 0u || (arg2 & 3u) != 0u ||
+                arg2 > SYSCALL_MAX_IO_BYTES ||
+                !user_buffer_ok((const void *)(uintptr_t)arg1, arg2)) {
+                set_syscall_status(saved_rsp, OS_STATUS_INVALID_ARG);
+                break;
+            }
+            void *pcm = malloc((size_t)arg2);
+            if (pcm == NULL) {
+                set_syscall_status(saved_rsp, OS_STATUS_LIMIT_REACHED);
+                break;
+            }
+            if (copy_from_user(pcm, (const void *)(uintptr_t)arg1,
+                               arg2) != 0u) {
+                free(pcm);
+                set_syscall_status(saved_rsp, OS_STATUS_FAULT);
+                break;
+            }
+            int64_t written = audio_manager_write(pcm, arg2);
+            free(pcm);
+            set_syscall_result(saved_rsp, (uint64_t)written);
+            break;
+        }
+
+        case SYSCALL_AUDIO_DRAIN:
+            if (process_get_current_pid() != g_audio_owner_pid) {
+                set_syscall_status(saved_rsp, OS_STATUS_ACCESS_DENIED);
+            } else {
+                set_syscall_status(saved_rsp,
+                    audio_manager_drain((uint32_t)arg1) ?
+                    OS_STATUS_OK : OS_STATUS_IO_ERROR);
+            }
+            break;
+
+        case SYSCALL_AUDIO_CLOSE:
+            if (process_get_current_pid() != g_audio_owner_pid) {
+                set_syscall_status(saved_rsp, OS_STATUS_ACCESS_DENIED);
+            } else {
+                audio_manager_close();
+                g_audio_owner_pid = -1;
+                set_syscall_status(saved_rsp, OS_STATUS_OK);
+            }
+            break;
+
         case SYSCALL_SERIAL_WRITE_U64:
             serial_write_uint64(arg1);
             set_syscall_result(saved_rsp, 0);
@@ -321,6 +548,43 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
 
+        case SYSCALL_PROCESS_SPAWN_ELF_ARG: {
+            char path[SYSCALL_MAX_PATH_LEN];
+            char argument[SYSCALL_MAX_PATH_LEN];
+            if (copy_user_cstring(path, sizeof(path),
+                                  (const char *)(uintptr_t)arg1) < 0 ||
+                copy_user_cstring(argument, sizeof(argument),
+                                  (const char *)(uintptr_t)arg2) < 0) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_spawn_argument");
+                break;
+            }
+            set_syscall_i32(saved_rsp,
+                process_spawn_user_elf_with_arg(path, argument));
+            break;
+        }
+
+        case SYSCALL_PROCESS_GET_LAUNCH_ARG: {
+            char argument[SYSCALL_MAX_PATH_LEN];
+            if (arg2 == 0u || arg2 > sizeof(argument) ||
+                !user_buffer_ok((void *)(uintptr_t)arg1, arg2)) {
+                syscall_fail(saved_rsp, num, OS_STATUS_INVALID_ARG,
+                             "invalid_launch_argument_buffer");
+                break;
+            }
+            int32_t length =
+                process_copy_launch_argument(argument, (uint32_t)arg2);
+            if (length < 0 ||
+                copy_to_user((void *)(uintptr_t)arg1, argument,
+                             (uint64_t)length + 1u) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "launch_argument_copy_failed");
+                break;
+            }
+            set_syscall_i32(saved_rsp, length);
+            break;
+        }
+
         case SYSCALL_PROCESS_YIELD:
             set_syscall_result(saved_rsp, 0);
             request_switch = 1;
@@ -333,13 +597,28 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
 
         case SYSCALL_THREAD_CREATE: {
-            int32_t tid = process_create_user_ex(arg1, arg2, arg3, arg4, arg5);
+            int32_t tid = process_create_thread(arg1, arg2, arg3, arg4, arg5);
             set_syscall_i32(saved_rsp, tid);
-            if (tid >= 0) {
-                request_switch = 1;
-            }
             break;
         }
+
+        case SYSCALL_THREAD_EXIT:
+            process_thread_exit_current((int32_t)arg1);
+            set_syscall_result(saved_rsp, 0);
+            request_switch = 1;
+            break;
+
+        case SYSCALL_THREAD_JOIN:
+            set_syscall_result(saved_rsp,
+                               (uint64_t)(int64_t)process_thread_join(
+                                   (int32_t)arg1));
+            break;
+
+        case SYSCALL_THREAD_DETACH:
+            set_syscall_result(saved_rsp,
+                               (uint64_t)(int64_t)process_thread_detach(
+                                   (int32_t)arg1));
+            break;
 
         case SYSCALL_FILE_OPEN: {
             char path[SYSCALL_MAX_PATH_LEN];
@@ -374,8 +653,9 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            int64_t n = syscall_file_read((int32_t)arg1,
-                                          (uint8_t *)(uintptr_t)arg2, arg3);
+            int64_t n = syscall_file_read_to_user((int32_t)arg1,
+                                                  (void *)(uintptr_t)arg2,
+                                                  arg3);
             set_syscall_result(saved_rsp, (uint64_t)n);
             break;
         }
@@ -387,9 +667,9 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            int64_t n = syscall_file_write((int32_t)arg1,
-                                           (const uint8_t *)(uintptr_t)arg2,
-                                           arg3);
+            int64_t n = syscall_file_write_from_user((int32_t)arg1,
+                                                     (const void *)(uintptr_t)arg2,
+                                                     arg3);
             set_syscall_result(saved_rsp, (uint64_t)n);
             break;
         }
@@ -439,7 +719,12 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            int32_t rc = syscall_file_readdir((int32_t)arg1, entry_out);
+            vfs_dirent_t entry = {0};
+            int32_t rc = syscall_file_readdir((int32_t)arg1, &entry);
+            if (rc > 0 && copy_to_user(entry_out, &entry, sizeof(entry)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_dirent_buffer");
+                break;
+            }
             set_syscall_i32(saved_rsp, rc);
             break;
         }
@@ -481,7 +766,29 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             uint16_t dst_port = (uint16_t)(arg2 & 0xFFFF);
             const void *payload = (const void *)(uintptr_t)arg3;
             uint16_t payload_len = (uint16_t)arg4;
-            bool success = udp_syscall_send(dst_ip, src_port, dst_port, payload, payload_len);
+            if ((uint64_t)payload_len != arg4 ||
+                (payload_len != 0u && !user_buffer_ok(payload, payload_len))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_udp_send_buffer");
+                break;
+            }
+
+            uint8_t *payload_copy = NULL;
+            if (payload_len != 0u) {
+                payload_copy = (uint8_t *)malloc(payload_len);
+                if (payload_copy == NULL ||
+                    copy_from_user(payload_copy, payload, payload_len) != 0u) {
+                    if (payload_copy != NULL) {
+                        free(payload_copy);
+                    }
+                    syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_udp_send_buffer");
+                    break;
+                }
+            }
+
+            bool success = udp_send(dst_ip, src_port, dst_port, payload_copy, payload_len);
+            if (payload_copy != NULL) {
+                free(payload_copy);
+            }
             set_syscall_result(saved_rsp, success ? 1ULL : 0ULL);
             break;
         }
@@ -506,12 +813,34 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             uint16_t port = (uint16_t)arg1;
             void *buf = (void *)(uintptr_t)arg2;
             uint32_t buf_len = (uint32_t)arg3;
-            if (!user_buffer_ok(buf, buf_len)) {
+            uint32_t validate_len = buf_len;
+            if (validate_len > SYSCALL_UDP_MAX_RECV_BYTES) {
+                validate_len = SYSCALL_UDP_MAX_RECV_BYTES;
+            }
+            if (!user_buffer_ok(buf, validate_len)) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_udp_recv_buffer");
                 break;
             }
+            if (buf_len < UDP_USER_HEADER_BYTES) {
+                set_syscall_result(saved_rsp, (uint64_t)(int64_t)-1);
+                break;
+            }
             int32_t pid = process_get_current_pid();
-            int32_t result = udp_user_recv(pid, port, (uint8_t *)buf, buf_len);
+            uint8_t recv_buf[SYSCALL_UDP_MAX_RECV_BYTES];
+            int32_t result = udp_user_recv(pid, port, recv_buf,
+                                           (uint32_t)sizeof(recv_buf));
+            if (result > 0) {
+                uint32_t copy_len = (uint32_t)result;
+                if (copy_len > buf_len) {
+                    copy_len = buf_len;
+                }
+                if (copy_len != 0u &&
+                    copy_to_user(buf, recv_buf, copy_len) != 0u) {
+                    syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_udp_recv_buffer");
+                    break;
+                }
+                result = (int32_t)copy_len;
+            }
             set_syscall_result(saved_rsp, (uint64_t)(int64_t)result);
             break;
         }
@@ -543,11 +872,29 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             int32_t conn_id = (int32_t)arg1;
             const void *payload = (const void *)(uintptr_t)arg2;
             uint16_t payload_len = (uint16_t)arg3;
-            if (!user_buffer_ok(payload, payload_len)) {
+            if ((uint64_t)payload_len != arg3 ||
+                (payload_len != 0u && !user_buffer_ok(payload, payload_len))) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_tcp_send_buffer");
                 break;
             }
-            int32_t result = tcp_send(conn_id, payload, payload_len);
+
+            uint8_t *payload_copy = NULL;
+            if (payload_len != 0u) {
+                payload_copy = (uint8_t *)malloc(payload_len);
+                if (payload_copy == NULL ||
+                    copy_from_user(payload_copy, payload, payload_len) != 0u) {
+                    if (payload_copy != NULL) {
+                        free(payload_copy);
+                    }
+                    syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_tcp_send_buffer");
+                    break;
+                }
+            }
+
+            int32_t result = tcp_send(conn_id, payload_copy, payload_len);
+            if (payload_copy != NULL) {
+                free(payload_copy);
+            }
             set_syscall_result(saved_rsp, (uint64_t)(int64_t)result);
             break;
         }
@@ -556,11 +903,33 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             int32_t conn_id = (int32_t)arg1;
             void *buf = (void *)(uintptr_t)arg2;
             uint16_t buf_len = (uint16_t)arg3;
-            if (!user_buffer_ok(buf, buf_len)) {
+            if ((uint64_t)buf_len != arg3 ||
+                (buf_len != 0u && !user_buffer_ok(buf, buf_len))) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_tcp_recv_buffer");
                 break;
             }
-            int32_t result = tcp_recv(conn_id, buf, buf_len);
+
+            uint8_t *recv_buf = NULL;
+            if (buf_len != 0u) {
+                recv_buf = (uint8_t *)malloc(buf_len);
+                if (recv_buf == NULL) {
+                    syscall_fail(saved_rsp, num, OS_STATUS_LIMIT_REACHED, "tcp_recv_alloc_failed");
+                    break;
+                }
+            }
+
+            int32_t result = tcp_recv(conn_id, recv_buf, buf_len);
+            if (result > 0 &&
+                copy_to_user(buf, recv_buf, (uint64_t)result) != 0u) {
+                if (recv_buf != NULL) {
+                    free(recv_buf);
+                }
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_tcp_recv_buffer");
+                break;
+            }
+            if (recv_buf != NULL) {
+                free(recv_buf);
+            }
             set_syscall_result(saved_rsp, (uint64_t)(int64_t)result);
             break;
         }
@@ -609,25 +978,10 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            uint8_t *d = (uint8_t *)dst;
-            const uint8_t *s = (const uint8_t *)src;
-            
-            uint64_t head = 0;
-            while (head < n && ((uintptr_t)(d + head) & 7) != 0) {
-                d[head] = s[head];
-                head++;
+            if (copy_user_to_user(dst, src, n) < 0) {
+                set_syscall_result(saved_rsp, 0);
+                break;
             }
-            uint64_t remaining = n - head;
-            uint64_t words = remaining / 8;
-            uint64_t tail  = remaining % 8;
-            uint64_t *dw = (uint64_t *)(d + head);
-            const uint64_t *sw = (const uint64_t *)(s + head);
-            for (uint64_t i = 0; i < words; ++i)
-                dw[i] = sw[i];
-            uint8_t *dt = (uint8_t *)(dw + words);
-            const uint8_t *st = (const uint8_t *)(sw + words);
-            for (uint64_t i = 0; i < tail; ++i)
-                dt[i] = st[i];
 
             set_syscall_result(saved_rsp, (uint64_t)(uintptr_t)dst);
             break;
@@ -646,11 +1000,9 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             }
 
             int result = 0;
-            for (uint64_t i = 0; i < n; ++i) {
-                if (s1[i] != s2[i]) {
-                    result = (int)s1[i] - (int)s2[i];
-                    break;
-                }
+            if (memcmp_user_buffers(s1, s2, n, &result) < 0) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_memcmp_buffer");
+                break;
             }
 
             set_syscall_result(saved_rsp, (uint64_t)(int64_t)result);
@@ -666,23 +1018,10 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_memset_buffer");
                 break;
             }
-
-            
-            uint64_t head = 0;
-            while (head < n && ((uintptr_t)(dst + head) & 7) != 0) {
-                dst[head] = value;
-                head++;
+            if (memset_user_buffer(dst, value, n) < 0) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_memset_buffer");
+                break;
             }
-            uint64_t fill64 = (uint64_t)value * 0x0101010101010101ULL;
-            uint64_t remaining = n - head;
-            uint64_t words = remaining / 8;
-            uint64_t tail  = remaining % 8;
-            uint64_t *wp = (uint64_t *)(dst + head);
-            for (uint64_t i = 0; i < words; ++i)
-                wp[i] = fill64;
-            uint8_t *tp = (uint8_t *)(wp + words);
-            for (uint64_t i = 0; i < tail; ++i)
-                tp[i] = value;
 
             set_syscall_result(saved_rsp, arg1);
             break;
@@ -695,7 +1034,12 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             }
             int32_t rc = 0;
             if (!wm_kernel_is_running()) {
-                rc = input_manager_read_keyboard(event_out);
+                driver_keyboard_event_t event = {0};
+                rc = input_manager_read_keyboard(&event);
+                if (rc > 0 && copy_to_user(event_out, &event, sizeof(event)) != 0u) {
+                    syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_keyboard_buffer");
+                    break;
+                }
             }
             set_syscall_i32(saved_rsp, rc);
             break;
@@ -709,7 +1053,12 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             }
             int32_t rc = 0;
             if (!wm_kernel_is_running()) {
-                rc = input_manager_read_mouse(event_out);
+                driver_mouse_event_t event = {0};
+                rc = input_manager_read_mouse(&event);
+                if (rc > 0 && copy_to_user(event_out, &event, sizeof(event)) != 0u) {
+                    syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_mouse_buffer");
+                    break;
+                }
             }
             set_syscall_i32(saved_rsp, rc);
             break;
@@ -725,7 +1074,14 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            os_status_t status = ipc_send_message(target_pid, message, size);
+            uint8_t message_copy[IPC_MESSAGE_MAX_SIZE];
+            if (size > 0u &&
+                copy_from_user(message_copy, message, size) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_message_buffer");
+                break;
+            }
+
+            os_status_t status = ipc_send_message(target_pid, message_copy, size);
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -737,7 +1093,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            os_status_t status = ipc_receive_message(out_message);
+            ipc_message_t message = {0};
+            os_status_t status = ipc_receive_message(&message);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(out_message, &message, sizeof(message)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_message_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -843,7 +1205,15 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_status_buffer");
                 break;
             }
-            int32_t result = process_waitpid((int32_t)arg1, status_ptr, (int32_t)arg3);
+            int32_t child_status = 0;
+            int32_t result = process_waitpid((int32_t)arg1,
+                                             status_ptr != NULL ? &child_status : NULL,
+                                             (int32_t)arg3);
+            if (result > 0 && status_ptr != NULL &&
+                copy_to_user(status_ptr, &child_status, sizeof(child_status)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_status_buffer");
+                break;
+            }
             set_syscall_result(saved_rsp, (uint64_t)(int64_t)result);
             break;
         }
@@ -854,7 +1224,12 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_rtc_buffer");
                 break;
             }
-            rtc_read_time(out);
+            rtc_time_t time = {0};
+            rtc_read_time(&time);
+            if (copy_to_user(out, &time, sizeof(time)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_rtc_buffer");
+                break;
+            }
             set_syscall_result(saved_rsp, 0);
             break;
         }
@@ -908,24 +1283,28 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            struct { uint32_t size; uint8_t is_dir; uint8_t exists; } *stat_out =
-                (void *)(uintptr_t)arg2;
-            if (!user_buffer_ok(stat_out, 6)) {
+            syscall_file_stat_t *stat_out = (void *)(uintptr_t)arg2;
+            if (!user_buffer_ok(stat_out, sizeof(syscall_file_stat_t))) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_stat_buffer");
                 break;
             }
             vfs_file_t vf;
+            syscall_file_stat_t stat = {0};
             if (vfs_find_file(path, &vf)) {
-                stat_out->size = vf.size;
-                stat_out->is_dir = 0; 
-                stat_out->exists = 1;
-                set_syscall_result(saved_rsp, 0);
+                stat.size = vf.size;
+                stat.is_dir = 0;
+                stat.exists = 1;
             } else {
-                stat_out->size = 0;
-                stat_out->is_dir = 0;
-                stat_out->exists = 0;
-                set_syscall_result(saved_rsp, (uint64_t)(int64_t)OS_STATUS_NOT_FOUND);
+                stat.size = 0;
+                stat.is_dir = 0;
+                stat.exists = 0;
             }
+            if (copy_to_user(stat_out, &stat, sizeof(stat)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_stat_buffer");
+                break;
+            }
+            set_syscall_result(saved_rsp,
+                               stat.exists ? 0u : (uint64_t)(int64_t)OS_STATUS_NOT_FOUND);
             break;
         }
 
@@ -941,7 +1320,12 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_info_buffer");
                 break;
             }
-            int32_t rc = process_get_full_info(query_pid, info_out);
+            process_info_kernel_t info = {0};
+            int32_t rc = process_get_full_info(query_pid, &info);
+            if (rc == 0 && copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_info_buffer");
+                break;
+            }
             set_syscall_i32(saved_rsp, rc);
             break;
         }
@@ -964,7 +1348,15 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_pipe_buffer");
                 break;
             }
-            int32_t result = syscall_file_pipe(fds_ptr);
+            int32_t fds[2] = {-1, -1};
+            int32_t result = syscall_file_pipe(fds);
+            if (result == 0 &&
+                copy_to_user(fds_ptr, fds, sizeof(fds)) != 0u) {
+                (void)syscall_file_close(fds[0]);
+                (void)syscall_file_close(fds[1]);
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_pipe_buffer");
+                break;
+            }
             set_syscall_result(saved_rsp, (uint64_t)(int64_t)result);
             break;
         }
@@ -982,61 +1374,126 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         }
 
         case SYSCALL_SOCKET_CREATE: {
-            int32_t type = (int32_t)arg1;
-            if (type == 1) {
-                set_syscall_result(saved_rsp, 1);
-            } else {
-                set_syscall_result(saved_rsp, (uint64_t)(int64_t)OS_STATUS_NOT_SUPPORTED);
-            }
+            set_syscall_i32(saved_rsp, syscall_socket_create((int32_t)arg1));
             break;
         }
 
         case SYSCALL_SOCKET_CONNECT: {
-            uint32_t ip = (uint32_t)arg1;
-            uint16_t port = (uint16_t)arg2;
-            uint16_t local_port = (uint16_t)(49152u + (timer_ticks() % 16384u));
-            int32_t conn = tcp_connect(ip, port, local_port);
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)conn);
+            set_syscall_i32(saved_rsp, syscall_socket_connect(
+                (int32_t)arg1, (uint32_t)arg2, (uint16_t)arg3));
             break;
         }
 
         case SYSCALL_SOCKET_BIND: {
-            uint16_t port = (uint16_t)arg2;
-            int32_t listen_id = tcp_listen(port);
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)listen_id);
+            set_syscall_i32(saved_rsp, syscall_socket_bind(
+                (int32_t)arg1, (uint16_t)arg2));
             break;
         }
 
         case SYSCALL_SOCKET_LISTEN: {
-            set_syscall_result(saved_rsp, 0);
+            set_syscall_i32(saved_rsp, syscall_socket_listen((int32_t)arg1));
             break;
         }
 
         case SYSCALL_SOCKET_ACCEPT: {
-            int32_t child = tcp_accept((int32_t)arg1);
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)child);
+            set_syscall_i32(saved_rsp, syscall_socket_accept((int32_t)arg1));
             break;
         }
 
         case SYSCALL_SOCKET_SEND: {
-            int32_t sent = tcp_send((int32_t)arg1, (const void *)(uintptr_t)arg2,
-                                    (uint16_t)arg3);
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)sent);
+            uint16_t length = (uint16_t)arg3;
+            const void *user_data = (const void *)(uintptr_t)arg2;
+            if ((uint64_t)length != arg3 || !user_buffer_ok(user_data, length)) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_socket_send_buffer");
+                break;
+            }
+            uint8_t *data = length != 0u ? (uint8_t *)malloc(length) : NULL;
+            if (length != 0u &&
+                (data == NULL ||
+                 copy_from_user(data, user_data, length) != 0u)) {
+                free(data);
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_socket_send_buffer");
+                break;
+            }
+            int32_t sent = syscall_socket_send((int32_t)arg1, data, length);
+            free(data);
+            set_syscall_i32(saved_rsp, sent);
             break;
         }
 
         case SYSCALL_SOCKET_RECV: {
-            int32_t recvd = tcp_recv((int32_t)arg1, (void *)(uintptr_t)arg2,
-                                     (uint16_t)arg3);
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)recvd);
+            uint16_t length = (uint16_t)arg3;
+            void *user_data = (void *)(uintptr_t)arg2;
+            if ((uint64_t)length != arg3 || !user_buffer_ok(user_data, length)) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_socket_recv_buffer");
+                break;
+            }
+            uint8_t *data = length != 0u ? (uint8_t *)malloc(length) : NULL;
+            if (length != 0u && data == NULL) {
+                syscall_fail(saved_rsp, num, OS_STATUS_LIMIT_REACHED,
+                             "socket_recv_allocation_failed");
+                break;
+            }
+            int32_t received = syscall_socket_recv((int32_t)arg1, data, length);
+            if (received > 0 &&
+                copy_to_user(user_data, data, (uint64_t)received) != 0u) {
+                free(data);
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_socket_recv_buffer");
+                break;
+            }
+            free(data);
+            set_syscall_i32(saved_rsp, received);
             break;
         }
 
         case SYSCALL_SOCKET_CLOSE: {
-            int32_t result = tcp_close((int32_t)arg1);
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)result);
+            set_syscall_i32(saved_rsp, syscall_socket_close((int32_t)arg1));
             break;
         }
+
+        case SYSCALL_SOCKET_GET_INFO: {
+            syscall_socket_info_t info;
+            int32_t result = syscall_socket_get_info((int32_t)arg1, &info);
+            if (result == 0 &&
+                copy_to_user((void *)(uintptr_t)arg2,
+                             &info, sizeof(info)) != 0u) {
+                result = (int32_t)OS_STATUS_FAULT;
+            }
+            set_syscall_i32(saved_rsp, result);
+            break;
+        }
+
+        case SYSCALL_SOCKET_SET_OPTION:
+            set_syscall_i32(saved_rsp, syscall_socket_set_option(
+                (int32_t)arg1, (int32_t)arg2, (int32_t)arg3, (int32_t)arg4));
+            break;
+
+        case SYSCALL_SOCKET_GET_OPTION: {
+            int32_t value = 0;
+            int32_t result = syscall_socket_get_option(
+                (int32_t)arg1, (int32_t)arg2, (int32_t)arg3, &value);
+            if (result == 0 &&
+                copy_to_user((void *)(uintptr_t)arg4,
+                             &value, sizeof(value)) != 0u) {
+                result = (int32_t)OS_STATUS_FAULT;
+            }
+            set_syscall_i32(saved_rsp, result);
+            break;
+        }
+
+        case SYSCALL_SOCKET_SHUTDOWN:
+            set_syscall_i32(saved_rsp, syscall_socket_shutdown(
+                (int32_t)arg1, (int32_t)arg2));
+            break;
+
+        case SYSCALL_SOCKET_LISTEN_EX:
+            set_syscall_i32(saved_rsp, syscall_socket_listen_with_backlog(
+                (int32_t)arg1, (int32_t)arg2));
+            break;
 
         case SYSCALL_MPROTECT: {
             extern int64_t syscall_vm_mprotect(uint64_t, uint64_t, uint64_t);
@@ -1136,11 +1593,23 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
         case SYSCALL_FCHMOD: {
-            set_syscall_result(saved_rsp, 0);
+            set_syscall_result(saved_rsp,
+                               (uint64_t)(int64_t)OS_STATUS_NOT_SUPPORTED);
             break;
         }
         case SYSCALL_RENAME: {
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)-38);
+            char old_path[SYSCALL_MAX_PATH_LEN];
+            char new_path[SYSCALL_MAX_PATH_LEN];
+            if (copy_user_cstring(old_path, sizeof(old_path),
+                                  (const char *)(uintptr_t)arg1) < 0 ||
+                copy_user_cstring(new_path, sizeof(new_path),
+                                  (const char *)(uintptr_t)arg2) < 0) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_rename_path");
+                break;
+            }
+            set_syscall_result(saved_rsp,
+                (uint64_t)(int64_t)syscall_file_rename(old_path, new_path));
             break;
         }
         case SYSCALL_IOCTL_EX: {
@@ -1154,24 +1623,47 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
         case SYSCALL_ACCESS: {
-            set_syscall_result(saved_rsp, 0);
+            char path[SYSCALL_MAX_PATH_LEN];
+            if (copy_user_cstring(path, sizeof(path),
+                                  (const char *)(uintptr_t)arg1) < 0) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_access_path");
+                break;
+            }
+            extern int64_t syscall_access(const char *, int32_t);
+            set_syscall_result(saved_rsp,
+                (uint64_t)syscall_access(path, (int32_t)arg2));
+            break;
+        }
+        case SYSCALL_FD_POLL: {
+            uint32_t events = (uint32_t)arg2;
+            uint32_t ready = syscall_file_poll((int32_t)arg1, events);
+            if ((ready & 0x0020u) != 0u)
+                ready = syscall_socket_poll((int32_t)arg1, events);
+            set_syscall_result(saved_rsp, ready);
             break;
         }
         case SYSCALL_SET_ROBUST_LIST: {
-            set_syscall_result(saved_rsp, 0);
+            set_syscall_result(saved_rsp,
+                (uint64_t)(int64_t)process_set_robust_list(arg1, arg2));
             break;
         }
 
         case SYSCALL_FUTEX: {
             extern int64_t syscall_futex(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
-            set_syscall_result(saved_rsp, (uint64_t)syscall_futex(arg1, arg2, arg3, arg4, arg5, 0));
+            int64_t result =
+                syscall_futex(arg1, arg2, arg3, arg4, arg5, 0);
+            set_syscall_result(saved_rsp, (uint64_t)result);
+            uint64_t command = arg2 & 0x7fULL;
+            if (result == 0 && (command == 0 || command == 9)) {
+                request_switch = 1;
+            }
             break;
         }
 
         case SYSCALL_CLONE: {
-            int32_t tid = process_create_user_ex(arg1, arg2, arg3, arg4, arg5);
+            int32_t tid = process_create_thread(arg1, arg2, arg3, arg4, arg5);
             set_syscall_i32(saved_rsp, tid);
-            if (tid >= 0) request_switch = 1;
             break;
         }
 
@@ -1186,19 +1678,45 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
         case SYSCALL_RT_SIGRETURN: {
-            set_syscall_result(saved_rsp, 0);
+            set_syscall_result(saved_rsp,
+                               (uint64_t)(int64_t)OS_STATUS_NOT_SUPPORTED);
             break;
         }
         case SYSCALL_SIGALTSTACK: {
-            set_syscall_result(saved_rsp, 0);
+            set_syscall_result(saved_rsp,
+                               (uint64_t)(int64_t)OS_STATUS_NOT_SUPPORTED);
             break;
         }
         case SYSCALL_TKILL: {
             int32_t target_pid = (int32_t)arg1;
-            int32_t rc = process_signal_deliver(target_pid, (int32_t)arg2);
+            int32_t rc;
+            if ((int32_t)arg2 == 0) {
+                rc = process_is_alive(target_pid) ? 0 : -3;
+            } else {
+                rc = process_signal_deliver(target_pid, (int32_t)arg2);
+                if (rc < 0) rc = -3;
+            }
             set_syscall_i32(saved_rsp, rc);
             break;
         }
+        case SYSCALL_SHM_CREATE:
+            set_syscall_i32(saved_rsp, shared_memory_create((uint32_t)arg1));
+            break;
+        case SYSCALL_SHM_GRANT:
+            set_syscall_i32(saved_rsp,
+                            shared_memory_grant((int32_t)arg1, (int32_t)arg2));
+            break;
+        case SYSCALL_SHM_MAP:
+            set_syscall_result(saved_rsp,
+                (uint64_t)(uintptr_t)shared_memory_map((int32_t)arg1));
+            break;
+        case SYSCALL_SHM_UNMAP:
+            set_syscall_i32(saved_rsp,
+                shared_memory_unmap((int32_t)arg1, (void *)(uintptr_t)arg2));
+            break;
+        case SYSCALL_SHM_CLOSE:
+            set_syscall_i32(saved_rsp, shared_memory_close((int32_t)arg1));
+            break;
         
         case SYSCALL_FORK: {
             set_syscall_result(saved_rsp, (uint64_t)(int64_t)-38); 
@@ -1344,7 +1862,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_cpu_info_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_cpu_info((system_cpu_info_t *)info_out);
+            system_cpu_info_t info = {0};
+            os_status_t status = sysinfo_get_cpu_info(&info);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_cpu_info_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -1356,7 +1880,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_memory_info_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_memory_info((system_memory_info_t *)info_out);
+            system_memory_info_t info = {0};
+            os_status_t status = sysinfo_get_memory_info(&info);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_memory_info_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -1368,7 +1898,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_vmem_info_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_vmem_info((system_vmem_info_t *)info_out);
+            system_vmem_info_t info = {0};
+            os_status_t status = sysinfo_get_vmem_info(&info);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_vmem_info_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -1381,7 +1917,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_disk_info_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_disk_info(index, (system_disk_info_t *)info_out);
+            system_disk_info_t info = {0};
+            os_status_t status = sysinfo_get_disk_info(index, &info);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_disk_info_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -1393,7 +1935,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_disk_count_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_disk_count((uint32_t *)count_out);
+            uint32_t count = 0;
+            os_status_t status = sysinfo_get_disk_count(&count);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(count_out, &count, sizeof(count)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_disk_count_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -1401,7 +1949,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         case SYSCALL_RAW_BLOCK_READ:
         case SYSCALL_RAW_BLOCK_WRITE: {
             uint32_t disk_index = (uint32_t)arg1;
-            uint32_t lba = (uint32_t)arg2;
+            uint64_t lba = arg2;
             void *buffer = (void *)(uintptr_t)arg3;
             uint32_t sectors = (uint32_t)arg4;
             uint64_t byte_count = (uint64_t)sectors * 512ULL;
@@ -1415,11 +1963,35 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            bool ok;
+            bool ok = false;
+            uint8_t *bounce = NULL;
+            if (byte_count != 0u) {
+                bounce = (uint8_t *)malloc((size_t)byte_count);
+                if (bounce == NULL) {
+                    syscall_fail(saved_rsp, num, OS_STATUS_LIMIT_REACHED, "raw_block_alloc_failed");
+                    break;
+                }
+            }
+
             if (num == SYSCALL_RAW_BLOCK_READ) {
-                ok = disk_raw_read(disk_index, lba, (uint8_t *)buffer, sectors);
+                ok = disk_raw_read(disk_index, lba, bounce, sectors);
+                if (ok && byte_count != 0u &&
+                    copy_to_user(buffer, bounce, byte_count) != 0u) {
+                    free(bounce);
+                    syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_raw_block_buffer");
+                    break;
+                }
             } else {
-                ok = disk_raw_write(disk_index, lba, (const uint8_t *)buffer, sectors);
+                if (byte_count != 0u &&
+                    copy_from_user(bounce, buffer, byte_count) != 0u) {
+                    free(bounce);
+                    syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_raw_block_buffer");
+                    break;
+                }
+                ok = disk_raw_write(disk_index, lba, bounce, sectors);
+            }
+            if (bounce != NULL) {
+                free(bounce);
             }
             set_syscall_status(saved_rsp, ok ? OS_STATUS_OK : OS_STATUS_IO_ERROR);
             break;
@@ -1451,7 +2023,12 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
 
-            memcpy(buffer, (const void *)(uintptr_t)font_addr, (size_t)font_size);
+            if (copy_to_user(buffer,
+                             (const void *)(uintptr_t)font_addr,
+                             font_size) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_boot_font_buffer");
+                break;
+            }
             set_syscall_result(saved_rsp, font_size);
             break;
         }
@@ -1464,7 +2041,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_device_info_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_device_info(index, (system_device_t *)info_out);
+            system_device_t info = {0};
+            os_status_t status = sysinfo_get_device_info(index, &info);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_device_info_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -1476,7 +2059,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_graphics_info_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_graphics_info((system_graphics_info_t *)info_out);
+            system_graphics_info_t info = {0};
+            os_status_t status = sysinfo_get_graphics_info(&info);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_graphics_info_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -1488,7 +2077,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_arch_info_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_arch_info((system_arch_info_t *)info_out);
+            system_arch_info_t info = {0};
+            os_status_t status = sysinfo_get_arch_info(&info);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_arch_info_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }
@@ -1500,7 +2095,13 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_system_info_buffer");
                 break;
             }
-            os_status_t status = sysinfo_get_system_info((system_info_t *)info_out);
+            system_info_t info = {0};
+            os_status_t status = sysinfo_get_system_info(&info);
+            if (status == OS_STATUS_OK &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_system_info_buffer");
+                break;
+            }
             set_syscall_status(saved_rsp, status);
             break;
         }

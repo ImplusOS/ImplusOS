@@ -9,7 +9,6 @@ typedef struct {
     uint8_t  attributes;
 } file_dirent_t;
 
-int32_t get_fat32_file_t();
 int32_t file_open(const char *path, uint64_t flags);
 int32_t file_creat(const char *path);
 int64_t file_read(int32_t fd, void *buffer, uint64_t len);
@@ -21,6 +20,7 @@ int32_t file_opendir(const char *path);
 int32_t file_readdir(int32_t dir_handle, file_dirent_t *out_entry);
 int32_t file_closedir(int32_t dir_handle);
 int32_t file_unlink(const char *path);
+int32_t file_rename(const char *old_path, const char *new_path);
 
 typedef struct {
     uint32_t size;

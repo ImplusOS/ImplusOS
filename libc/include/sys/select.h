@@ -4,8 +4,10 @@
 #include <string.h>
 #include <sys/time.h>
 
+#define FD_SETSIZE 1024
+
 typedef struct {
-    unsigned long fds_bits[4];
+    unsigned long fds_bits[FD_SETSIZE / (8 * sizeof(unsigned long))];
 } fd_set;
 
 #define FD_ZERO(set) memset((set), 0, sizeof(fd_set))

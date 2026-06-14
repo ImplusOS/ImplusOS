@@ -33,7 +33,7 @@ DRIVER_MODULE_CFLAGS += $(DRIVER_BASE_CFLAGS)
 DRIVER_MODULE_LDFLAGS ?= -nostdlib -shared --build-id=none -Bsymbolic -e driver_module_init -z max-page-size=4096
 
 DRIVER_SRCS ?= $(sort $(shell find . -type f -name '*.c' -print | sed 's|^\./||'))
-DRIVER_BUILD_DIR ?= $(ROOT_DIR)/Build/Modules/$(DRIVER_NAME)
+DRIVER_BUILD_DIR ?= $(ROOT_DIR)/Build/Modules/$(ARCH)/$(DRIVER_NAME)
 DRIVER_ELF ?= $(DRIVER_BUILD_DIR)/$(DRIVER_NAME).ELF
 DRIVER_OBJS := $(patsubst %.c,$(DRIVER_BUILD_DIR)/%.o,$(DRIVER_SRCS))
 

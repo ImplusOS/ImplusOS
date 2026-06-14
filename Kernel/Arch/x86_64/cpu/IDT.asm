@@ -9,6 +9,7 @@ global isr_nmi
 global isr_general_protection
 global isr_machine_check
 global isr_tlb_shootdown
+global isr_driver_table
 
 extern double_fault_handler
 extern nmi_handler
@@ -93,6 +94,25 @@ isr_irq0:
     RESTORE_REGS
     SWAPGS_IF_USER_EXIT 8
     iretq
+
+%macro DRIVER_ISR 1
+isr_driver_%1:
+    SWAPGS_IF_USER_ENTER 8
+    SAVE_REGS
+
+    mov rdi, %1
+    call irq_handler
+
+    RESTORE_REGS
+    SWAPGS_IF_USER_EXIT 8
+    iretq
+%endmacro
+
+%assign driver_vector 64
+%rep 64
+    DRIVER_ISR driver_vector
+%assign driver_vector driver_vector + 1
+%endrep
 
 isr_tlb_shootdown:
     SWAPGS_IF_USER_ENTER 8
@@ -191,5 +211,14 @@ isr_machine_check:
 load_idt:
     lidt [rdi]
     ret
+
+SECTION .rodata
+align 8
+isr_driver_table:
+%assign driver_vector 64
+%rep 64
+    dq isr_driver_%+driver_vector
+%assign driver_vector driver_vector + 1
+%endrep
 
 section .note.GNU-stack noalloc noexec nowrite progbits

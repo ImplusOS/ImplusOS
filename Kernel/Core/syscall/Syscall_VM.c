@@ -8,23 +8,19 @@
 
 int64_t syscall_vm_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
 {
-    if (len == 0) {
-        return 0;
-    }
-
-    uint64_t page_mask = ~(PAGE_SIZE - 1ULL);
-    uint64_t start = addr & page_mask;
-    uint64_t end   = (addr + len + PAGE_SIZE - 1ULL) & page_mask;
-    (void)end;
+    enum { PROT_READ = 1u, PROT_WRITE = 2u, PROT_EXEC = 4u };
+    if (len == 0 || (addr & (PAGE_SIZE - 1ULL)) != 0u ||
+        (prot & ~(uint64_t)(PROT_READ | PROT_WRITE | PROT_EXEC)) != 0u)
+        return -22;
 
     uint64_t cr3 = process_get_current_cr3();
-    if (cr3 == 0) {
-        return -14;
-    }
-
-    (void)prot;
-
-    return 0;
+    if (cr3 == 0) return -14;
+    uint64_t flags = 0u;
+    if ((prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) != 0u)
+        flags |= PAGE_USER;
+    if ((prot & PROT_WRITE) != 0u) flags |= PAGE_RW;
+    if ((prot & PROT_EXEC) == 0u) flags |= PAGE_NX;
+    return paging_protect_user_range(cr3, addr, len, flags) < 0 ? -14 : 0;
 }
 
 int64_t syscall_vm_munmap(uint64_t addr, uint64_t len)
@@ -33,17 +29,7 @@ int64_t syscall_vm_munmap(uint64_t addr, uint64_t len)
         return 0;
     }
 
-    uint64_t page_mask = ~(PAGE_SIZE - 1ULL);
-    uint64_t start = addr & page_mask;
-    uint64_t end   = (addr + len + PAGE_SIZE - 1ULL) & page_mask;
-    uint64_t size  = end - start;
-
-    uint64_t cr3 = process_get_current_cr3();
-    if (cr3 == 0) {
-        return -14;
-    }
-
-    int rc = paging_unmap_range(cr3, start, size);
+    int rc = process_user_munmap((void *)(uintptr_t)addr, len);
     return (rc < 0) ? -14 : 0;
 }
 

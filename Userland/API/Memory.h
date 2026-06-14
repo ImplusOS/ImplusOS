@@ -6,6 +6,11 @@
 void *malloc(size_t size);
 void  free(void *ptr);
 void *os_mmap(uint64_t length, uint64_t flags);
+int32_t os_shared_memory_create(uint32_t size);
+int32_t os_shared_memory_grant(int32_t handle, int32_t pid);
+void *os_shared_memory_map(int32_t handle);
+int32_t os_shared_memory_unmap(int32_t handle, void *address);
+int32_t os_shared_memory_close(int32_t handle);
 void *memcpy(void *dst, const void *src, size_t n);
 int   memcmp(const void *s1, const void *s2, size_t n);
 void *memset(void *ptr, int value, size_t num);

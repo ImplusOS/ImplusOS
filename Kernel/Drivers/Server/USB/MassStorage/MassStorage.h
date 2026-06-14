@@ -9,3 +9,6 @@ void bot_add_device(uint8_t addr, uint8_t interface, uint8_t ep_in, uint8_t ep_o
 uint32_t bot_get_device_count(void);
 bool bot_select_device(uint32_t index);
 uint64_t bot_get_total_bytes(void);
+uint32_t bot_get_block_size(void);
+bool bot_is_read_only(void);
+bool bot_flush(void);

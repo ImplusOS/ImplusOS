@@ -19,6 +19,11 @@ typedef unsigned long long EFI_PHYSICAL_ADDRESS;
 #define BOOT_DRIVE_TYPE_IDE     1
 #define BOOT_DRIVE_TYPE_USB     2
 #define BOOT_DRIVE_TYPE_AHCI    3
+#define BOOT_DRIVE_TYPE_NVME    4
+#define BOOT_DRIVE_TYPE_VIRTIO  5
+
+#define BOOT_STORAGE_IDENTITY_VERSION 1u
+#define BOOT_STORAGE_FLAG_PCI_VALID   (1u << 0)
 
 #define EFI_RESERVED_MEMORY_TYPE 0u
 #define EFI_CONVENTIONAL_MEMORY  7u
@@ -60,6 +65,17 @@ typedef struct {
 
     uint64_t FontDataAddress;
     uint64_t FontDataSize;
+
+    uint32_t BootStorageIdentityVersion;
+    uint32_t BootStorageIdentityFlags;
+    uint16_t BootStoragePciSegment;
+    uint8_t  BootStoragePciBus;
+    uint8_t  BootStoragePciDevice;
+    uint8_t  BootStoragePciFunction;
+    uint8_t  BootStorageTransport;
+    uint16_t BootStoragePort;
+    uint32_t BootStorageNamespace;
+    uint64_t BootStoragePartitionLBA;
 } BOOT_INFO;
 #pragma pack(pop)
 

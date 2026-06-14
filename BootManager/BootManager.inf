@@ -36,6 +36,7 @@
   gEfiGraphicsOutputProtocolGuid
   gEfiBlockIoProtocolGuid
   gEfiDevicePathProtocolGuid
+  gEfiPciIoProtocolGuid
 
 [Guids]
   gEfiFileInfoGuid

@@ -3,25 +3,34 @@
 #include "../../API/Error.h"
 #include "../../API/Process.h"
 
+#include <errno.h>
 #include <string.h>
 
 static ipc_message_t g_pending_messages[DRIVER_FRAMEWORK_PENDING_MESSAGE_MAX];
+static uint32_t g_pending_message_head = 0;
 static uint32_t g_pending_message_count = 0;
 static uint64_t g_next_request_id = 1;
+
+static uint32_t driver_framework_pending_index(uint32_t logical_index)
+{
+    return (g_pending_message_head + logical_index) %
+           DRIVER_FRAMEWORK_PENDING_MESSAGE_MAX;
+}
 
 static int32_t driver_framework_pending_push(const ipc_message_t *message)
 {
     if (message == NULL) {
-        os_set_errno(22);
+        os_set_errno(EINVAL);
         return -1;
     }
 
     if (g_pending_message_count >= DRIVER_FRAMEWORK_PENDING_MESSAGE_MAX) {
-        os_set_errno(24);
+        os_set_errno(ENOBUFS);
         return -1;
     }
 
-    g_pending_messages[g_pending_message_count] = *message;
+    uint32_t tail = driver_framework_pending_index(g_pending_message_count);
+    g_pending_messages[tail] = *message;
     g_pending_message_count++;
     os_clear_errno();
     return 0;
@@ -30,21 +39,18 @@ static int32_t driver_framework_pending_push(const ipc_message_t *message)
 static int32_t driver_framework_pending_pop(ipc_message_t *out_message)
 {
     if (out_message == NULL) {
-        os_set_errno(22);
+        os_set_errno(EINVAL);
         return -1;
     }
 
     if (g_pending_message_count == 0u) {
-        os_set_errno(2);
+        os_set_errno(ENOENT);
         return -1;
     }
 
-    *out_message = g_pending_messages[0];
-    if (g_pending_message_count > 1u) {
-        memmove(&g_pending_messages[0],
-                &g_pending_messages[1],
-                (size_t)(g_pending_message_count - 1u) * sizeof(ipc_message_t));
-    }
+    *out_message = g_pending_messages[g_pending_message_head];
+    g_pending_message_head =
+        (g_pending_message_head + 1u) % DRIVER_FRAMEWORK_PENDING_MESSAGE_MAX;
     g_pending_message_count--;
     os_clear_errno();
     return 0;
@@ -54,12 +60,13 @@ static int32_t driver_framework_pending_take_reply(uint64_t request_id,
                                                    driver_framework_ipc_message_t *out_reply)
 {
     if (out_reply == NULL) {
-        os_set_errno(22);
+        os_set_errno(EINVAL);
         return -1;
     }
 
     for (uint32_t i = 0; i < g_pending_message_count; ++i) {
-        const ipc_message_t *message = &g_pending_messages[i];
+        uint32_t index = driver_framework_pending_index(i);
+        const ipc_message_t *message = &g_pending_messages[index];
         if (message->sender_pid != DRIVER_FRAMEWORK_KERNEL_ENDPOINT_PID ||
             message->size != sizeof(driver_framework_ipc_message_t)) {
             continue;
@@ -74,17 +81,17 @@ static int32_t driver_framework_pending_take_reply(uint64_t request_id,
         }
 
         *out_reply = *candidate;
-        if (i + 1u < g_pending_message_count) {
-            memmove(&g_pending_messages[i],
-                    &g_pending_messages[i + 1u],
-                    (size_t)(g_pending_message_count - i - 1u) * sizeof(ipc_message_t));
+        for (uint32_t j = i; j + 1u < g_pending_message_count; ++j) {
+            uint32_t dst = driver_framework_pending_index(j);
+            uint32_t src = driver_framework_pending_index(j + 1u);
+            g_pending_messages[dst] = g_pending_messages[src];
         }
         g_pending_message_count--;
         os_clear_errno();
         return 0;
     }
 
-    os_set_errno(2);
+    os_set_errno(ENOENT);
     return -1;
 }
 
@@ -102,7 +109,7 @@ static int32_t driver_framework_finalize_call(driver_framework_ipc_message_t *me
 int32_t driver_framework_receive_message(ipc_message_t *out_message)
 {
     if (out_message == NULL) {
-        os_set_errno(22);
+        os_set_errno(EINVAL);
         return -1;
     }
 
@@ -116,12 +123,12 @@ int32_t driver_framework_receive_message(ipc_message_t *out_message)
 int32_t driver_framework_call(driver_framework_ipc_message_t *message)
 {
     if (message == NULL) {
-        os_set_errno(22);
+        os_set_errno(EINVAL);
         return -1;
     }
 
     if (message->data_size > DRIVER_FRAMEWORK_INLINE_DATA_SIZE) {
-        os_set_errno(22);
+        os_set_errno(EINVAL);
         return -1;
     }
 
@@ -141,6 +148,7 @@ int32_t driver_framework_call(driver_framework_ipc_message_t *message)
         return driver_framework_finalize_call(message);
     }
 
+    uint64_t start_ms = get_uptime_ms();
     while (1) {
         ipc_message_t incoming;
         if (ipc_receive_message(&incoming) == 0) {
@@ -159,6 +167,10 @@ int32_t driver_framework_call(driver_framework_ipc_message_t *message)
             if (driver_framework_pending_push(&incoming) < 0) {
                 return -1;
             }
+        }
+        if (get_uptime_ms() - start_ms >= DRIVER_FRAMEWORK_CALL_TIMEOUT_MS) {
+            os_set_errno(ETIMEDOUT);
+            return -1;
         }
         process_yield();
     }
@@ -329,12 +341,17 @@ int32_t driver_framework_pci_write_config(uint8_t bus,
                                           uint32_t value)
 {
     driver_framework_ipc_message_t message;
+    driver_framework_pci_write_request_t request;
     memset(&message, 0, sizeof(message));
+    memset(&request, 0, sizeof(request));
     message.opcode = DRIVER_FRAMEWORK_OP_PCI_WRITE_CONFIG;
     message.value0 = (uint64_t)bus;
     message.value1 = (uint64_t)device;
     message.value2 = (uint64_t)func;
-    message.value3 = (((uint64_t)offset & 0xFFu) << 32) | (uint64_t)value;
+    request.offset = offset;
+    request.value = value;
+    message.data_size = sizeof(request);
+    memcpy(message.data, &request, sizeof(request));
     return driver_framework_call(&message);
 }
 

@@ -17,8 +17,12 @@
 #define MAP_FAILED    ((void *)-1)
 
 #define MAP_ANON_FD   (-1)
+#define MS_ASYNC      0x01
+#define MS_SYNC       0x04
+#define MS_INVALIDATE 0x02
 
 void *posix_mmap  (void *addr, size_t length, int prot, int flags,
                    int fd, off_t offset);
 int   posix_munmap(void *addr, size_t length);
 int   posix_mprotect(void *addr, size_t length, int prot);
+int   posix_msync(void *addr, size_t length, int flags);

@@ -3,6 +3,7 @@
 #include "../include/posix_process.h"
 #include "../include/posix_fdtable.h"
 #include "../include/posix_errno.h"
+#include "../include/posix_signal.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -154,26 +155,21 @@ pid_t posix_wait(int *status)
 
  
 extern uint64_t syscall2(uint64_t num, uint64_t arg1, uint64_t arg2);
-#define SYSCALL_PROCESS_SIGNAL 44ULL
+#define SYSCALL_TKILL 186ULL
 
 int posix_kill(pid_t pid, int sig)
 {
-    if (pid == posix_getpid()) {
-         
-        int64_t r = (int64_t)syscall2(SYSCALL_PROCESS_SIGNAL,
-                                       (uint64_t)sig,
-                                       0ULL);
-        if (r < 0) {
-            posix_set_errno_from_status(r);
-            return -1;
-        }
-        os_errno = 0;
-        return 0;
+    if (pid <= 0 || sig < 0 || sig >= NSIG) {
+        errno = EINVAL;
+        return -1;
     }
-
-     
-    (void)pid;
-    (void)sig;
-    errno = ENOSYS;
-    return -1;
+    int64_t r = (int64_t)syscall2(SYSCALL_TKILL,
+                                   (uint64_t)(int64_t)pid,
+                                   (uint64_t)(uint32_t)sig);
+    if (r < 0) {
+        posix_set_errno_from_status(r);
+        return -1;
+    }
+    os_errno = 0;
+    return 0;
 }

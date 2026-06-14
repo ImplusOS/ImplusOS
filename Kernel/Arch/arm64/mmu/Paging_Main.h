@@ -24,6 +24,8 @@ void paging_switch_cr3(uint64_t address_space);
 uint64_t paging_create_process_space(void);
 void paging_destroy_process_space(uint64_t address_space);
 int paging_set_user_access(uint64_t address_space, uint64_t start, uint64_t size, int enable_user);
+int paging_protect_user_range(uint64_t address_space, uint64_t start, uint64_t size,
+                              uint64_t flags);
 int paging_unmap_range(uint64_t address_space, uint64_t start, uint64_t size);
 int paging_is_user_range_mapped(uint64_t address_space, uint64_t start, uint64_t size);
 int paging_map_user_page(uint64_t address_space, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags);

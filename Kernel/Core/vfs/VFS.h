@@ -21,6 +21,7 @@ int32_t vfs_opendir(const char *path);
 int32_t vfs_readdir(int32_t handle, vfs_dirent_t *out_entry);
 int32_t vfs_closedir(int32_t handle);
 bool vfs_unlink(const char *path);
+bool vfs_rename(const char *old_path, const char *new_path);
 void vfs_set_case_sensitive(bool enabled);
 bool vfs_get_case_sensitive(void);
 bool vfs_set_default_fs(const char *fs_type);

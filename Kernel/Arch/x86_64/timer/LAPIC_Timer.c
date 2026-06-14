@@ -90,8 +90,23 @@ static void lapic_switch_to_local(void) {
     if (!platform_interrupts_using_lapic() || !lapic_is_present()) {
         return;
     }
-
-    platform_interrupts_route_pit();
+    uint64_t start_tick = g_ticks;
+    if (lapic_timer_start(VECTOR_TIMER, 0xFFFFFFFFu, 0, 16u) != 0) {
+        return;
+    }
+    uint64_t target = start_tick + 10u;
+    while (g_ticks < target) {
+        __asm__ volatile("pause" ::: "memory");
+    }
+    uint32_t current = lapic_timer_current();
+    uint32_t elapsed = 0xFFFFFFFFu - current;
+    lapic_timer_stop();
+    if (elapsed < 1000u) {
+        return;
+    }
+    uint32_t initial = elapsed / 10u;
+    platform_interrupts_mask_pit();
+    (void)lapic_timer_start(VECTOR_TIMER, initial, 1, 16u);
 }
 
 const timer_hal_t lapic_timer_hal = {

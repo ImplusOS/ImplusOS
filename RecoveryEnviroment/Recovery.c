@@ -4,6 +4,9 @@
 #include "../Userland/API/Process.h"
 #include "../Userland/API/Serial.h"
 #include "../Userland/API/SystemInfo.h"
+#ifdef RECOVERY_AUDIO_TEST
+#include "../Userland/API/Audio.h"
+#endif
 #include "../libc/include/string.h"
 #include "../libc/include/stdlib.h"
 #include "../libc/include/math.h"
@@ -675,9 +678,60 @@ static void wait_for_reboot(uint32_t color, const char *title,
     }
 }
 
+#ifdef RECOVERY_AUDIO_TEST
+static void run_audio_self_test(void)
+{
+    static int16_t pcm[2048u * 2u];
+    os_audio_info_t info;
+
+    if (os_audio_open() < 0) {
+        puts_serial("Audio self-test: unavailable\n");
+        return;
+    }
+    memset(&info, 0, sizeof(info));
+    if (os_audio_get_info(&info) < 0 ||
+        info.sample_rate != 48000u ||
+        info.channels != 2u ||
+        info.format != OS_AUDIO_FORMAT_S16_LE) {
+        puts_serial("Audio self-test: unsupported format\n");
+        os_audio_close();
+        return;
+    }
+
+    for (uint32_t frame = 0u; frame < 2048u; ++frame) {
+        int16_t sample = ((frame / 50u) & 1u) != 0u ? 6000 : -6000;
+        pcm[frame * 2u] = sample;
+        pcm[frame * 2u + 1u] = sample;
+    }
+
+    uint64_t offset = 0u;
+    while (offset < sizeof(pcm)) {
+        int64_t written = os_audio_write(
+            (const uint8_t *)pcm + offset, sizeof(pcm) - offset);
+        if (written <= 0) {
+            puts_serial("Audio self-test: write failed\n");
+            os_audio_close();
+            return;
+        }
+        offset += (uint64_t)written;
+    }
+    if (os_audio_drain(3000u) < 0) {
+        puts_serial("Audio self-test: drain failed\n");
+        os_audio_close();
+        return;
+    }
+    os_audio_close();
+    puts_serial("Audio self-test: PASS\n");
+}
+#endif
+
 static void run_recovery(void)
 {
     init_font();
+
+#ifdef RECOVERY_AUDIO_TEST
+    run_audio_self_test();
+#endif
 
     puts_serial("\nImplusOS Recovery Environment\n");
     puts_serial("Recovery media contents:\n");

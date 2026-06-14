@@ -2,26 +2,36 @@
 
 #include "IPC/IPC_Main.h"
 #include "Core/elf/ELF_Loader.h"
+#include "Core/memory/SharedMemory.h"
 #include "cpu/GDT_Main.h"
 #include "MemoryManagement/Memory_Main.h"
 #include "mmu/Paging_Main.h"
 #include "Core/sync/Spinlock.h"
 #include "Core/syscall/Syscall_File.h"
+#include "Core/syscall/Syscall_Socket.h"
 #include "Core/syscall/Syscall_Main.h"
+#include "Core/syscall/Syscall_Futex.h"
+#include "Core/usercopy/Usercopy.h"
 #include "interfaces/hal_cpu.h"
 #include "smp/SMP_Main.h"
 #include <string.h>
 #include "Debug/serial/Serial.h"
+#if defined(__aarch64__)
+#include "cpu/Exception.h"
+#endif
 
 #include <stddef.h>
 #include <stdint.h>
 
-#define PROCESS_KERNEL_STACK_SIZE (256 * 1024)
+#define PROCESS_KERNEL_STACK_SIZE (32 * 1024)
 #define PROCESS_USER_ALLOC_MAX 4096
 #define PROCESS_SIGNAL_MAX 32
 #define PROCESS_RFLAGS_DEFAULT 0x202ULL
 #define PROCESS_GUARD_PAGE_SIZE PAGE_SIZE
 #define PROCESS_INITIAL_USER_STACK_SIZE (16ULL * PAGE_SIZE)
+#define PROCESS_THREAD_STACK_SIZE (1024ULL * 1024ULL)
+#define PROCESS_THREAD_STACK_REGION_SIZE \
+    (PROCESS_THREAD_STACK_SIZE + PROCESS_GUARD_PAGE_SIZE)
 
 #define PROCESS_STATE_UNUSED  0
 #define PROCESS_STATE_READY   1
@@ -29,8 +39,13 @@
 #define PROCESS_STATE_DEAD    3
 #define PROCESS_STATE_INIT    4
 #define PROCESS_STATE_ZOMBIE  5
+#define PROCESS_STATE_BLOCKED 6
 
+#if defined(__aarch64__)
+#define PROCESS_CONTEXT_QWORDS ((uint32_t)(sizeof(arm64_exception_frame_t) / sizeof(uint64_t)))
+#else
 #define PROCESS_CONTEXT_QWORDS SYSCALL_FRAME_QWORDS
+#endif
 #define PROCESS_ELF_MAX_SIZE (20ULL * 1024ULL * 1024ULL)
 #define PROCESS_FPU_STATE_SIZE 544U
 
@@ -87,6 +102,8 @@ typedef struct {
 
 typedef struct __attribute__((aligned(16))) {
     uint8_t state;
+    uint8_t is_thread;
+    uint8_t thread_detached;
     process_capability_mask_t capability_mask;
     uint64_t entry;
     uint64_t saved_rsp;
@@ -103,6 +120,7 @@ typedef struct __attribute__((aligned(16))) {
     uint64_t user_heap_base;
     uint64_t user_heap_cursor;
     uint64_t user_heap_limit;
+    uint64_t user_heap_alloc_limit;
     uint64_t user_heap_guard_page;
     uint64_t user_stack_base;
     uint64_t user_stack_top;
@@ -110,11 +128,19 @@ typedef struct __attribute__((aligned(16))) {
     uint32_t timeslice;
     uint64_t total_ticks;
     char     name[64];
+    char     launch_argument[512];
     int32_t parent_pid;
+    int32_t memory_owner_pid;
     int32_t exit_status;
+    uint64_t thread_stack_region_base;
+    uint64_t thread_stack_region_size;
     user_alloc_t user_allocs[PROCESS_USER_ALLOC_MAX];
     uint64_t signal_handlers[PROCESS_SIGNAL_MAX];
+    uint64_t signal_mask;
     uint32_t pending_signals;
+    uint64_t clear_child_tid;
+    uint64_t robust_list_head;
+    uint64_t robust_list_length;
 } process_t;
 
 typedef struct {
@@ -185,7 +211,8 @@ void process_broadcast_shutdown(void)
     uint32_t signal = IPC_SIGNAL_SHUTDOWN;
     for (int32_t i = 0; i < g_process_capacity; ++i) {
         if (g_processes[i].state == PROCESS_STATE_RUNNING ||
-            g_processes[i].state == PROCESS_STATE_READY) {
+            g_processes[i].state == PROCESS_STATE_READY ||
+            g_processes[i].state == PROCESS_STATE_BLOCKED) {
             if (i != current_pid_get()) {
                 ipc_send_message(i, &signal, sizeof(uint32_t));
             }
@@ -254,6 +281,8 @@ static void reset_process_slot(process_t *proc)
     }
 
     proc->state = PROCESS_STATE_UNUSED;
+    proc->is_thread = 0;
+    proc->thread_detached = 0;
     proc->capability_mask = 0;
     proc->entry = 0;
     proc->saved_rsp = 0;
@@ -271,6 +300,7 @@ static void reset_process_slot(process_t *proc)
     proc->user_heap_base = 0;
     proc->user_heap_cursor = 0;
     proc->user_heap_limit = 0;
+    proc->user_heap_alloc_limit = 0;
     proc->user_heap_guard_page = 0;
     proc->user_stack_base = 0;
     proc->user_stack_top = 0;
@@ -278,8 +308,12 @@ static void reset_process_slot(process_t *proc)
     proc->timeslice = 0;
     proc->total_ticks = 0;
     memset(proc->name, 0, sizeof(proc->name));
+    memset(proc->launch_argument, 0, sizeof(proc->launch_argument));
     proc->parent_pid = -1;
+    proc->memory_owner_pid = -1;
     proc->exit_status = 0;
+    proc->thread_stack_region_base = 0;
+    proc->thread_stack_region_size = 0;
     for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
         proc->user_allocs[i].used = 0;
         proc->user_allocs[i].addr = 0;
@@ -288,13 +322,63 @@ static void reset_process_slot(process_t *proc)
     for (uint32_t i = 0; i < PROCESS_SIGNAL_MAX; ++i) {
         proc->signal_handlers[i] = 0;
     }
+    proc->signal_mask = 0;
     proc->pending_signals = 0;
+    proc->clear_child_tid = 0;
+    proc->robust_list_head = 0;
+    proc->robust_list_length = 0;
+}
+
+static void release_thread_resources(process_t *proc, int unmap_user_stack)
+{
+    if (proc == NULL || !proc->is_thread) {
+        return;
+    }
+
+    if (unmap_user_stack && proc->cr3 != 0 &&
+        proc->thread_stack_region_base != 0 &&
+        proc->thread_stack_region_size != 0) {
+        (void)paging_unmap_range(proc->cr3,
+                                 proc->thread_stack_region_base,
+                                 proc->thread_stack_region_size);
+    }
+    if (proc->kernel_stack_base != NULL) {
+        free(proc->kernel_stack_base);
+        proc->kernel_stack_base = NULL;
+    }
+    proc->cr3 = 0;
+    proc->thread_stack_region_base = 0;
+    proc->thread_stack_region_size = 0;
+    proc->kernel_stack_top = 0;
 }
 
 static void release_process_resources(process_t *proc)
 {
     if (proc == NULL) {
         return;
+    }
+
+    if (proc->is_thread) {
+        release_thread_resources(proc, 1);
+        return;
+    }
+
+    int32_t owner_pid = -1;
+    if (g_processes != NULL && proc >= g_processes &&
+        proc < (g_processes + g_process_capacity)) {
+        owner_pid = (int32_t)(proc - g_processes);
+    }
+
+    if (owner_pid >= 0) {
+        for (int32_t i = 1; i < g_process_capacity; ++i) {
+            process_t *thread = &g_processes[i];
+            if (thread != proc && thread->is_thread &&
+                thread->memory_owner_pid == owner_pid &&
+                thread->state != PROCESS_STATE_UNUSED) {
+                release_thread_resources(thread, 0);
+                reset_process_slot(thread);
+            }
+        }
     }
 
     if (proc->cr3 != 0) {
@@ -312,6 +396,7 @@ static void release_process_resources(process_t *proc)
     proc->user_heap_base = 0;
     proc->user_heap_cursor = 0;
     proc->user_heap_limit = 0;
+    proc->user_heap_alloc_limit = 0;
     proc->user_heap_guard_page = 0;
     proc->user_stack_base = 0;
     proc->user_stack_top = 0;
@@ -324,7 +409,29 @@ static void release_process_resources(process_t *proc)
     for (uint32_t i = 0; i < PROCESS_SIGNAL_MAX; ++i) {
         proc->signal_handlers[i] = 0;
     }
+    proc->signal_mask = 0;
     proc->pending_signals = 0;
+    proc->clear_child_tid = 0;
+    proc->robust_list_head = 0;
+    proc->robust_list_length = 0;
+}
+
+static process_t *process_memory_owner_locked(process_t *proc)
+{
+    if (proc == NULL) {
+        return NULL;
+    }
+    if (!proc->is_thread) {
+        return proc;
+    }
+    if (!is_valid_pid(proc->memory_owner_pid)) {
+        return NULL;
+    }
+    process_t *owner = &g_processes[proc->memory_owner_pid];
+    if (owner->state == PROCESS_STATE_UNUSED || owner->is_thread) {
+        return NULL;
+    }
+    return owner;
 }
 
 static int process_push_signal_frame_locked(process_t *proc, int32_t signum)
@@ -334,6 +441,10 @@ static int process_push_signal_frame_locked(process_t *proc, int32_t signum)
     }
 
     uint64_t handler = proc->signal_handlers[(uint32_t)signum];
+    if (handler == 1u) {
+        proc->pending_signals &= ~(1u << (uint32_t)signum);
+        return 0;
+    }
     if (handler == 0) {
         proc->exit_status = 128 + signum;
         proc->state = PROCESS_STATE_ZOMBIE;
@@ -383,6 +494,10 @@ static void process_deliver_pending_signals_locked(process_t *proc)
     for (uint32_t signum = 1; signum < PROCESS_SIGNAL_MAX; ++signum) {
         uint32_t bit = 1u << signum;
         if ((proc->pending_signals & bit) == 0u) {
+            continue;
+        }
+        if ((proc->signal_mask & (1ULL << (signum - 1u))) != 0u &&
+            signum != 9u && signum != 19u) {
             continue;
         }
         if (process_push_signal_frame_locked(proc, (int32_t)signum) < 0) {
@@ -632,6 +747,12 @@ static int initialize_process_memory(process_t *proc,
 
     proc->user_heap_guard_page = proc->user_heap_limit - PROCESS_GUARD_PAGE_SIZE;
     proc->user_heap_limit -= PROCESS_GUARD_PAGE_SIZE;
+    uint64_t thread_reserve =
+        (uint64_t)g_process_capacity * PROCESS_THREAD_STACK_REGION_SIZE;
+    if (thread_reserve >= (proc->user_heap_limit - proc->user_heap_base)) {
+        return -1;
+    }
+    proc->user_heap_alloc_limit = proc->user_heap_limit - thread_reserve;
     proc->user_stack_guard_page = proc->user_stack_base;
     proc->user_stack_base += PROCESS_GUARD_PAGE_SIZE;
 
@@ -664,17 +785,30 @@ static int initialize_process_memory(process_t *proc,
         kstack[i] = 0;
     }
 
+#if defined(__aarch64__)
+    arm64_exception_frame_t *frame = (arm64_exception_frame_t *)kstack;
+    frame->x[0] = arg1;
+    frame->x[1] = arg2;
+    frame->x[2] = arg3;
+    frame->x[3] = arg4;
+    frame->elr_el1 = entry;
+    frame->spsr_el1 = 0;
+    proc->saved_rsp = (uint64_t)(uintptr_t)frame;
+#else
     kstack[SYSCALL_FRAME_RCX] = entry;
     kstack[SYSCALL_FRAME_RDI] = arg1;
     kstack[SYSCALL_FRAME_RSI] = arg2;
     kstack[SYSCALL_FRAME_RDX] = arg3;
     kstack[SYSCALL_FRAME_R8]  = arg4;
     kstack[SYSCALL_FRAME_R11] = PROCESS_RFLAGS_DEFAULT;
-
     proc->saved_rsp = (uint64_t)(uintptr_t)kstack;
+#endif
     if (initialize_raw_user_stack(proc) < 0) {
         return -1;
     }
+#if defined(__aarch64__)
+    frame->sp_el0 = proc->saved_user_rsp;
+#endif
     proc->timeslice = g_timeslice_ticks;
     
     return 0;
@@ -744,6 +878,7 @@ void process_manager_init(void)
     
     g_processes[0].state = PROCESS_STATE_RUNNING;
     g_processes[0].parent_pid = -1;
+    g_processes[0].memory_owner_pid = 0;
     g_processes[0].capability_mask = PROCESS_CAP_DEFAULT_MASK;
 
     initialize_fpu_state(g_processes[0].fpu_state);
@@ -784,6 +919,47 @@ uint64_t process_get_current_fs_base(void)
     return val;
 }
 
+int process_set_clear_child_tid(uint64_t address)
+{
+    if (address != 0u &&
+        !process_user_buffer_is_valid((void *)(uintptr_t)address,
+                                      sizeof(uint32_t))) {
+        return -14;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+    g_processes[current_pid_get()].clear_child_tid = address;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+int process_set_robust_list(uint64_t head, uint64_t length)
+{
+    if (length != 24u || head == 0u ||
+        !process_user_buffer_is_valid((void *)(uintptr_t)head, length)) {
+        return -22;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+    process_t *thread = &g_processes[current_pid_get()];
+    thread->robust_list_head = head;
+    thread->robust_list_length = length;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
 static int32_t process_create_user_internal(uint64_t entry,
                                             uint64_t arg1,
                                             uint64_t arg2,
@@ -809,6 +985,7 @@ static int32_t process_create_user_internal(uint64_t entry,
     reset_process_slot(proc);
 
     proc->state = PROCESS_STATE_INIT;
+    proc->memory_owner_pid = pid;
 
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -822,12 +999,21 @@ static int32_t process_create_user_internal(uint64_t entry,
         irq_restore(irq_flags);
         return -1;
     }
+    
+    int32_t parent_pid = process_get_current_pid();
 
     irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
+    if (proc->state != PROCESS_STATE_INIT || proc->memory_owner_pid != pid) {
+        release_process_resources(proc);
+        reset_process_slot(proc);
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
     proc->entry = entry;
     proc->timeslice = g_timeslice_ticks;
-    proc->parent_pid = current_pid_get();
+    proc->parent_pid = parent_pid;
     if (start_ready) {
         proc->state = PROCESS_STATE_READY;
     }
@@ -853,12 +1039,167 @@ int32_t process_create_user_ex(uint64_t entry,
     return process_create_user_internal(entry, arg1, arg2, arg3, arg4, 1);
 }
 
-int32_t process_spawn_user_elf(const char *path)
+int32_t process_create_thread(uint64_t entry,
+                              uint64_t arg1,
+                              uint64_t arg2,
+                              uint64_t arg3,
+                              uint64_t arg4)
+{
+    if (!process_table_ready() || !is_valid_user_entry(entry)) {
+        return -1;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int32_t current_tid = current_pid_get();
+    if (!is_valid_pid(current_tid)) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    process_t *current = &g_processes[current_tid];
+    process_t *owner = process_memory_owner_locked(current);
+    if (owner == NULL || owner->cr3 == 0 ||
+        owner->state == PROCESS_STATE_UNUSED ||
+        owner->state == PROCESS_STATE_DEAD ||
+        owner->state == PROCESS_STATE_ZOMBIE) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    int32_t tid = find_free_slot();
+    if (tid < 0) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    int32_t owner_pid = (int32_t)(owner - g_processes);
+    uint64_t region_top =
+        owner->user_heap_limit -
+        ((uint64_t)tid * PROCESS_THREAD_STACK_REGION_SIZE);
+    uint64_t region_base = region_top - PROCESS_THREAD_STACK_REGION_SIZE;
+    if (region_top <= region_base ||
+        region_base < owner->user_heap_alloc_limit ||
+        region_base < owner->user_heap_cursor) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    process_t *thread = &g_processes[tid];
+    reset_process_slot(thread);
+    thread->state = PROCESS_STATE_INIT;
+    thread->is_thread = 1;
+    thread->memory_owner_pid = owner_pid;
+    thread->parent_pid = owner_pid;
+    thread->cr3 = owner->cr3;
+    thread->capability_mask = owner->capability_mask;
+    thread->user_code_base = owner->user_code_base;
+    thread->user_code_limit = owner->user_code_limit;
+    thread->user_heap_base = owner->user_heap_base;
+    thread->user_heap_cursor = owner->user_heap_cursor;
+    thread->user_heap_limit = owner->user_heap_limit;
+    thread->user_heap_alloc_limit = owner->user_heap_alloc_limit;
+    thread->user_heap_guard_page = owner->user_heap_guard_page;
+    thread->user_stack_guard_page = region_base;
+    thread->user_stack_base = region_base + PROCESS_GUARD_PAGE_SIZE;
+    thread->user_stack_top = region_top;
+    thread->thread_stack_region_base = region_base;
+    thread->thread_stack_region_size = PROCESS_THREAD_STACK_REGION_SIZE;
+    memcpy(thread->signal_handlers, owner->signal_handlers,
+           sizeof(thread->signal_handlers));
+    thread->signal_mask = current->signal_mask;
+    strncpy(thread->name, owner->name, sizeof(thread->name) - 1);
+    thread->name[sizeof(thread->name) - 1] = '\0';
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    thread->kernel_stack_base = malloc(PROCESS_KERNEL_STACK_SIZE);
+    if (thread->kernel_stack_base == NULL) {
+        goto fail;
+    }
+    thread->kernel_stack_top =
+        ((uint64_t)(uintptr_t)(thread->kernel_stack_base +
+                               PROCESS_KERNEL_STACK_SIZE)) & ~0xFULL;
+
+    if (paging_map_user_range_alloc(thread->cr3,
+                                    thread->user_stack_base,
+                                    PROCESS_THREAD_STACK_SIZE,
+                                    PAGE_RW | PAGE_USER) < 0) {
+        goto fail;
+    }
+
+    initialize_fpu_state(thread->fpu_state);
+    thread->fs_base = current->fs_base;
+
+    uint64_t *kstack = (uint64_t *)thread->kernel_stack_top;
+    kstack -= PROCESS_CONTEXT_QWORDS;
+    for (uint32_t i = 0; i < PROCESS_CONTEXT_QWORDS; ++i) {
+        kstack[i] = 0;
+    }
+
+#if defined(__aarch64__)
+    arm64_exception_frame_t *frame = (arm64_exception_frame_t *)kstack;
+    frame->x[0] = arg1;
+    frame->x[1] = arg2;
+    frame->x[2] = arg3;
+    frame->x[3] = arg4;
+    frame->elr_el1 = entry;
+    frame->spsr_el1 = 0;
+    thread->saved_rsp = (uint64_t)(uintptr_t)frame;
+#else
+    kstack[SYSCALL_FRAME_RCX] = entry;
+    kstack[SYSCALL_FRAME_RDI] = arg1;
+    kstack[SYSCALL_FRAME_RSI] = arg2;
+    kstack[SYSCALL_FRAME_RDX] = arg3;
+    kstack[SYSCALL_FRAME_R8] = arg4;
+    kstack[SYSCALL_FRAME_R11] = PROCESS_RFLAGS_DEFAULT;
+    thread->saved_rsp = (uint64_t)(uintptr_t)kstack;
+#endif
+
+    if (initialize_raw_user_stack(thread) < 0) {
+        goto fail;
+    }
+#if defined(__aarch64__)
+    frame->sp_el0 = thread->saved_user_rsp;
+#endif
+
+    irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (thread->state != PROCESS_STATE_INIT ||
+        thread->memory_owner_pid != owner_pid) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        goto fail;
+    }
+    thread->entry = entry;
+    thread->timeslice = g_timeslice_ticks;
+    thread->state = PROCESS_STATE_READY;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return tid;
+
+fail:
+    irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    release_thread_resources(thread, 1);
+    reset_process_slot(thread);
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return -1;
+}
+
+int32_t process_spawn_user_elf_with_arg(const char *path,
+                                        const char *launch_argument)
 {
     if (!path || path[0] == '\0') {
         return -1;
     }
-
     int32_t pid = process_create_user_internal(USER_CODE_BASE, 0, 0, 0, 0, 0);
     if (pid < 0) {
         return -1;
@@ -872,6 +1213,11 @@ int32_t process_spawn_user_elf(const char *path)
     }
     strncpy(proc->name, name_ptr, sizeof(proc->name) - 1);
     proc->name[sizeof(proc->name) - 1] = '\0';
+    if (launch_argument) {
+        strncpy(proc->launch_argument, launch_argument,
+                sizeof(proc->launch_argument) - 1u);
+        proc->launch_argument[sizeof(proc->launch_argument) - 1u] = '\0';
+    }
 
     elf_load_policy_t policy = {
         .max_file_size = PROCESS_ELF_MAX_SIZE,
@@ -879,7 +1225,7 @@ int32_t process_spawn_user_elf(const char *path)
         .max_vaddr = USER_CODE_LIMIT,
     };
     elf_loaded_image_info_t image_info = {0};
-    
+
     if (!elf_loader_load_from_path(proc->cr3, path, &policy, &image_info)) {
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
@@ -890,7 +1236,6 @@ int32_t process_spawn_user_elf(const char *path)
         irq_restore(irq_flags);
         return -1;
     }
-
     if (initialize_elf_user_stack(proc, &image_info, path) < 0) {
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
@@ -904,8 +1249,15 @@ int32_t process_spawn_user_elf(const char *path)
     
     uint64_t irq_flags = irq_save_disable();
 
+#if defined(__aarch64__)
+    arm64_exception_frame_t *frame =
+        (arm64_exception_frame_t *)(uintptr_t)proc->saved_rsp;
+    frame->elr_el1 = image_info.entry;
+    frame->sp_el0 = proc->saved_user_rsp;
+#else
     uint64_t *kstack = (uint64_t *)(uintptr_t)proc->saved_rsp;
     kstack[SYSCALL_FRAME_RCX] = image_info.entry;
+#endif
 
     spinlock_lock(&g_process_table_lock);
     mark_process_runnable(proc, image_info.entry, proc->parent_pid);
@@ -913,6 +1265,36 @@ int32_t process_spawn_user_elf(const char *path)
     irq_restore(irq_flags);
 
     return pid;
+}
+
+int32_t process_spawn_user_elf(const char *path)
+{
+    return process_spawn_user_elf_with_arg(path, NULL);
+}
+
+int32_t process_copy_launch_argument(char *out, uint32_t capacity)
+{
+    if (!out || capacity == 0u) return -1;
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    int32_t pid = current_pid_get();
+    process_t *proc = is_valid_pid(pid) ? &g_processes[pid] : NULL;
+    proc = process_memory_owner_locked(proc);
+    if (!proc) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    uint32_t length = 0u;
+    while (length + 1u < capacity &&
+           proc->launch_argument[length] != '\0') {
+        out[length] = proc->launch_argument[length];
+        ++length;
+    }
+    out[length] = '\0';
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return (int32_t)length;
 }
 
 int32_t process_register_boot_process(const char *path, uint64_t *entry_out)
@@ -929,7 +1311,6 @@ int32_t process_register_boot_process(const char *path, uint64_t *entry_out)
     current_pid_set(pid);
     proc->timeslice = g_timeslice_ticks;
     g_timeslice_resched = 0;
-    activate_process_context(proc);
     if (entry_out) {
         *entry_out = proc->entry;
     }
@@ -949,17 +1330,33 @@ void process_exit_current(void)
         return;
     }
 
-    int32_t pid_to_exit = current_pid_get();
+    process_t *current = &g_processes[current_pid_get()];
+    process_t *owner = process_memory_owner_locked(current);
+    if (owner == NULL) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return;
+    }
+    int32_t pid_to_exit = (int32_t)(owner - g_processes);
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
 
     uint32_t closed_fds = 0;
     uint32_t closed_dirs = 0;
     syscall_file_close_all_for_pid(pid_to_exit, &closed_fds, &closed_dirs);
+    syscall_socket_close_all_for_pid(pid_to_exit);
+    shared_memory_cleanup_process(pid_to_exit);
 
     irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
     g_processes[pid_to_exit].state = PROCESS_STATE_ZOMBIE;
+    for (int32_t i = 1; i < g_process_capacity; ++i) {
+        if (g_processes[i].is_thread &&
+            g_processes[i].memory_owner_pid == pid_to_exit &&
+            g_processes[i].state != PROCESS_STATE_UNUSED) {
+            g_processes[i].state = PROCESS_STATE_DEAD;
+        }
+    }
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
 
@@ -971,7 +1368,11 @@ void process_exit_current_with_status(int32_t exit_status)
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
     if (is_valid_pid(current_pid_get())) {
-        g_processes[current_pid_get()].exit_status = exit_status;
+        process_t *owner =
+            process_memory_owner_locked(&g_processes[current_pid_get()]);
+        if (owner != NULL) {
+            owner->exit_status = exit_status;
+        }
     }
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -979,14 +1380,126 @@ void process_exit_current_with_status(int32_t exit_status)
     process_exit_current();
 }
 
+void process_thread_exit_current(int32_t exit_status)
+{
+    uint64_t clear_child_tid = 0;
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    int32_t tid = current_pid_get();
+    if (is_valid_pid(tid) && g_processes[tid].is_thread) {
+        process_t *thread = &g_processes[tid];
+        clear_child_tid = thread->clear_child_tid;
+        thread->clear_child_tid = 0;
+        thread->exit_status = exit_status;
+        thread->state = thread->thread_detached ?
+                        PROCESS_STATE_DEAD : PROCESS_STATE_ZOMBIE;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    if (clear_child_tid != 0u) {
+        uint32_t zero = 0;
+        if (copy_to_user((void *)(uintptr_t)clear_child_tid,
+                         &zero, sizeof(zero)) == 0u) {
+            (void)syscall_futex(clear_child_tid, 1u, 1u, 0u, 0u, 0u);
+        }
+    }
+}
+
 int32_t process_get_current_pid(void)
 {
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
-    int32_t pid = current_pid_get();
+    int32_t pid = -1;
+    if (is_valid_pid(current_pid_get())) {
+        process_t *owner =
+            process_memory_owner_locked(&g_processes[current_pid_get()]);
+        if (owner != NULL) {
+            pid = (int32_t)(owner - g_processes);
+        }
+    }
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return pid;
+}
+
+int32_t process_get_current_tid(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    int32_t tid = is_valid_pid(current_pid_get()) ? current_pid_get() : -1;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return tid;
+}
+
+int process_thread_join(int32_t tid)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int32_t current_tid = current_pid_get();
+    if (!is_valid_pid(current_tid) || !is_valid_pid(tid) ||
+        tid == current_tid || !g_processes[tid].is_thread) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -22;
+    }
+
+    process_t *current_owner =
+        process_memory_owner_locked(&g_processes[current_tid]);
+    process_t *thread = &g_processes[tid];
+    if (current_owner == NULL ||
+        thread->memory_owner_pid != (int32_t)(current_owner - g_processes) ||
+        thread->thread_detached) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+    if (thread->state != PROCESS_STATE_ZOMBIE) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -11;
+    }
+
+    release_thread_resources(thread, 1);
+    reset_process_slot(thread);
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+int process_thread_detach(int32_t tid)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int32_t current_tid = current_pid_get();
+    if (!is_valid_pid(current_tid) || !is_valid_pid(tid) ||
+        !g_processes[tid].is_thread) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+
+    process_t *current_owner =
+        process_memory_owner_locked(&g_processes[current_tid]);
+    process_t *thread = &g_processes[tid];
+    if (current_owner == NULL ||
+        thread->memory_owner_pid != (int32_t)(current_owner - g_processes) ||
+        thread->thread_detached) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -22;
+    }
+
+    thread->thread_detached = 1;
+    if (thread->state == PROCESS_STATE_ZOMBIE) {
+        thread->state = PROCESS_STATE_DEAD;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
 }
 
 uint64_t process_get_current_saved_rsp(void)
@@ -1053,7 +1566,10 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
     }
 
     process_t *current = &g_processes[current_pid_get()];
-    if (current->state == PROCESS_STATE_RUNNING || current->state == PROCESS_STATE_READY) {
+    if (current->state == PROCESS_STATE_RUNNING ||
+        current->state == PROCESS_STATE_READY ||
+        current->state == PROCESS_STATE_BLOCKED) {
+        uint8_t original_state = current->state;
         save_syscall_frame_to_process(current, current_saved_rsp);
         if (current_user_rsp != 0) {
             current->saved_user_rsp = current_user_rsp;
@@ -1062,10 +1578,14 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         
         current->fs_base = rdmsr_fs_base();
 
-        current->state = PROCESS_STATE_READY;
+        if (original_state != PROCESS_STATE_BLOCKED) {
+            current->state = PROCESS_STATE_READY;
+        }
     }
 
-    if (!request_switch && current->state != PROCESS_STATE_DEAD) {
+    if (!request_switch &&
+        (current->state == PROCESS_STATE_RUNNING ||
+         current->state == PROCESS_STATE_READY)) {
         process_deliver_pending_signals_locked(current);
         uint64_t return_saved_rsp = current->saved_rsp;
         uint64_t return_user_rsp = current->saved_user_rsp;
@@ -1177,6 +1697,7 @@ void process_on_timer_tick(void)
     }
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
+    syscall_futex_on_timer_tick();
 }
 
 int process_timeslice_expired(void)
@@ -1249,7 +1770,12 @@ int process_user_cstring_length(const char *str, uint64_t max_len, uint64_t *len
             }
         }
 
-        if (str[i] == '\0') {
+        char ch = '\0';
+        if (copy_from_user(&ch, &str[i], 1u) != 0u) {
+            return -1;
+        }
+
+        if (ch == '\0') {
             if (len_out != NULL) {
                 *len_out = i;
             }
@@ -1274,11 +1800,18 @@ void *process_user_alloc(uint32_t size)
         return NULL;
     }
 
-    process_t *proc = &g_processes[current_pid_get()];
+    process_t *proc =
+        process_memory_owner_locked(&g_processes[current_pid_get()]);
+    if (proc == NULL) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return NULL;
+    }
     if (proc->user_heap_base == 0 ||
         proc->user_heap_limit <= proc->user_heap_base ||
+        proc->user_heap_alloc_limit <= proc->user_heap_base ||
         proc->user_heap_cursor < proc->user_heap_base ||
-        proc->user_heap_cursor > proc->user_heap_limit) {
+        proc->user_heap_cursor > proc->user_heap_alloc_limit) {
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return NULL;
@@ -1295,9 +1828,36 @@ void *process_user_alloc(uint32_t size)
         user_alloc_t *slot = &proc->user_allocs[i];
         if (!slot->used && slot->size != 0 && slot->size >= alloc_size) {
             slot->used = 1;
+            uint64_t addr = slot->addr;
+            uint32_t slot_size = slot->size;
+            uint64_t cr3 = proc->cr3;
             spinlock_unlock(&g_process_table_lock);
             irq_restore(irq_flags);
-            return (void *)(uintptr_t)slot->addr;
+            if (paging_map_user_range_alloc(cr3, addr, alloc_size, PAGE_RW | PAGE_USER) < 0) {
+                irq_flags = irq_save_disable();
+                spinlock_lock(&g_process_table_lock);
+                if (is_valid_pid(current_pid_get())) {
+                    process_t *rollback_proc =
+                        process_memory_owner_locked(
+                            &g_processes[current_pid_get()]);
+                    if (rollback_proc == NULL) {
+                        spinlock_unlock(&g_process_table_lock);
+                        irq_restore(irq_flags);
+                        return NULL;
+                    }
+                    for (uint32_t j = 0; j < PROCESS_USER_ALLOC_MAX; ++j) {
+                        if (rollback_proc->user_allocs[j].addr == addr &&
+                            rollback_proc->user_allocs[j].size == slot_size) {
+                            rollback_proc->user_allocs[j].used = 0;
+                            break;
+                        }
+                    }
+                }
+                spinlock_unlock(&g_process_table_lock);
+                irq_restore(irq_flags);
+                return NULL;
+            }
+            return (void *)(uintptr_t)addr;
         }
     }
 
@@ -1321,7 +1881,7 @@ void *process_user_alloc(uint32_t size)
         return NULL;
     }
     uint64_t next = addr + alloc_size;
-    if (next <= addr || next > proc->user_heap_limit) {
+    if (next <= addr || next > proc->user_heap_alloc_limit) {
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return NULL;
@@ -1339,7 +1899,13 @@ void *process_user_alloc(uint32_t size)
         irq_flags = irq_save_disable();
         spinlock_lock(&g_process_table_lock);
         if (is_valid_pid(current_pid_get())) {
-            process_t *rollback_proc = &g_processes[current_pid_get()];
+            process_t *rollback_proc =
+                process_memory_owner_locked(&g_processes[current_pid_get()]);
+            if (rollback_proc == NULL) {
+                spinlock_unlock(&g_process_table_lock);
+                irq_restore(irq_flags);
+                return NULL;
+            }
             user_alloc_t *rollback_slot = &rollback_proc->user_allocs[new_slot];
             if (rollback_proc->cr3 == cr3 &&
                 rollback_slot->used &&
@@ -1376,21 +1942,77 @@ int process_user_free(void *ptr)
         return -1;
     }
 
-    process_t *proc = &g_processes[current_pid_get()];
+    process_t *proc =
+        process_memory_owner_locked(&g_processes[current_pid_get()]);
+    if (proc == NULL) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
     uint64_t addr = (uint64_t)(uintptr_t)ptr;
 
     for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
         user_alloc_t *slot = &proc->user_allocs[i];
         if (slot->used && slot->addr == addr) {
+            uint64_t cr3 = proc->cr3;
+            uint32_t size = slot->size;
             slot->used = 0;
             spinlock_unlock(&g_process_table_lock);
             irq_restore(irq_flags);
+            (void)paging_unmap_range(cr3, addr, size);
             return 0;
         }
     }
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return -1;
+}
+
+int process_user_munmap(void *ptr, uint64_t length)
+{
+    if (ptr == NULL || length == 0) {
+        return 0;
+    }
+
+    uint64_t start = (uint64_t)(uintptr_t)ptr & PAGE_MASK;
+    uint64_t end = ((uint64_t)(uintptr_t)ptr + length + PAGE_SIZE - 1ULL) & PAGE_MASK;
+    if (end <= start) {
+        return -1;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    process_t *proc =
+        process_memory_owner_locked(&g_processes[current_pid_get()]);
+    if (proc == NULL) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    uint64_t cr3 = proc->cr3;
+    for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
+        user_alloc_t *slot = &proc->user_allocs[i];
+        if (slot->size == 0) {
+            continue;
+        }
+        uint64_t slot_start = slot->addr;
+        uint64_t slot_end = slot->addr + slot->size;
+        if (slot_start >= start && slot_end <= end) {
+            slot->used = 0;
+        }
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    return paging_unmap_range(cr3, start, end - start);
 }
 
 uint64_t process_signal_set_handler(int32_t signum, uint64_t handler)
@@ -1412,7 +2034,7 @@ uint64_t process_signal_set_handler(int32_t signum, uint64_t handler)
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
 
-    if (handler != 0 &&
+    if (handler > 1u &&
         !process_user_buffer_is_valid((const void *)(uintptr_t)handler, 1)) {
         return (uint64_t)-1;
     }
@@ -1424,12 +2046,64 @@ uint64_t process_signal_set_handler(int32_t signum, uint64_t handler)
         irq_restore(irq_flags);
         return (uint64_t)-1;
     }
-    process_t *proc = &g_processes[current_pid_get()];
+    process_t *proc =
+        process_memory_owner_locked(&g_processes[current_pid_get()]);
+    if (proc == NULL) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return (uint64_t)-1;
+    }
     uint64_t previous = proc->signal_handlers[(uint32_t)signum];
     proc->signal_handlers[(uint32_t)signum] = handler;
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return previous;
+}
+
+uint64_t process_signal_get_handler(int32_t signum)
+{
+    if (signum <= 0 || signum >= PROCESS_SIGNAL_MAX) return (uint64_t)-1;
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    process_t *proc = NULL;
+    if (is_valid_pid(current_pid_get())) {
+        proc = process_memory_owner_locked(&g_processes[current_pid_get()]);
+    }
+    uint64_t handler = proc != NULL ?
+        proc->signal_handlers[(uint32_t)signum] : (uint64_t)-1;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return handler;
+}
+
+uint64_t process_signal_get_mask(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    uint64_t mask = 0;
+    if (is_valid_pid(current_pid_get())) {
+        mask = g_processes[current_pid_get()].signal_mask;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return mask;
+}
+
+int process_signal_set_mask(uint64_t mask)
+{
+    const uint64_t unmaskable =
+        (1ULL << (9u - 1u)) | (1ULL << (19u - 1u));
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+    g_processes[current_pid_get()].signal_mask = mask & ~unmaskable;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
 }
 
 int process_signal_deliver(int32_t pid, int32_t signum)
@@ -1559,10 +2233,52 @@ int process_is_alive(int32_t pid)
     return alive;
 }
 
+int process_block_current(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int32_t pid = current_pid_get();
+    if (!is_valid_pid(pid) ||
+        g_processes[pid].state == PROCESS_STATE_UNUSED ||
+        g_processes[pid].state == PROCESS_STATE_DEAD ||
+        g_processes[pid].state == PROCESS_STATE_ZOMBIE) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    g_processes[pid].state = PROCESS_STATE_BLOCKED;
+    g_timeslice_resched = 1;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+int process_wake_pid(int32_t pid)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (!is_valid_pid(pid)) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    if (g_processes[pid].state == PROCESS_STATE_BLOCKED) {
+        g_processes[pid].state = PROCESS_STATE_READY;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
 int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
 {
     (void)options;
-    int32_t my_pid = current_pid_get();
+    int32_t my_pid = process_get_current_pid();
     if (my_pid < 0) {
         return -1;
     }
@@ -1571,7 +2287,8 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     spinlock_lock(&g_process_table_lock);
 
     if (pid > 0) {
-        if (!is_valid_pid(pid) || g_processes[pid].parent_pid != my_pid) {
+        if (!is_valid_pid(pid) || g_processes[pid].is_thread ||
+            g_processes[pid].parent_pid != my_pid) {
             spinlock_unlock(&g_process_table_lock);
             irq_restore(irq_flags);
             return -1;
@@ -1594,6 +2311,7 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     
     for (int32_t i = 0; i < g_process_capacity; ++i) {
         if (g_processes[i].state == PROCESS_STATE_ZOMBIE &&
+            !g_processes[i].is_thread &&
             g_processes[i].parent_pid == my_pid) {
             int32_t exit_code = g_processes[i].exit_status;
             int32_t child_pid = i;
@@ -1611,6 +2329,7 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     int has_children = 0;
     for (int32_t i = 0; i < g_process_capacity; ++i) {
         if (i != my_pid && g_processes[i].state != PROCESS_STATE_UNUSED &&
+            !g_processes[i].is_thread &&
             g_processes[i].parent_pid == my_pid) {
             has_children = 1;
             break;
@@ -1630,7 +2349,10 @@ int32_t process_getppid(void)
     int32_t pid = current_pid_get();
     int32_t ppid = -1;
     if (is_valid_pid(pid)) {
-        ppid = g_processes[pid].parent_pid;
+        process_t *owner = process_memory_owner_locked(&g_processes[pid]);
+        if (owner != NULL) {
+            ppid = owner->parent_pid;
+        }
     }
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);

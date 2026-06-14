@@ -1,46 +1,42 @@
-.PHONY: all clean copy_resources
-
-ARCH ?= x86_64
-
-ifeq ($(ARCH),arm64)
-    CC := aarch64-elf-gcc
-    CXX := aarch64-elf-g++
-    LD := aarch64-elf-ld
-    AR := aarch64-elf-ar
-    ARCH_CFLAGS := -mstrict-align -mno-outline-atomics
-else
-    CC := x86_64-elf-gcc
-    CXX := x86_64-elf-g++
-    LD := x86_64-elf-ld
-    AR := x86_64-elf-ar
-    ARCH_CFLAGS := -mcmodel=large -mno-red-zone
-endif
+.PHONY: all clean copy_resources test
 
 APP_NAME := com_ImplusOS_windowmanager
 SRC_DIR  := .
-BUILD_DIR := ../../../../Build/Userland/SystemApps/$(APP_NAME)
+TOP_BUILD_DIR ?= ../../../../Build/$(ARCH)
+BUILD_DIR := $(TOP_BUILD_DIR)/Userland/SystemApps/$(APP_NAME)
 ELF      := $(BUILD_DIR)/$(APP_NAME).ELF
 
-APP_SRC := $(shell find $(SRC_DIR) -name '*.c')
+APP_SRC := $(shell find $(SRC_DIR) -name '*.c' ! -path './Tests/*')
 APP_OBJS := $(APP_SRC:%.c=$(BUILD_DIR)/%.o)
 
 include ../../../AppCommon.mk
 
 OBJS := $(APP_OBJS) $(COMMON_OBJS)
+OPT_FLAGS ?= -O2 -fomit-frame-pointer -fno-strict-aliasing -DNDEBUG
 
 CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
           $(ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
+          -I. \
           -I../../../../libc/include -I../../../../libc/include/sys \
 		  -I../../../../Userland \
 		  -I../../../../Userland/API \
 		  -Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow -MMD -MP \
-          -Os -ffunction-sections -fdata-sections
+          $(OPT_FLAGS) -ffunction-sections -fdata-sections
 CXXFLAGS := $(CFLAGS) -fno-exceptions -fno-rtti
 LDFLAGS := -T ../../../../Userland/Userland.ld -e _start -nostdlib --build-id=none --gc-sections
 
 RESOURCE_DIR := Resource
+HOST_CC ?= cc
+TEST_BIN := $(BUILD_DIR)/tests/wm_core_test
 
 all: $(ELF) copy_resources
+
+test: $(TEST_BIN)
+	$(TEST_BIN)
+
+$(TEST_BIN): Tests/WM_CoreTest.c Compositor/WM_Damage.c Compositor/WM_Raster.c Core/WM_EventQueue.c
+	@mkdir -p $(dir $@)
+	$(HOST_CC) -std=c11 -Wall -Wextra -Werror -I. $^ -o $@
 
 copy_resources:
 	@if [ -d $(RESOURCE_DIR) ]; then \
@@ -63,4 +59,4 @@ $(ELF): $(OBJS)
 clean:
 	rm -rf $(BUILD_DIR)
 
--include $(APP_OBJS:.o=.d)
+-include $(APP_OBJS:.o=.d) $(COMMON_DEPS)

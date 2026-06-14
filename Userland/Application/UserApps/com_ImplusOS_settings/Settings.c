@@ -31,6 +31,9 @@
 #define COLOR_TEXT       0xFFEFF3F8
 #define COLOR_DIM        0xFF94A3B8
 #define COLOR_SEL_BG     0xFF2D3135
+#define USER_DB_FILE     "/Userland/users.db"
+#define USER_DB_MAX_BYTES (1024u * 1024u)
+#define THEME_CONFIG_FILE "/Userland/theme.conf"
 
 typedef struct {
     int x, y, w, h;
@@ -130,6 +133,74 @@ static void set_wm_theme(uint32_t bg_top, uint32_t bg_mid, uint32_t bg_bot, uint
     }
 }
 
+static int parse_hex_color(const char *text, uint32_t *color)
+{
+    if (!text || !color) return -1;
+    if (text[0] == '#') ++text;
+    else if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) text += 2;
+    uint32_t value = 0u;
+    int digits = 0;
+    while (*text && *text != '\r' && *text != '\n') {
+        unsigned digit;
+        if (*text >= '0' && *text <= '9') digit = (unsigned)(*text - '0');
+        else if (*text >= 'a' && *text <= 'f')
+            digit = (unsigned)(*text - 'a' + 10);
+        else if (*text >= 'A' && *text <= 'F')
+            digit = (unsigned)(*text - 'A' + 10);
+        else return -1;
+        if (digits >= 8) return -1;
+        value = (value << 4u) | digit;
+        ++digits;
+        ++text;
+    }
+    if (digits == 6) value |= 0xFF000000u;
+    else if (digits != 8) return -1;
+    *color = value;
+    return 0;
+}
+
+static int load_custom_theme(void)
+{
+    int32_t fd = file_open(THEME_CONFIG_FILE, 0);
+    if (fd < 0) return -1;
+    char buffer[2049];
+    int64_t count = file_read(fd, buffer, sizeof(buffer) - 1u);
+    file_close(fd);
+    if (count <= 0) return -1;
+    buffer[count] = '\0';
+
+    uint32_t values[6] = {
+        0xFF0D1117u, 0xFF161B22u, 0xFF1C2433u,
+        0xFF3B82F6u, 0xF51E293Bu, 0xF5182232u
+    };
+    const char *keys[6] = {
+        "bg_top", "bg_mid", "bg_bottom", "accent",
+        "titlebar_top", "titlebar_bottom"
+    };
+    unsigned found = 0u;
+    char *line = buffer;
+    while (*line) {
+        char *end = strchr(line, '\n');
+        if (end) *end = '\0';
+        char *separator = strchr(line, '=');
+        if (separator) {
+            *separator = '\0';
+            for (unsigned i = 0u; i < 6u; ++i) {
+                if (strcmp(line, keys[i]) == 0 &&
+                    parse_hex_color(separator + 1, &values[i]) == 0) {
+                    found |= 1u << i;
+                }
+            }
+        }
+        if (!end) break;
+        line = end + 1;
+    }
+    if (found != 0x3Fu) return -1;
+    set_wm_theme(values[0], values[1], values[2], values[3],
+                 values[4], values[5]);
+    return 0;
+}
+
 static void draw_appearance(void) {
     window_draw_text(g_win, 180, 20, "Appearance", COLOR_TEXT, 18.0f);
     
@@ -143,20 +214,71 @@ static void draw_appearance(void) {
     
     draw_fill_rect(420, 90, 100, 40, 0xFF4CAF50);
     window_draw_text(g_win, 435, 103, "Green", 0xFFFFFFFF, 12.0f);
+
+    draw_fill_rect(180, 145, 220, 36, COLOR_SEL_BG);
+    window_draw_text(g_win, 198, 156, "Load /Userland/theme.conf",
+                     COLOR_TEXT, 12.0f);
     
-    window_draw_text(g_win, 180, 160, "Background:", COLOR_TEXT, 14.0f);
-    draw_fill_rect(180, 190, 150, 40, COLOR_SIDEBAR);
-    window_draw_text(g_win, 200, 203, "Reload BG Image", COLOR_TEXT, 12.0f);
+    window_draw_text(g_win, 180, 205, "Background:", COLOR_TEXT, 14.0f);
+    draw_fill_rect(180, 235, 150, 40, COLOR_SIDEBAR);
+    window_draw_text(g_win, 200, 248, "Reload BG Image", COLOR_TEXT, 12.0f);
 }
 
 static void draw_users(void) {
     window_draw_text(g_win, 180, 20, "User Accounts", COLOR_TEXT, 18.0f);
-    
-    window_draw_text(g_win, 180, 60, "root (UID: 0)", COLOR_TEXT, 14.0f);
-    window_draw_text(g_win, 180, 85, "implus (UID: 1000)", COLOR_TEXT, 14.0f);
-    
-    draw_fill_rect(180, 120, 120, 30, COLOR_ACCENT);
-    window_draw_text(g_win, 195, 128, "Add User", 0xFFFFFFFF, 12.0f);
+
+    file_stat_t stat;
+    if (file_stat(USER_DB_FILE, &stat) < 0 || !stat.exists || stat.is_dir ||
+        stat.size == 0u || stat.size > USER_DB_MAX_BYTES) {
+        window_draw_text(g_win, 180, 60, "No user database found.",
+                         COLOR_DIM, 14.0f);
+        return;
+    }
+
+    int32_t fd = file_open(USER_DB_FILE, 0);
+    if (fd < 0) {
+        window_draw_text(g_win, 180, 60, "Unable to read user database.",
+                         COLOR_DIM, 14.0f);
+        return;
+    }
+    char *buffer = (char *)malloc((size_t)stat.size + 1u);
+    if (!buffer) {
+        file_close(fd);
+        window_draw_text(g_win, 180, 60, "Out of memory.", COLOR_DIM, 14.0f);
+        return;
+    }
+    size_t total = 0;
+    while (total < stat.size) {
+        int64_t count =
+            file_read(fd, buffer + total, (uint64_t)stat.size - total);
+        if (count <= 0) break;
+        total += (size_t)count;
+    }
+    file_close(fd);
+    buffer[total] = '\0';
+
+    int row = 0;
+    char *line = buffer;
+    while (*line != '\0' && row < 14) {
+        char *newline = strchr(line, '\n');
+        if (newline) *newline = '\0';
+        char *separator = strchr(line, ':');
+        if (separator && separator != line) {
+            *separator = '\0';
+            char label[80];
+            snprintf(label, sizeof(label), "%s", line);
+            window_draw_text(g_win, 180, (uint32_t)(60 + row * 25),
+                             label, COLOR_TEXT, 14.0f);
+            ++row;
+        }
+        if (!newline) break;
+        line = newline + 1;
+    }
+    free(buffer);
+    if (row == 0) {
+        window_draw_text(g_win, 180, 60, "No valid user records.",
+                         COLOR_DIM, 14.0f);
+    }
 }
 
 static void draw_system(void) {
@@ -175,8 +297,8 @@ static void draw_system(void) {
     }
     
     draw_fill_rect(180, 200, 200, 40, 0xFFEB5757);
-    window_draw_text(g_win, 210, 213, "Reset ImplusOS", 0xFFFFFFFF, 14.0f);
-    window_draw_text(g_win, 180, 250, "Wipe all data and reinstall from media", COLOR_DIM, 11.0f);
+    window_draw_text(g_win, 245, 213, "Reboot", 0xFFFFFFFF, 14.0f);
+    window_draw_text(g_win, 180, 250, "Restart ImplusOS", COLOR_DIM, 11.0f);
 }
 
 static void draw(void) {
@@ -193,7 +315,6 @@ static void draw(void) {
         case TAB_SYSTEM: draw_system(); break;
     }
     
-    draw_present();
 }
 
 static void handle_click(int x, int y) {
@@ -215,7 +336,9 @@ static void handle_click(int x, int y) {
             } else if (x >= 420 && x < 520) {
                 set_wm_theme(0xFF0D1A11, 0xFF16221B, 0xFF1C3324, 0xFF4CAF50, 0xF51E3B29, 0xF5183222);
             }
-        } else if (y >= 190 && y < 230 && x >= 180 && x < 330) {
+        } else if (y >= 145 && y < 181 && x >= 180 && x < 400) {
+            (void)load_custom_theme();
+        } else if (y >= 235 && y < 275 && x >= 180 && x < 330) {
             struct { wm_msg_header_t hdr; } msg;
             msg.hdr.type = WM_RELOAD_BACKGROUND;
             int32_t wm_pid = window_get_wm_pid();

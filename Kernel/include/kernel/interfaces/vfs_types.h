@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "Core/sync/Mutex.h"
+
 struct vfs_driver;
 
 typedef struct vfs_file {
@@ -12,6 +14,25 @@ typedef struct vfs_file {
     void *driver_data;
     const struct vfs_driver *fs_driver;
 } vfs_file_t;
+
+typedef struct vnode {
+    uint64_t inode_num;
+    uint32_t size;
+    uint32_t type;
+    const struct vfs_driver *fs;
+    void *fs_priv;
+    uint32_t refcount;
+    mutex_t lock;
+} vnode_t;
+
+typedef struct file {
+    vnode_t *vnode;
+    uint64_t offset;
+    uint32_t mode;
+    uint32_t refcount;
+    vfs_file_t legacy_file;
+    mutex_t lock;
+} file_t;
 
 typedef struct vfs_dirent {
     char name[256];

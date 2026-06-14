@@ -7,6 +7,7 @@
 #include "Platform/acpi/ACPI.h"
 #include "Platform/interrupt/LAPIC.h"
 #include "MemoryManagement/Memory_Main.h"
+#include "Core/timer/Timer.h"
 #include "cpu/IDT_Main.h"
 #include "cpu/GDT_Main.h"
 #include "Core/syscall/Syscall_Main.h"
@@ -70,8 +71,17 @@ static inline void io_wait(void)
 
 static void smp_delay_ms(uint32_t ms)
 {
-    for (uint32_t i = 0; i < ms; i++) {
-        for (volatile uint32_t j = 0; j < 100000; j++) {
+    uint64_t start = timer_monotonic_ns();
+    if (start != 0u) {
+        uint64_t duration = (uint64_t)ms * 1000000ULL;
+        while (timer_monotonic_ns() - start < duration) {
+            hal_cpu_pause();
+        }
+        return;
+    }
+
+    for (uint32_t i = 0; i < ms; ++i) {
+        for (volatile uint32_t j = 0; j < 10000u; ++j) {
             hal_cpu_pause();
         }
     }
@@ -210,10 +220,11 @@ void smp_init(void)
 
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
+        uint32_t expected =
+            __atomic_load_n(&g_cpu_online, __ATOMIC_ACQUIRE) + 1u;
         smp_send_init_sipi_sipi(aid, trampoline_vector);
 
         uint32_t timeout = 200;
-        uint32_t expected = __atomic_load_n(&g_cpu_online, __ATOMIC_ACQUIRE) + 1;
         while (timeout-- > 0) {
             if (__atomic_load_n(&g_cpu_online, __ATOMIC_ACQUIRE) >= expected) break;
             smp_delay_ms(1);

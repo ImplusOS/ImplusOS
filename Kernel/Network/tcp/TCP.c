@@ -178,6 +178,33 @@ static int32_t tcp_find_listener(uint16_t local_port)
     return -1;
 }
 
+static int tcp_local_port_in_use_locked(uint16_t local_port)
+{
+    if (local_port == 0u) {
+        return 1;
+    }
+
+    for (uint32_t i = 0; i < TCP_MAX_CONNECTIONS; ++i) {
+        const tcp_connection_t *c = &g_tcp_connections[i];
+        if (c->in_use != 0u &&
+            c->state != TCP_STATE_CLOSED &&
+            c->local_port == local_port) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int tcp_local_port_in_use(uint16_t local_port)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_tcp_lock);
+    int in_use = tcp_local_port_in_use_locked(local_port);
+    spinlock_unlock(&g_tcp_lock);
+    irq_restore(irq_flags);
+    return in_use;
+}
+
 static int32_t tcp_alloc_connection(void)
 {
     for (uint32_t i = 0; i < TCP_MAX_CONNECTIONS; ++i) {
@@ -246,6 +273,24 @@ static void tcp_on_ipv4(uint32_t src_ip, uint32_t dst_ip,
         int32_t listen_id = tcp_find_listener(dst_port);
 
         if (listen_id >= 0 && (flags & TCP_FLAG_SYN) && !(flags & TCP_FLAG_ACK)) {
+            uint16_t queued = 0u;
+            for (uint32_t i = 0; i < TCP_MAX_CONNECTIONS; ++i) {
+                const tcp_connection_t *candidate = &g_tcp_connections[i];
+                if (candidate->in_use != 0u &&
+                    candidate->parent_conn_id == listen_id &&
+                    candidate->state != TCP_STATE_CLOSED) {
+                    ++queued;
+                }
+            }
+            uint16_t backlog = g_tcp_connections[listen_id].listen_backlog;
+            if (backlog == 0u) backlog = 1u;
+            if (queued >= backlog) {
+                tcp_send_rst(dst_ip, src_ip, dst_port, src_port,
+                             0u, seq_num + 1u);
+                spinlock_unlock(&g_tcp_lock);
+                irq_restore(irq_flags);
+                return;
+            }
             int32_t child_id = tcp_alloc_connection();
             if (child_id >= 0) {
                 tcp_connection_t *child = &g_tcp_connections[child_id];
@@ -463,6 +508,12 @@ int32_t tcp_connect(uint32_t remote_ip, uint16_t remote_port, uint16_t local_por
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_tcp_lock);
 
+    if (tcp_local_port_in_use_locked(local_port)) {
+        spinlock_unlock(&g_tcp_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
     int32_t conn_id = tcp_alloc_connection();
     if (conn_id < 0) {
         spinlock_unlock(&g_tcp_lock);
@@ -520,10 +571,32 @@ int32_t tcp_listen(uint16_t port)
     conn->local_port  = port;
     conn->state       = TCP_STATE_LISTEN;
     conn->parent_conn_id = -1;
+    conn->listen_backlog = 1u;
 
     spinlock_unlock(&g_tcp_lock);
     irq_restore(irq_flags);
     return conn_id;
+}
+
+int tcp_set_listen_backlog(int32_t conn_id, uint16_t backlog)
+{
+    if (conn_id < 0 || conn_id >= (int32_t)TCP_MAX_CONNECTIONS ||
+        backlog == 0u) {
+        return -1;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_tcp_lock);
+    tcp_connection_t *connection = &g_tcp_connections[conn_id];
+    if (connection->in_use == 0u ||
+        connection->state != TCP_STATE_LISTEN) {
+        spinlock_unlock(&g_tcp_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    connection->listen_backlog = backlog;
+    spinlock_unlock(&g_tcp_lock);
+    irq_restore(irq_flags);
+    return 0;
 }
 
 int32_t tcp_accept(int32_t listen_conn_id)
@@ -715,6 +788,56 @@ tcp_state_t tcp_get_state(int32_t conn_id)
     spinlock_unlock(&g_tcp_lock);
     irq_restore(irq_flags);
     return s;
+}
+
+int tcp_get_connection_info(int32_t conn_id, tcp_connection_info_t *info_out)
+{
+    if (conn_id < 0 || conn_id >= (int32_t)TCP_MAX_CONNECTIONS ||
+        info_out == NULL) {
+        return -1;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_tcp_lock);
+    const tcp_connection_t *connection = &g_tcp_connections[conn_id];
+    if (connection->in_use == 0u) {
+        spinlock_unlock(&g_tcp_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    info_out->local_ip = connection->local_ip;
+    info_out->remote_ip = connection->remote_ip;
+    info_out->local_port = connection->local_port;
+    info_out->remote_port = connection->remote_port;
+    info_out->state = connection->state;
+    info_out->receive_available = connection->recv_count;
+    spinlock_unlock(&g_tcp_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+uint32_t tcp_poll(int32_t conn_id, uint32_t events)
+{
+    if (conn_id < 0 || conn_id >= (int32_t)TCP_MAX_CONNECTIONS) return 0x0008u;
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_tcp_lock);
+    tcp_connection_t *connection = &g_tcp_connections[conn_id];
+    uint32_t ready = 0u;
+    if (connection->in_use == 0u || connection->state == TCP_STATE_CLOSED) {
+        ready = 0x0010u;
+    } else {
+        if ((events & 0x0001u) != 0u &&
+            (connection->recv_count != 0u ||
+             connection->state == TCP_STATE_CLOSE_WAIT))
+            ready |= 0x0001u;
+        if ((events & 0x0004u) != 0u &&
+            connection->state == TCP_STATE_ESTABLISHED &&
+            connection->send_count < TCP_SEND_BUF_SIZE)
+            ready |= 0x0004u;
+    }
+    spinlock_unlock(&g_tcp_lock);
+    irq_restore(irq_flags);
+    return ready;
 }
 
 void tcp_process_timer(void)

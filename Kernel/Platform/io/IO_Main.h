@@ -35,7 +35,9 @@ typedef enum {
     IO_PROTOCOL_TYPE_NONE,
     IO_PROTOCOL_TYPE_ATA,
     IO_PROTOCOL_TYPE_AHCI,
-    IO_PROTOCOL_TYPE_USB_MASS_STORAGE
+    IO_PROTOCOL_TYPE_USB_MASS_STORAGE,
+    IO_PROTOCOL_TYPE_NVME,
+    IO_PROTOCOL_TYPE_VIRTIO_BLOCK
 } io_protocol_type_t;
 
 typedef struct {
@@ -43,8 +45,8 @@ typedef struct {
     const char *model;
     io_protocol_type_t protocol;
     bool (*init)(uint64_t partition_lba);
-    bool (*read)(uint32_t lba, uint8_t *buffer, uint32_t sectors);
-    bool (*write)(uint32_t lba, const uint8_t *buffer, uint32_t sectors);
+    bool (*read)(uint64_t lba, uint8_t *buffer, uint32_t sectors);
+    bool (*write)(uint64_t lba, const uint8_t *buffer, uint32_t sectors);
     bool (*is_working)(void);
     uint32_t (*get_device_count)(void);
     bool (*select_device)(uint32_t index);
@@ -66,12 +68,12 @@ typedef struct {
 
 bool disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type);
 
-bool disk_read(uint32_t lba, uint8_t *buffer, uint32_t sectors);
-bool disk_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors);
+bool disk_read(uint64_t lba, uint8_t *buffer, uint32_t sectors);
+bool disk_write(uint64_t lba, const uint8_t *buffer, uint32_t sectors);
 bool disk_io_is_working(void);
 io_protocol_type_t disk_io_get_protocol(void);
-uint32_t disk_get_partition_lba(void);
+uint64_t disk_get_partition_lba(void);
 uint32_t disk_get_count(void);
 bool disk_get_info(uint32_t index, io_disk_info_t *out_info);
-bool disk_raw_read(uint32_t index, uint32_t lba, uint8_t *buffer, uint32_t sectors);
-bool disk_raw_write(uint32_t index, uint32_t lba, const uint8_t *buffer, uint32_t sectors);
+bool disk_raw_read(uint32_t index, uint64_t lba, uint8_t *buffer, uint32_t sectors);
+bool disk_raw_write(uint32_t index, uint64_t lba, const uint8_t *buffer, uint32_t sectors);

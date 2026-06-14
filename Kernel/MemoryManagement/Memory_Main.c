@@ -33,7 +33,7 @@ enum {
 #define HEAP_MAGIC      0x1BADB002
 #define HEAP_MAGIC_FREE 0x2BADB002
 
-typedef struct memory_block {
+typedef struct __attribute__((aligned(16))) memory_block {
     uint32_t magic;
     uint64_t size;
     uint8_t  is_free;
@@ -42,6 +42,9 @@ typedef struct memory_block {
     struct memory_block *prev;
     struct memory_block *next;
 } memory_block_t;
+
+_Static_assert((sizeof(memory_block_t) % 16u) == 0u,
+               "heap metadata must preserve malloc alignment");
 
 static memory_block_t *heap_start       = NULL;
 static memory_block_t *heap_search_hint = NULL;

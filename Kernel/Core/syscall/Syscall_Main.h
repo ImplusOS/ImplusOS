@@ -10,6 +10,9 @@
 #define SYSCALL_PROCESS_YIELD     7
 #define SYSCALL_PROCESS_EXIT      8
 #define SYSCALL_THREAD_CREATE     9
+#define SYSCALL_THREAD_EXIT       10
+#define SYSCALL_THREAD_JOIN       11
+#define SYSCALL_THREAD_DETACH     12
 #define SYSCALL_FILE_OPEN          23
 #define SYSCALL_FILE_READ         24
 #define SYSCALL_FILE_WRITE        25
@@ -68,6 +71,8 @@
 #define SYSCALL_NANOSLEEP         120
 #define SYSCALL_GET_PROC_COUNT    121
 #define SYSCALL_GET_PROC_INFO     122
+#define SYSCALL_PROCESS_SPAWN_ELF_ARG 123
+#define SYSCALL_PROCESS_GET_LAUNCH_ARG 124
 #define SYSCALL_GET_RTC_TIME      140
 
 #define SYSCALL_GET_TOTAL_MEMORY  253
@@ -103,6 +108,7 @@
 #define SYSCALL_IOCTL_EX          176
 #define SYSCALL_FCNTL_EX          177
 #define SYSCALL_ACCESS            178
+#define SYSCALL_FD_POLL           179
 
 #define SYSCALL_FUTEX             180
 #define SYSCALL_CLONE             181
@@ -112,11 +118,16 @@
 #define SYSCALL_RT_SIGRETURN      184
 #define SYSCALL_SIGALTSTACK       185
 #define SYSCALL_TKILL             186
+#define SYSCALL_SHM_CREATE        187
+#define SYSCALL_SHM_GRANT         188
+#define SYSCALL_SHM_MAP           189
 
 #define SYSCALL_FORK              190
 #define SYSCALL_EXECVE            191
 #define SYSCALL_VFORK             192
 #define SYSCALL_SET_ROBUST_LIST   193
+#define SYSCALL_SHM_UNMAP         194
+#define SYSCALL_SHM_CLOSE         195
 
 #define SYSCALL_GET_CPU_INFO       200
 #define SYSCALL_GET_MEMORY_INFO   201
@@ -152,6 +163,12 @@
 #define SYSCALL_UNIX_RECVMSG      228
 #define SYSCALL_UNIX_CLOSE        229
 
+#define SYSCALL_AUDIO_OPEN        230
+#define SYSCALL_AUDIO_GET_INFO    231
+#define SYSCALL_AUDIO_WRITE       232
+#define SYSCALL_AUDIO_DRAIN       233
+#define SYSCALL_AUDIO_CLOSE       234
+
 #define SYSCALL_KVM_OPEN          240
 #define SYSCALL_KVM_IOCTL         241
 #define SYSCALL_KVM_CLOSE         242
@@ -165,6 +182,11 @@
 #define SYSCALL_SOCKET_SEND       135
 #define SYSCALL_SOCKET_RECV       136
 #define SYSCALL_SOCKET_CLOSE      137
+#define SYSCALL_SOCKET_GET_INFO   141
+#define SYSCALL_SOCKET_SET_OPTION 142
+#define SYSCALL_SOCKET_GET_OPTION 143
+#define SYSCALL_SOCKET_SHUTDOWN   144
+#define SYSCALL_SOCKET_LISTEN_EX  145
 
 #define SYSCALL_UDP_BIND          108
 #define SYSCALL_UDP_UNBIND        109

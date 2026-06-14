@@ -68,25 +68,32 @@ static int32_t spawn_with_fallbacks(const char *const *paths, uint32_t path_coun
     return -1;
 }
 
-static uint8_t g_font_buffer[6 * 1024 * 1024];
+static uint8_t *g_font_buffer = NULL;
 static stbtt_fontinfo g_font;
 static int g_font_loaded = 0;
 
 static int load_font(const char *path) {
     file_stat_t st;
     if (file_stat(path, &st) < 0 || !st.exists || st.is_dir ||
-        st.size == 0 || st.size > sizeof(g_font_buffer)) {
+        st.size == 0 || st.size > 64u * 1024u * 1024u) {
         return -1;
     }
 
     int32_t fd = file_open(path, 0);
     if (fd < 0) return -1;
 
+    uint8_t *font_buffer = (uint8_t *)malloc((size_t)st.size);
+    if (!font_buffer) {
+        file_close(fd);
+        return -1;
+    }
+
     uint32_t total = 0;
     while (total < st.size) {
-        int64_t n = file_read(fd, g_font_buffer + total, st.size - total);
+        int64_t n = file_read(fd, font_buffer + total, st.size - total);
         if (n <= 0) {
             file_close(fd);
+            free(font_buffer);
             return -1;
         }
         total += (uint32_t)n;
@@ -94,9 +101,16 @@ static int load_font(const char *path) {
 
     file_close(fd);
 
-    int offset = stbtt_GetFontOffsetForIndex(g_font_buffer, 0);
-    if (offset < 0) return -1;
-    if (!stbtt_InitFont(&g_font, g_font_buffer, offset)) return -1;
+    int offset = stbtt_GetFontOffsetForIndex(font_buffer, 0);
+    stbtt_fontinfo font;
+    if (offset < 0 || !stbtt_InitFont(&font, font_buffer, offset)) {
+        free(font_buffer);
+        return -1;
+    }
+
+    free(g_font_buffer);
+    g_font_buffer = font_buffer;
+    g_font = font;
     g_font_loaded = 1;
     return 0;
 }
@@ -565,6 +579,24 @@ static void draw_login_screen(const char *title, const char *prompt, const char 
 }
 
 #define USER_DB_FILE "/Userland/users.db"
+#define USER_DB_MAX_BYTES (1024u * 1024u)
+#define KEY_STATE_WORDS (65536u / 64u)
+
+static bool key_state_test(const uint64_t key_state[KEY_STATE_WORDS],
+                           uint16_t keycode) {
+    return (key_state[keycode >> 6] & (1ULL << (keycode & 63u))) != 0u;
+}
+
+static void key_state_set(uint64_t key_state[KEY_STATE_WORDS],
+                          uint16_t keycode,
+                          bool pressed) {
+    uint64_t mask = 1ULL << (keycode & 63u);
+    if (pressed) {
+        key_state[keycode >> 6] |= mask;
+    } else {
+        key_state[keycode >> 6] &= ~mask;
+    }
+}
 
 static int prompt_user_input(const char *title, const char *prompt,
                              char *out, size_t out_size, bool hidden) {
@@ -573,7 +605,7 @@ static int prompt_user_input(const char *title, const char *prompt,
 
     draw_login_screen(title, prompt, out, hidden, "");
 
-    bool key_down[256];
+    uint64_t key_down[KEY_STATE_WORDS];
     memset(key_down, 0, sizeof(key_down));
 
     while (1) {
@@ -584,22 +616,16 @@ static int prompt_user_input(const char *title, const char *prompt,
             continue;
         }
 
-        uint8_t key = (uint8_t)ev.keycode;
-        
         if (!ev.pressed) {
-            if (key < sizeof(key_down)) {
-                key_down[key] = false;
-            }
+            key_state_set(key_down, ev.keycode, false);
             continue;
         }
 
-        if (key < sizeof(key_down) && key_down[key]) {
+        if (key_state_test(key_down, ev.keycode)) {
             continue;
         }
 
-        if (key < sizeof(key_down)) {
-            key_down[key] = true;
-        }
+        key_state_set(key_down, ev.keycode, true);
 
         if (ev.ascii == '\r' || ev.ascii == '\n') {
             return 1;
@@ -639,7 +665,9 @@ static bool parse_user_record(const char *line, char *username, size_t username_
     size_t name_len = (size_t)(first_colon - line);
     size_t salt_len = (size_t)(second_colon - first_colon - 1);
     size_t hash_len = strlen(second_colon + 1);
-    if (hash_len > 0 && (second_colon[1 + hash_len - 1] == '\n' || second_colon[1 + hash_len - 1] == '\r')) {
+    while (hash_len > 0 &&
+           (second_colon[hash_len] == '\n' ||
+            second_colon[hash_len] == '\r')) {
         hash_len -= 1;
     }
     if (name_len >= username_size || salt_len >= salt_size || hash_len >= hash_size) return false;
@@ -653,35 +681,74 @@ static bool parse_user_record(const char *line, char *username, size_t username_
     return true;
 }
 
-static bool user_db_lookup(const char *username, char *salt, size_t salt_size, char *hash, size_t hash_size) {
+static char *user_db_read_all(size_t *size_out) {
+    file_stat_t stat;
+    if (size_out) *size_out = 0;
+    if (file_stat(USER_DB_FILE, &stat) < 0 || !stat.exists || stat.is_dir ||
+        stat.size == 0u || stat.size > USER_DB_MAX_BYTES) {
+        return NULL;
+    }
+
     int32_t fd = file_open(USER_DB_FILE, 0);
-    if (fd < 0) return false;
-    char buffer[4096];
-    int64_t read_len = file_read(fd, buffer, sizeof(buffer) - 1);
+    if (fd < 0) return NULL;
+
+    char *buffer = (char *)malloc((size_t)stat.size + 1u);
+    if (!buffer) {
+        file_close(fd);
+        return NULL;
+    }
+
+    size_t total = 0;
+    while (total < stat.size) {
+        int64_t n = file_read(fd, buffer + total, (uint64_t)stat.size - total);
+        if (n <= 0) {
+            free(buffer);
+            file_close(fd);
+            return NULL;
+        }
+        total += (size_t)n;
+    }
     file_close(fd);
-    if (read_len <= 0) return false;
-    buffer[read_len] = '\0';
+    buffer[total] = '\0';
+    if (size_out) *size_out = total;
+    return buffer;
+}
+
+static bool user_db_lookup(const char *username, char *salt, size_t salt_size, char *hash, size_t hash_size) {
+    char *buffer = user_db_read_all(NULL);
+    if (!buffer) return false;
 
     char *line = buffer;
     while (*line) {
         char *newline = strchr(line, '\n');
         if (newline) *newline = '\0';
 
-        char record_user[33], record_salt[17], record_hash[65];
+        char record_user[33], record_salt[65], record_hash[65];
         if (parse_user_record(line, record_user, sizeof(record_user), record_salt, sizeof(record_salt), record_hash, sizeof(record_hash))) {
             if (strcmp(record_user, username) == 0) {
                 os_strcpy_s(salt, salt_size, record_salt);
                 os_strcpy_s(hash, hash_size, record_hash);
+                free(buffer);
                 return true;
             }
         }
         if (!newline) break;
         line = newline + 1;
     }
+    free(buffer);
     return false;
 }
 
 static bool user_db_add(const char *username, const char *salt, const char *hash) {
+    char existing_salt[65], existing_hash[65];
+    if (user_db_lookup(username,
+                       existing_salt,
+                       sizeof(existing_salt),
+                       existing_hash,
+                       sizeof(existing_hash))) {
+        return false;
+    }
+
     int32_t fd = file_open(USER_DB_FILE, 1);
     if (fd < 0) {
         fd = file_creat(USER_DB_FILE);
@@ -698,6 +765,81 @@ static bool user_db_add(const char *username, const char *salt, const char *hash
     return true;
 }
 
+static bool user_db_upgrade_hash(const char *username, const char *new_hash) {
+    size_t buffer_size = 0;
+    char *buffer = user_db_read_all(&buffer_size);
+    if (!buffer || strlen(new_hash) != 64u) {
+        free(buffer);
+        return false;
+    }
+
+    char *line = buffer;
+    while ((size_t)(line - buffer) < buffer_size && *line) {
+        char *newline = strchr(line, '\n');
+        if (newline) *newline = '\0';
+
+        char record_user[33], record_salt[65], record_hash[65];
+        if (parse_user_record(line,
+                              record_user,
+                              sizeof(record_user),
+                              record_salt,
+                              sizeof(record_salt),
+                              record_hash,
+                              sizeof(record_hash)) &&
+            strcmp(record_user, username) == 0 &&
+            strlen(record_hash) == 64u) {
+            char *first_colon = strchr(line, ':');
+            char *second_colon = first_colon ? strchr(first_colon + 1, ':') : NULL;
+            if (!second_colon) break;
+
+            int32_t fd = file_open(USER_DB_FILE, 1);
+            if (fd < 0) break;
+            int64_t offset = (int64_t)((second_colon + 1) - buffer);
+            bool ok = file_seek(fd, offset, 0) == offset &&
+                      file_write(fd, new_hash, 64u) == 64;
+            file_close(fd);
+            free(buffer);
+            return ok;
+        }
+
+        if (!newline) break;
+        line = newline + 1;
+    }
+
+    free(buffer);
+    return false;
+}
+
+static bool secure_hash_equal(const char *left, const char *right) {
+    uint8_t difference = 0u;
+    size_t left_len = strlen(left);
+    size_t right_len = strlen(right);
+    if (left_len != right_len) return false;
+    for (size_t i = 0; i < left_len; ++i) {
+        difference |= (uint8_t)(left[i] ^ right[i]);
+    }
+    return difference == 0u;
+}
+
+static void login_failure_backoff(uint32_t failure_count,
+                                  const char *username,
+                                  const char *message) {
+    uint32_t exponent = failure_count < 5u ? failure_count : 5u;
+    uint32_t delay_seconds = 1u << exponent;
+    char status[128];
+    snprintf(status,
+             sizeof(status),
+             "%s %u秒後に再試行できます。",
+             message,
+             delay_seconds);
+    draw_login_screen("ログイン",
+                      "ユーザー名を入力してください",
+                      username,
+                      false,
+                      status);
+    sleep_ms((uint64_t)delay_seconds * 1000u);
+}
+
 static bool user_login_create_user(char *username_out, size_t username_out_size) {
     char username[33], password[129], confirm[129], status[128];
     while (1) {
@@ -708,7 +850,7 @@ static bool user_login_create_user(char *username_out, size_t username_out_size)
             draw_login_screen("新規ユーザー登録", "ユーザー名を入力してください", username, false, status);
             continue;
         }
-        if (user_db_lookup(username, (char[17]){0}, 17, (char[65]){0}, 65)) {
+        if (user_db_lookup(username, (char[65]){0}, 65, (char[65]){0}, 65)) {
             os_strcpy_s(status, sizeof(status), "このユーザー名は既に使われています。");
             draw_login_screen("新規ユーザー登録", "ユーザー名を入力してください", username, false, status);
             continue;
@@ -721,11 +863,15 @@ static bool user_login_create_user(char *username_out, size_t username_out_size)
             continue;
         }
 
-        uint8_t salt_bytes[8];
-        char salt_hex[17], hash_hex[65];
-        crypto_generate_salt(salt_bytes);
+        uint8_t salt_bytes[16];
+        char salt_hex[33], hash_hex[65];
+        crypto_generate_salt_bytes(salt_bytes, sizeof(salt_bytes));
         crypto_hex_encode(salt_bytes, sizeof(salt_bytes), salt_hex);
-        crypto_hash_password_hex(password, salt_hex, hash_hex);
+        if (crypto_hash_password_hex(password, salt_hex, hash_hex) < 0) {
+            os_strcpy_s(status, sizeof(status), "パスワード処理に失敗しました。");
+            draw_login_screen("新規ユーザー登録", "ユーザー名を入力してください", username, false, status);
+            continue;
+        }
 
         if (!user_db_add(username, salt_hex, hash_hex)) {
             os_strcpy_s(status, sizeof(status), "ユーザー登録に失敗しました。");
@@ -738,24 +884,41 @@ static bool user_login_create_user(char *username_out, size_t username_out_size)
 }
 
 static bool user_login_authenticate(char *username_out, size_t username_out_size) {
-    char username[33], password[129], salt[17], stored_hash[65], computed_hash[65], status[128];
+    char username[33], password[129], salt[65], stored_hash[65], computed_hash[65];
+    uint32_t failure_count = 0u;
     while (1) {
-        status[0] = '\0';
         if (!prompt_user_input("ログイン", "ユーザー名を入力してください", username, sizeof(username), false)) return false;
         if (!user_db_lookup(username, salt, sizeof(salt), stored_hash, sizeof(stored_hash))) {
-            os_strcpy_s(status, sizeof(status), "そのユーザーが見つかりません。");
-            draw_login_screen("ログイン", "ユーザー名を入力してください", username, false, status);
+            failure_count++;
+            login_failure_backoff(failure_count,
+                                  username,
+                                  "ユーザー名またはパスワードが違います。");
             continue;
         }
         if (!prompt_user_input("ログイン", "パスワードを入力してください", password, sizeof(password), true)) return false;
 
-        crypto_hash_password_hex(password, salt, computed_hash);
-        if (strcmp(stored_hash, computed_hash) == 0) {
+        bool authenticated =
+            crypto_hash_password_hex(password, salt, computed_hash) == 0 &&
+            secure_hash_equal(stored_hash, computed_hash);
+        if (!authenticated &&
+            crypto_hash_password_hex_legacy(password, salt, computed_hash) == 0 &&
+            secure_hash_equal(stored_hash, computed_hash)) {
+            authenticated =
+                crypto_hash_password_hex(password, salt, computed_hash) == 0;
+            if (authenticated) {
+                (void)user_db_upgrade_hash(username, computed_hash);
+            }
+        }
+
+        memset(password, 0, sizeof(password));
+        if (authenticated) {
             os_strcpy_s(username_out, username_out_size, username);
             return true;
         }
-        os_strcpy_s(status, sizeof(status), "パスワードが違います。");
-        draw_login_screen("ログイン", "ユーザー名を入力してください", username, false, status);
+        failure_count++;
+        login_failure_backoff(failure_count,
+                              username,
+                              "ユーザー名またはパスワードが違います。");
     }
 }
 
@@ -871,7 +1034,7 @@ void _start(void) {
     }
 
     if (wm_pid >= 0) {
-        sleep_ms(500);
+        sleep_ms(1000);
         window_show_notification("System", "Welcome to ImplusOS!");
     }
 
@@ -879,6 +1042,12 @@ void _start(void) {
         free(g_bg_cache);
         g_bg_cache = NULL;
     }
+    free(g_fb_snapshot);
+    g_fb_snapshot = NULL;
+    g_fb_snapshot_pixels = 0;
+    free(g_font_buffer);
+    g_font_buffer = NULL;
+    g_font_loaded = 0;
 
     while (1) process_yield();
 }

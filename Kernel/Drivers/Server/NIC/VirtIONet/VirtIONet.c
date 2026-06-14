@@ -25,7 +25,7 @@ static const driver_binary_t *g_api = NULL;
 #define dma_free           g_api->dma_free
 #define memset             g_api->memset
 #define memcpy             g_api->memcpy
-#define map_mmio_virt      g_api->map_mmio_virt
+#define map_mmio_range     g_api->hw.map_mmio_range
 #define pci_read_config    g_api->pci_read_config
 #define pci_write_config   g_api->pci_write_config
 #define serial_write_string g_api->serial_write_string
@@ -191,30 +191,30 @@ static inline void memory_barrier(void)
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
-static uint8_t pci_cfg_read8(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset)
+static uint8_t pci_cfg_read8(uint8_t bus, uint8_t device, uint8_t func, uint16_t offset)
 {
-    uint32_t value = pci_read_config(bus, device, func, (uint8_t)(offset & 0xFCu));
+    uint32_t value = pci_read_config(bus, device, func, (uint16_t)(offset & 0xFFFCu));
     return (uint8_t)((value >> ((offset & 0x3u) * 8u)) & 0xFFu);
 }
 
-static uint16_t pci_cfg_read16(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset)
+static uint16_t pci_cfg_read16(uint8_t bus, uint8_t device, uint8_t func, uint16_t offset)
 {
-    uint32_t value = pci_read_config(bus, device, func, (uint8_t)(offset & 0xFCu));
+    uint32_t value = pci_read_config(bus, device, func, (uint16_t)(offset & 0xFFFCu));
     return (uint16_t)((value >> ((offset & 0x2u) * 8u)) & 0xFFFFu);
 }
 
-static uint32_t pci_cfg_read32(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset)
+static uint32_t pci_cfg_read32(uint8_t bus, uint8_t device, uint8_t func, uint16_t offset)
 {
-    return pci_read_config(bus, device, func, (uint8_t)(offset & 0xFCu));
+    return pci_read_config(bus, device, func, (uint16_t)(offset & 0xFFFCu));
 }
 
 static void pci_cfg_write16(uint8_t bus,
                             uint8_t device,
                             uint8_t func,
-                            uint8_t offset,
+                            uint16_t offset,
                             uint16_t value)
 {
-    uint8_t aligned = (uint8_t)(offset & 0xFCu);
+    uint16_t aligned = (uint16_t)(offset & 0xFFFCu);
     uint32_t old_value = pci_read_config(bus, device, func, aligned);
     uint32_t shift = (uint32_t)((offset & 0x2u) * 8u);
     uint32_t mask = 0xFFFFu << shift;
@@ -263,11 +263,14 @@ static void virtio_read_bar_addrs(uint8_t bus,
                                   uint64_t out_bar[6],
                                   uint8_t out_is_mem[6])
 {
+    for (uint8_t j = 0; j < 6u; j++) {
+        out_bar[j] = 0;
+        out_is_mem[j] = 0;
+    }
+    
     uint8_t i = 0;
     while (i < 6u) {
-        uint32_t bar = pci_cfg_read32(bus, device, func, (uint8_t)(0x10u + i * 4u));
-        out_bar[i] = 0;
-        out_is_mem[i] = 0;
+        uint32_t bar = pci_cfg_read32(bus, device, func, (uint16_t)(0x10u + i * 4u));
 
         if (bar == 0u || bar == 0xFFFFFFFFu) {
             i++;
@@ -281,7 +284,7 @@ static void virtio_read_bar_addrs(uint8_t bus,
 
         out_is_mem[i] = 1;
         if (((bar >> 1) & 0x3u) == 0x2u && i < 5u) {
-            uint32_t bar_hi = pci_cfg_read32(bus, device, func, (uint8_t)(0x10u + (i + 1u) * 4u));
+            uint32_t bar_hi = pci_cfg_read32(bus, device, func, (uint16_t)(0x10u + (i + 1u) * 4u));
             out_bar[i] = (((uint64_t)bar_hi) << 32) | (uint64_t)(bar & ~0xFu);
             i = (uint8_t)(i + 2u);
             continue;
@@ -330,6 +333,11 @@ static int find_virtio_net(virtio_net_pci_t *out_dev)
                     out_dev->bus = (uint8_t)bus;
                     out_dev->device = device;
                     out_dev->func = func;
+                    
+                    uint32_t cmd = pci_read_config((uint8_t)bus, device, func, 0x04u);
+                    cmd |= (1u << 1) | (1u << 2);
+                    pci_write_config((uint8_t)bus, device, func, 0x04u, cmd);
+
                     virtio_read_bar_addrs((uint8_t)bus,
                                           device,
                                           func,
@@ -372,22 +380,22 @@ static int virtio_find_transport_caps(const virtio_net_pci_t *dev, virtio_transp
 
     while (cap != 0u && cap >= 0x40u && guard++ < 96u) {
         uint8_t cap_id = pci_cfg_read8(dev->bus, dev->device, dev->func, cap);
-        uint8_t cap_next = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint8_t)(cap + 1u));
+        uint8_t cap_next = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint16_t)(cap + 1u));
 
         if (cap_id == PCI_CAP_ID_VENDOR) {
             virtio_pci_cap_t vcap;
             vcap.cap_vndr = cap_id;
             vcap.cap_next = cap_next;
-            vcap.cap_len = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint8_t)(cap + 2u));
-            vcap.cfg_type = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint8_t)(cap + 3u));
-            vcap.bar = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint8_t)(cap + 4u));
-            vcap.id = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint8_t)(cap + 5u));
-            vcap.offset = pci_cfg_read32(dev->bus, dev->device, dev->func, (uint8_t)(cap + 8u));
-            vcap.length = pci_cfg_read32(dev->bus, dev->device, dev->func, (uint8_t)(cap + 12u));
+            vcap.cap_len = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint16_t)(cap + 2u));
+            vcap.cfg_type = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint16_t)(cap + 3u));
+            vcap.bar = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint16_t)(cap + 4u));
+            vcap.id = pci_cfg_read8(dev->bus, dev->device, dev->func, (uint16_t)(cap + 5u));
+            vcap.offset = pci_cfg_read32(dev->bus, dev->device, dev->func, (uint16_t)(cap + 8u));
+            vcap.length = pci_cfg_read32(dev->bus, dev->device, dev->func, (uint16_t)(cap + 12u));
 
             if (vcap.bar < 6u && dev->bar_is_mem[vcap.bar] != 0u && dev->bar_addr[vcap.bar] != 0u) {
                 uint64_t phys = dev->bar_addr[vcap.bar] + (uint64_t)vcap.offset;
-                volatile uint8_t *base = (volatile uint8_t *)map_mmio_virt(phys);
+                volatile uint8_t *base = (volatile uint8_t *)map_mmio_range(phys, vcap.length);
                 if (base == NULL) {
                     return 0;
                 }
@@ -397,7 +405,7 @@ static int virtio_find_transport_caps(const virtio_net_pci_t *dev, virtio_transp
                 } else if (vcap.cfg_type == VIRTIO_PCI_CAP_NOTIFY_CFG) {
                     transport->notify_base = base;
                     transport->notify_off_multiplier =
-                        pci_cfg_read32(dev->bus, dev->device, dev->func, (uint8_t)(cap + 16u));
+                        pci_cfg_read32(dev->bus, dev->device, dev->func, (uint16_t)(cap + 16u));
                 } else if (vcap.cfg_type == VIRTIO_PCI_CAP_DEVICE_CFG) {
                     transport->device_cfg = base;
                 }
@@ -965,10 +973,22 @@ static const driver_module_descriptor_t g_virtio_net_module = {
     .version = DRIVER_DESCRIPTOR_VERSION,
     .kind = DEVICE_TYPE_NIC,
     .load_priority = 50u,
-    .deps = { NULL },
+    .deps = { "PCI_Driver.ELF", NULL },
     .driver_api = &g_virtio_net_driver,
     .shutdown = virtio_net_shutdown,
 };
+
+#undef malloc
+#undef free
+#undef dma_alloc
+#undef memset
+#undef memcpy
+#undef map_mmio_range
+#undef pci_read_config
+#undef pci_write_config
+#undef cpu_save_interrupts
+#undef cpu_restore_interrupts
+#undef cpu_pause
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
 {
@@ -978,7 +998,7 @@ const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
         api->dma_alloc == NULL ||
         api->memset == NULL ||
         api->memcpy == NULL ||
-        api->map_mmio_virt == NULL ||
+        api->hw.map_mmio_range == NULL ||
         api->pci_read_config == NULL ||
         api->pci_write_config == NULL ||
         api->hal.cpu_save_interrupts == NULL ||

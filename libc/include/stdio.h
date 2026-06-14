@@ -52,4 +52,5 @@ int ferror(FILE* stream);
 void clearerr(FILE* stream);
 int fileno(FILE* stream);
 int remove(const char* path);
+int rename(const char* old_path, const char* new_path);
 void perror(const char* s);

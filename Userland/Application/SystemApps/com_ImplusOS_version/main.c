@@ -18,7 +18,6 @@ void _start(void) {
         window_draw_text(wid, 20, 30, "ImplusOS", 0x89B4FA, 32.0f);
         window_draw_text(wid, 20, 80, "Version 0.02 (Alpha)", 0xCDD6F4, 18.0f);
         
-        draw_present();
     }
 
     while (1) {

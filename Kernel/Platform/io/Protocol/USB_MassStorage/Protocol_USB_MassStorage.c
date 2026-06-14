@@ -18,7 +18,7 @@ bool usb_ms_init(uint64_t partition_lba) {
         if (count > 0) {
             for (uint32_t i = 0; i < count; i++) {
                 if (usb_driver_client_select_device(i)) {
-                    if (driver_manager_input_usb_read_sectors((uint32_t)partition_lba, probe_buf, 1)) {
+                    if (driver_manager_input_usb_read_sectors(partition_lba, probe_buf, 1)) {
                         g_usb_ms_working = true;
                         return true;
                     }
@@ -35,14 +35,14 @@ bool usb_ms_init(uint64_t partition_lba) {
     return false;
 }
 
-bool usb_ms_read(uint32_t lba, uint8_t *buffer, uint32_t sectors)
+bool usb_ms_read(uint64_t lba, uint8_t *buffer, uint32_t sectors)
 {
     if (!g_usb_ms_working) return false;
     if (sectors == 0) return true;
     return driver_manager_input_usb_read_sectors(lba, buffer, sectors);
 }
 
-bool usb_ms_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors)
+bool usb_ms_write(uint64_t lba, const uint8_t *buffer, uint32_t sectors)
 {
     if (!g_usb_ms_working) return false;
     if (sectors == 0) return true;

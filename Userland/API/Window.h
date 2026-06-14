@@ -37,3 +37,10 @@ int32_t window_set_layout_xml(window_id_t wid, const char *xml_str, uint32_t xml
 int32_t window_load_layout(window_id_t wid, const char *xml_path);
 void window_draw_text(window_id_t wid, uint32_t x, uint32_t y, const char *text, uint32_t color, float font_size);
 void window_show_notification(const char *title, const char *message);
+uint32_t window_get_capabilities(void);
+uint32_t *window_get_backing_store(window_id_t wid, uint32_t *out_w, uint32_t *out_h);
+void window_release_backing_store(window_id_t wid);
+void window_damage(window_id_t wid, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+void window_begin_transaction(window_id_t wid);
+void window_end_transaction(window_id_t wid);
+int32_t window_set_icon_path(window_id_t wid, const char *path);

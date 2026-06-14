@@ -333,12 +333,12 @@ void driver_manager_input_usb_init(void)
     input_manager_init();
 }
 
-bool driver_manager_input_usb_read_sectors(uint32_t lba, uint8_t *buffer, uint32_t sectors)
+bool driver_manager_input_usb_read_sectors(uint64_t lba, uint8_t *buffer, uint32_t sectors)
 {
     return block_manager_read_sectors(lba, buffer, sectors);
 }
 
-bool driver_manager_input_usb_write_sectors(uint32_t lba, const uint8_t *buffer, uint32_t sectors)
+bool driver_manager_input_usb_write_sectors(uint64_t lba, const uint8_t *buffer, uint32_t sectors)
 {
     return block_manager_write_sectors(lba, buffer, sectors);
 }

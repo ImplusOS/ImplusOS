@@ -694,6 +694,83 @@ static void usb_master_init(void)
     bot_init();
 }
 
+static bool usb_storage_init(void)
+{
+    usb_master_init();
+    return bot_init();
+}
+
+static bool usb_storage_is_ready(void)
+{
+    return bot_get_device_count() != 0u;
+}
+
+static bool usb_storage_get_info(uint32_t device_index,
+                                 driver_block_info_t *out_info)
+{
+    if (out_info == NULL || !bot_select_device(device_index)) {
+        return false;
+    }
+    uint32_t block_size = bot_get_block_size();
+    uint64_t total_bytes = bot_get_total_bytes();
+    if (block_size == 0u || total_bytes < block_size) {
+        return false;
+    }
+    g_api->memset(out_info, 0, sizeof(*out_info));
+    out_info->block_count = total_bytes / block_size;
+    out_info->logical_block_size = block_size;
+    out_info->physical_block_size = block_size;
+    out_info->flags = DRIVER_BLOCK_FLAG_REMOVABLE;
+    if (!bot_is_read_only()) {
+        out_info->flags |= DRIVER_BLOCK_FLAG_WRITABLE;
+    }
+    out_info->transport = DRIVER_BLOCK_TRANSPORT_USB;
+    const char model[] = "USB Mass Storage";
+    g_api->memcpy(out_info->model, model, sizeof(model));
+    return true;
+}
+
+static bool usb_storage_read(uint32_t device_index, uint64_t lba,
+                             void *buffer, uint32_t block_count)
+{
+    if (!bot_select_device(device_index)) {
+        return false;
+    }
+    uint32_t block_size = bot_get_block_size();
+    uint64_t factor = block_size / 512u;
+    uint64_t sector_lba = lba * factor;
+    uint64_t sectors = (uint64_t)block_count * factor;
+    if (factor == 0u || sector_lba > UINT32_MAX || sectors > UINT32_MAX ||
+        sector_lba + sectors > (uint64_t)UINT32_MAX + 1u) {
+        return false;
+    }
+    return bot_read_sectors((uint32_t)sector_lba, (uint8_t *)buffer,
+                            (uint32_t)sectors);
+}
+
+static bool usb_storage_write(uint32_t device_index, uint64_t lba,
+                              const void *buffer, uint32_t block_count)
+{
+    if (!bot_select_device(device_index)) {
+        return false;
+    }
+    uint32_t block_size = bot_get_block_size();
+    uint64_t factor = block_size / 512u;
+    uint64_t sector_lba = lba * factor;
+    uint64_t sectors = (uint64_t)block_count * factor;
+    if (factor == 0u || sector_lba > UINT32_MAX || sectors > UINT32_MAX ||
+        sector_lba + sectors > (uint64_t)UINT32_MAX + 1u) {
+        return false;
+    }
+    return bot_write_sectors((uint32_t)sector_lba,
+                             (const uint8_t *)buffer, (uint32_t)sectors);
+}
+
+static bool usb_storage_flush(uint32_t device_index)
+{
+    return bot_select_device(device_index) && bot_flush();
+}
+
 static const usb_master_vtable_t g_usb_vtable = {
     .input = {
         .init           = usb_master_init,
@@ -704,11 +781,15 @@ static const usb_master_vtable_t g_usb_vtable = {
         .drain_mouse    = usb_hid_drain_mouse,
     },
     .storage = {
-        .read_sectors     = bot_read_sectors,
-        .write_sectors    = bot_write_sectors,
+        .name             = "usb",
+        .priority         = 40u,
+        .init             = usb_storage_init,
+        .is_ready         = usb_storage_is_ready,
         .get_device_count = bot_get_device_count,
-        .select_device    = bot_select_device,
-        .get_total_bytes  = bot_get_total_bytes,
+        .get_info         = usb_storage_get_info,
+        .read_blocks      = usb_storage_read,
+        .write_blocks     = usb_storage_write,
+        .flush            = usb_storage_flush,
     },
     .usb = {
         .submit_interrupt_in_async = usb_submit_interrupt_in_async,

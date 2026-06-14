@@ -496,13 +496,21 @@ os_status_t driver_framework_api_handle_ipc(int32_t sender_pid,
             break;
 
         case DRIVER_FRAMEWORK_OP_PCI_WRITE_CONFIG:
+        {
+            driver_framework_pci_write_request_t write_request;
+            if (request->data_size != sizeof(write_request)) {
+                status = OS_STATUS_INVALID_ARG;
+                break;
+            }
+            memcpy(&write_request, request->data, sizeof(write_request));
             pci_write_config((uint8_t)request->value0,
                              (uint8_t)request->value1,
                              (uint8_t)request->value2,
-                             (uint8_t)(request->value3 >> 32),
-                             (uint32_t)request->value3);
+                             write_request.offset,
+                             write_request.value);
             status = OS_STATUS_OK;
             break;
+        }
 
         case DRIVER_FRAMEWORK_OP_DMA_ALLOC:
             status = driver_framework_handle_dma_alloc(sender_pid, request, &response);

@@ -7,6 +7,9 @@ void* memmove(void* dst, const void* src, size_t n);
 int memcmp(const void* a, const void* b, size_t n);
 
 size_t strlen(const char* s);
+size_t strnlen(const char* s, size_t max_len);
+size_t strlcpy(char* dst, const char* src, size_t dst_size);
+size_t strlcat(char* dst, const char* src, size_t dst_size);
 char* strcpy(char* d, const char* s);
 char* strncpy(char* d, const char* s, size_t n);
 

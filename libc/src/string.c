@@ -135,6 +135,39 @@ size_t strlen(const char* s)
     return n;
 }
 
+size_t strnlen(const char* s, size_t max_len)
+{
+    size_t n = 0;
+    if (s == 0) return 0;
+    while (n < max_len && s[n]) n++;
+    return n;
+}
+
+size_t strlcpy(char* dst, const char* src, size_t dst_size)
+{
+    size_t src_len = strlen(src);
+    if (dst_size != 0) {
+        size_t copy_len = src_len < dst_size - 1 ? src_len : dst_size - 1;
+        memcpy(dst, src, copy_len);
+        dst[copy_len] = '\0';
+    }
+    return src_len;
+}
+
+size_t strlcat(char* dst, const char* src, size_t dst_size)
+{
+    size_t dst_len = strnlen(dst, dst_size);
+    size_t src_len = strlen(src);
+    if (dst_len == dst_size) return dst_size + src_len;
+    if (dst_size > dst_len + 1) {
+        size_t room = dst_size - dst_len - 1;
+        size_t copy_len = src_len < room ? src_len : room;
+        memcpy(dst + dst_len, src, copy_len);
+        dst[dst_len + copy_len] = '\0';
+    }
+    return dst_len + src_len;
+}
+
 char* strcpy(char* d, const char* s)
 {
     if (d == 0 || s == 0) return d;
@@ -335,4 +368,3 @@ void* memchr(const void* s, int c, size_t n)
     }
     return 0;
 }
-

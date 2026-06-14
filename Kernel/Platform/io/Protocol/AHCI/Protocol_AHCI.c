@@ -5,7 +5,6 @@
 #include "mmu/Paging_Main.h"
 #include <string.h>
 
-
 #define AHCI_GHC   0x04u   
 #define AHCI_PI    0x0Cu   
 
@@ -24,8 +23,11 @@
 
 #define SATA_SIG   0x00000101u
 #define ATAPI_SIG  0xEB140101u
+#define ATA_CMD_IDENTIFY_DEVICE 0xECu
+#define ATA_CMD_PACKET          0xA0u
 #define ATA_CMD_READ_DMA_EXT  0x25u
 #define ATA_CMD_WRITE_DMA_EXT 0x35u
+#define ATA_CMD_FLUSH_CACHE_EXT 0xEAu
 #define AHCI_DMA_SECTORS 64u
 #define AHCI_SECTOR_SIZE 512u
 #define AHCI_MAX_DEVICES 32u
@@ -80,6 +82,9 @@ static bool          g_atapi   = false;
 static ahci_device_t g_devices[AHCI_MAX_DEVICES];
 static uint32_t      g_device_count = 0;
 static uint32_t      g_current_device = 0;
+static uint8_t       g_controller_bus = 0;
+static uint8_t       g_controller_device = 0;
+static uint8_t       g_controller_function = 0;
 
 
 static uint32_t g_cached_block = 0xFFFFFFFFu;
@@ -189,6 +194,7 @@ static bool atapi_read_one(uint32_t lba2048) {
     port_wr(g_port, P_SERR, port_rd(g_port, P_SERR));
     port_wr(g_port, P_IS,   port_rd(g_port, P_IS));
 
+    memset(s_dma, 0, 2048u);
     s_clb[0].flags =
     (5u & 0x1Fu) |
     (1u << 5);
@@ -201,6 +207,8 @@ static bool atapi_read_one(uint32_t lba2048) {
     s_ctbl->cfis[1] = 0x80u;
     s_ctbl->cfis[2] = 0xA0u;
     s_ctbl->cfis[3] = 0x01u;
+    s_ctbl->cfis[5] = 0x00u;
+    s_ctbl->cfis[6] = 0x08u;
     s_ctbl->cfis[7] = 0xA0u;
 
     s_ctbl->acmd[0] = 0x28u;
@@ -215,10 +223,15 @@ static bool atapi_read_one(uint32_t lba2048) {
     s_ctbl->prdt[0].dbau = (uint32_t)(s_dma_phys >> 32);
     s_ctbl->prdt[0].dbc  = (2048u - 1u) | (1u << 31);
 
+    __sync_synchronize();
     port_wr(g_port, P_CI, 1u);
 
     for (uint32_t t = 10000000u; t; --t) {
         if (!(port_rd(g_port, P_CI) & 1u)) {
+            __sync_synchronize();
+            if (s_clb[0].prdbc < 2048u) {
+                return false;
+            }
             g_cached_block = lba2048;
             return true;
         }
@@ -231,7 +244,7 @@ static bool atapi_read_one(uint32_t lba2048) {
     return false;  
 }
 
-static bool sata_dma_rw(uint32_t lba, uint32_t sectors, bool write) {
+static bool sata_dma_rw(uint64_t lba, uint32_t sectors, bool write) {
     if (sectors == 0 || sectors > AHCI_DMA_SECTORS) return false;
     if (!s_ctbl || !s_dma) return false;
 
@@ -262,8 +275,8 @@ static bool sata_dma_rw(uint32_t lba, uint32_t sectors, bool write) {
     s_ctbl->cfis[6] = (uint8_t)((lba >> 16) & 0xFFu);
     s_ctbl->cfis[7] = 0x40u;
     s_ctbl->cfis[8] = (uint8_t)((lba >> 24) & 0xFFu);
-    s_ctbl->cfis[9] = 0u;
-    s_ctbl->cfis[10] = 0u;
+    s_ctbl->cfis[9] = (uint8_t)((lba >> 32) & 0xFFu);
+    s_ctbl->cfis[10] = (uint8_t)((lba >> 40) & 0xFFu);
     s_ctbl->cfis[12] = (uint8_t)(sectors & 0xFFu);
     s_ctbl->cfis[13] = (uint8_t)((sectors >> 8) & 0xFFu);
 
@@ -288,7 +301,155 @@ static bool sata_dma_rw(uint32_t lba, uint32_t sectors, bool write) {
     return false;
 }
 
-bool ahci_read(uint32_t lba_512, uint8_t *buffer, uint32_t sectors_512) {
+static uint16_t ahci_read_le16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t ahci_read_be32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) |
+           ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) |
+           (uint32_t)p[3];
+}
+
+static uint64_t ahci_identify_capacity_bytes(void) {
+    uint16_t word83 = ahci_read_le16(s_dma + 83u * 2u);
+    uint64_t sectors = 0;
+
+    if ((word83 & (1u << 10)) != 0u) {
+        sectors =
+            (uint64_t)ahci_read_le16(s_dma + 100u * 2u) |
+            ((uint64_t)ahci_read_le16(s_dma + 101u * 2u) << 16) |
+            ((uint64_t)ahci_read_le16(s_dma + 102u * 2u) << 32) |
+            ((uint64_t)ahci_read_le16(s_dma + 103u * 2u) << 48);
+    }
+
+    if (sectors == 0u) {
+        sectors =
+            (uint64_t)ahci_read_le16(s_dma + 60u * 2u) |
+            ((uint64_t)ahci_read_le16(s_dma + 61u * 2u) << 16);
+    }
+
+    return sectors * AHCI_SECTOR_SIZE;
+}
+
+static bool sata_identify_device(uint64_t *total_bytes_out) {
+    if (!s_ctbl || !s_dma) return false;
+
+    for (uint32_t t = 1000000u; t; --t) {
+        uint32_t tfd = port_rd(g_port, P_TFD);
+        if (!((tfd & 0x80u) || (tfd & 0x08u))) break;
+        if (t == 1u) return false;
+    }
+
+    for (uint32_t t = 1000000u; t; --t) {
+        if (!port_rd(g_port, P_CI)) break;
+        if (t == 1u) return false;
+    }
+
+    port_wr(g_port, P_SERR, port_rd(g_port, P_SERR));
+    port_wr(g_port, P_IS,   port_rd(g_port, P_IS));
+
+    memset(s_dma, 0, AHCI_SECTOR_SIZE);
+    memset(s_ctbl, 0, sizeof(*s_ctbl));
+    s_clb[0].flags = (5u & 0x1Fu);
+    s_clb[0].prdtl = 1u;
+    s_clb[0].prdbc = 0u;
+
+    s_ctbl->cfis[0] = 0x27u;
+    s_ctbl->cfis[1] = 0x80u;
+    s_ctbl->cfis[2] = ATA_CMD_IDENTIFY_DEVICE;
+    s_ctbl->cfis[7] = 0x40u;
+
+    s_ctbl->prdt[0].dba  = (uint32_t)s_dma_phys;
+    s_ctbl->prdt[0].dbau = (uint32_t)(s_dma_phys >> 32);
+    s_ctbl->prdt[0].dbc  = (AHCI_SECTOR_SIZE - 1u) | (1u << 31);
+
+    port_wr(g_port, P_CI, 1u);
+
+    for (uint32_t t = 10000000u; t; --t) {
+        uint32_t ci = port_rd(g_port, P_CI);
+        uint32_t is = port_rd(g_port, P_IS);
+        if (is & (1u << 30)) {
+            port_wr(g_port, P_IS, is);
+            return false;
+        }
+        if ((ci & 1u) == 0u) {
+            port_wr(g_port, P_IS, is);
+            if (total_bytes_out != NULL) {
+                *total_bytes_out = ahci_identify_capacity_bytes();
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool atapi_read_capacity(uint64_t *total_bytes_out) {
+    if (!s_ctbl || !s_dma) return false;
+
+    for (uint32_t t = 1000000u; t; --t) {
+        uint32_t tfd = port_rd(g_port, P_TFD);
+        if (!((tfd & 0x80u) || (tfd & 0x08u))) break;
+        if (t == 1u) return false;
+    }
+
+    for (uint32_t t = 1000000u; t; --t) {
+        if (!port_rd(g_port, P_CI)) break;
+        if (t == 1u) return false;
+    }
+
+    port_wr(g_port, P_SERR, port_rd(g_port, P_SERR));
+    port_wr(g_port, P_IS,   port_rd(g_port, P_IS));
+
+    memset(s_dma, 0, 8u);
+    memset(s_ctbl, 0, sizeof(*s_ctbl));
+    s_clb[0].flags = (5u & 0x1Fu) | (1u << 5);
+    s_clb[0].prdtl = 1u;
+    s_clb[0].prdbc = 0u;
+
+    s_ctbl->cfis[0] = 0x27u;
+    s_ctbl->cfis[1] = 0x80u;
+    s_ctbl->cfis[2] = ATA_CMD_PACKET;
+    s_ctbl->cfis[3] = 0x01u;
+    s_ctbl->cfis[5] = 0x08u;
+    s_ctbl->cfis[6] = 0x00u;
+    s_ctbl->cfis[7] = 0xA0u;
+
+    s_ctbl->acmd[0] = 0x25u;
+
+    s_ctbl->prdt[0].dba  = (uint32_t)s_dma_phys;
+    s_ctbl->prdt[0].dbau = (uint32_t)(s_dma_phys >> 32);
+    s_ctbl->prdt[0].dbc  = (8u - 1u) | (1u << 31);
+
+    __sync_synchronize();
+    port_wr(g_port, P_CI, 1u);
+
+    for (uint32_t t = 10000000u; t; --t) {
+        uint32_t ci = port_rd(g_port, P_CI);
+        uint32_t is = port_rd(g_port, P_IS);
+        if (is & (1u << 30)) {
+            port_wr(g_port, P_IS, is);
+            return false;
+        }
+        if ((ci & 1u) == 0u) {
+            __sync_synchronize();
+            port_wr(g_port, P_IS, is);
+            if (s_clb[0].prdbc < 8u) {
+                return false;
+            }
+            uint32_t last_lba = ahci_read_be32(s_dma);
+            uint32_t block_size = ahci_read_be32(s_dma + 4);
+            if (total_bytes_out != NULL && block_size != 0u) {
+                *total_bytes_out = ((uint64_t)last_lba + 1ULL) * (uint64_t)block_size;
+            }
+            return block_size != 0u;
+        }
+    }
+    return false;
+}
+
+bool ahci_read(uint64_t lba_512, uint8_t *buffer, uint32_t sectors_512) {
     if (!buffer || sectors_512 == 0) return false;
 
     if (!g_atapi) {
@@ -305,11 +466,12 @@ bool ahci_read(uint32_t lba_512, uint8_t *buffer, uint32_t sectors_512) {
     }
 
     for (uint32_t s = 0; s < sectors_512; ++s) {
-        uint32_t byte_off     = (lba_512 + s) * 512u;
-        uint32_t block_2048   = byte_off / 2048u;
-        uint32_t off_in_block = byte_off % 2048u;
+        uint64_t byte_off = (lba_512 + s) * 512u;
+        uint64_t block_2048 = byte_off / 2048u;
+        uint32_t off_in_block = (uint32_t)(byte_off % 2048u);
 
-        if (!atapi_read_one(block_2048)) return false;
+        if (block_2048 > UINT32_MAX ||
+            !atapi_read_one((uint32_t)block_2048)) return false;
 
         memcpy(buffer + s * 512u, s_dma + off_in_block, 512u);
     }
@@ -318,7 +480,7 @@ bool ahci_read(uint32_t lba_512, uint8_t *buffer, uint32_t sectors_512) {
     return true;
 }
 
-bool ahci_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors) {
+bool ahci_write(uint64_t lba, const uint8_t *buffer, uint32_t sectors) {
     if (!buffer || sectors == 0) return false;
     if (g_atapi) return false;
 
@@ -332,6 +494,36 @@ bool ahci_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors) {
     }
     g_working = true;
     return true;
+}
+
+bool ahci_flush(void) {
+    if (!g_working || g_atapi || !s_ctbl || !s_clb) return false;
+    for (uint32_t t = 1000000u; t; --t) {
+        uint32_t tfd = port_rd(g_port, P_TFD);
+        if ((tfd & (0x80u | 0x08u)) == 0u) break;
+        if (t == 1u) return false;
+    }
+    memset(s_ctbl, 0, sizeof(*s_ctbl));
+    s_clb[0].flags = 5u;
+    s_clb[0].prdtl = 0u;
+    s_clb[0].prdbc = 0u;
+    s_ctbl->cfis[0] = 0x27u;
+    s_ctbl->cfis[1] = 0x80u;
+    s_ctbl->cfis[2] = ATA_CMD_FLUSH_CACHE_EXT;
+    port_wr(g_port, P_IS, port_rd(g_port, P_IS));
+    port_wr(g_port, P_CI, 1u);
+    for (uint32_t t = 10000000u; t; --t) {
+        uint32_t is = port_rd(g_port, P_IS);
+        if ((is & (1u << 30u)) != 0u) {
+            port_wr(g_port, P_IS, is);
+            return false;
+        }
+        if ((port_rd(g_port, P_CI) & 1u) == 0u) {
+            port_wr(g_port, P_IS, is);
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ahci_is_working(void) { return g_working; }
@@ -405,6 +597,9 @@ bool ahci_init(uint64_t partition_lba) {
                 void *abar = map_mmio_virt((uint64_t)bar5);
                 if (abar == NULL) continue;
                 g_abar = (uintptr_t)abar;
+                g_controller_bus = (uint8_t)bus;
+                g_controller_device = dev;
+                g_controller_function = func;
 
                 
                 hba_wr(AHCI_GHC, hba_rd(AHCI_GHC) | (1u << 31));
@@ -429,12 +624,14 @@ bool ahci_init(uint64_t partition_lba) {
                     uint32_t sig = port_rd(p, P_SIG);
                     if (sig == SATA_SIG) {
                         g_atapi = false;
+                        uint64_t total_bytes = 0;
+                        (void)sata_identify_device(&total_bytes);
                         if (!sata_dma_rw(0u, 1u, false)) {
                             port_stop(p);
                             g_port = -1;
                             continue;
                         }
-                        ahci_add_device(p, false, 0);
+                        ahci_add_device(p, false, total_bytes);
                         continue;
                     }
 
@@ -445,13 +642,15 @@ bool ahci_init(uint64_t partition_lba) {
                     }
 
                     g_atapi = true;
+                    uint64_t total_bytes = 0;
+                    (void)atapi_read_capacity(&total_bytes);
                     if (!atapi_read_one(0u)) {
                         port_stop(p);
                         g_port = -1;
                         g_atapi = false;
                         continue;
                     }
-                    ahci_add_device(p, true, 0);
+                    ahci_add_device(p, true, total_bytes);
                     continue;
                 }
 

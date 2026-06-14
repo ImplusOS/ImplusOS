@@ -75,7 +75,17 @@ typedef struct {
     uint8_t  in_use;
     uint8_t  accept_pending;
     int32_t  parent_conn_id;  
+    uint16_t listen_backlog;
 } tcp_connection_t;
+
+typedef struct {
+    uint32_t local_ip;
+    uint32_t remote_ip;
+    uint16_t local_port;
+    uint16_t remote_port;
+    tcp_state_t state;
+    uint16_t receive_available;
+} tcp_connection_info_t;
 
 
 typedef void (*tcp_accept_callback_t)(int32_t conn_id);
@@ -84,9 +94,11 @@ void tcp_init(void);
 
 
 int32_t tcp_connect(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port);
+int tcp_local_port_in_use(uint16_t local_port);
 
 
 int32_t tcp_listen(uint16_t port);
+int tcp_set_listen_backlog(int32_t conn_id, uint16_t backlog);
 
 
 int32_t tcp_accept(int32_t listen_conn_id);
@@ -102,6 +114,8 @@ int32_t tcp_close(int32_t conn_id);
 
 
 tcp_state_t tcp_get_state(int32_t conn_id);
+int tcp_get_connection_info(int32_t conn_id, tcp_connection_info_t *info_out);
+uint32_t tcp_poll(int32_t conn_id, uint32_t events);
 
 
 void tcp_process_timer(void);

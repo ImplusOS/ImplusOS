@@ -1,0 +1,11 @@
+# Display name|ELF path|fallback badge
+Terminal|/Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF|TE
+Files|/Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF|FI
+Editor|/Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF|ED
+Processes|/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF|PR
+Implus Store|/Userland/UserApps/com_ImplusOS_ImplusStore/com_ImplusOS_ImplusStore.ELF|ST
+Network|/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF|NW
+Virtual Machine|/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF|VM
+Example|/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF|EX
+Settings|/Userland/UserApps/com_ImplusOS_settings/com_ImplusOS_settings.ELF|SE
+System Info|/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF|IN

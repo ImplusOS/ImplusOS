@@ -44,11 +44,30 @@
 
 #define WM_SET_THEME            90
 #define WM_RELOAD_BACKGROUND    91
+#define WM_GET_CAPABILITIES     92
+
+#define WM_GET_BACKING_STORE   100
+#define WM_BACKING_STORE_READY 101
+#define WM_DAMAGE              102
+#define WM_BEGIN_TRANSACTION   103
+#define WM_END_TRANSACTION     104
+#define WM_SET_CURSOR          110
+#define WM_SET_WINDOW_ICON_PATH 111
 
 
 #define WM_STATUS_OK             0
 #define WM_STATUS_INVALID_ARG  (-22)
 #define WM_STATUS_NOT_FOUND    (-2)
+#define WM_STATUS_DENIED       (-13)
+#define WM_STATUS_TOO_LARGE    (-7)
+#define WM_STATUS_UNSUPPORTED  (-95)
+
+#define WM_CAP_SERVER_SURFACE   (1u << 0)
+#define WM_CAP_DAMAGE_REGIONS   (1u << 1)
+#define WM_CAP_TRANSACTIONS     (1u << 2)
+#define WM_CAP_THEME_ENGINE     (1u << 3)
+#define WM_CAP_NOTIFICATIONS    (1u << 4)
+#define WM_CAP_SHARED_SURFACE   (1u << 5)
 
 
 typedef struct {
@@ -56,3 +75,12 @@ typedef struct {
     uint32_t request_id;
     uint32_t window_id;
 } wm_msg_header_t;
+
+typedef struct {
+    wm_msg_header_t header;
+    int32_t status;
+    int32_t shared_memory_handle;
+    uint32_t width;
+    uint32_t height;
+    uint32_t size_bytes;
+} wm_backing_store_response_t;

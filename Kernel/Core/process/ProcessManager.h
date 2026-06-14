@@ -45,12 +45,26 @@ int32_t process_create_user_ex(uint64_t entry,
                                uint64_t arg2,
                                uint64_t arg3,
                                uint64_t arg4);
+int32_t process_create_thread(uint64_t entry,
+                              uint64_t arg1,
+                              uint64_t arg2,
+                              uint64_t arg3,
+                              uint64_t arg4);
 int32_t process_spawn_user_elf(const char *path);
+int32_t process_spawn_user_elf_with_arg(const char *path,
+                                        const char *launch_argument);
+int32_t process_copy_launch_argument(char *out, uint32_t capacity);
 void process_exit_current_with_status(int32_t exit_status);
 void process_exit_current(void);
+void process_thread_exit_current(int32_t exit_status);
 int32_t process_get_current_pid(void);
+int32_t process_get_current_tid(void);
+int process_thread_join(int32_t tid);
+int process_thread_detach(int32_t tid);
 void process_set_current_fs_base(uint64_t fs_base);
 uint64_t process_get_current_fs_base(void);
+int process_set_clear_child_tid(uint64_t address);
+int process_set_robust_list(uint64_t head, uint64_t length);
 uint64_t process_get_current_saved_rsp(void);
 uint64_t process_get_current_user_rsp(void);
 uint64_t process_get_current_cr3(void);
@@ -64,7 +78,11 @@ int process_user_cstring_length(const char *str, uint64_t max_len, uint64_t *len
 void *process_user_alloc(uint32_t size);
 int process_user_free(void *ptr);
 void *process_user_mmap(uint64_t length, uint64_t flags);
+int process_user_munmap(void *ptr, uint64_t length);
 uint64_t process_signal_set_handler(int32_t signum, uint64_t handler);
+uint64_t process_signal_get_handler(int32_t signum);
+uint64_t process_signal_get_mask(void);
+int process_signal_set_mask(uint64_t mask);
 int process_signal_deliver(int32_t pid, int32_t signum);
 int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options);
 int32_t process_getppid(void);
@@ -79,6 +97,8 @@ void process_on_timer_tick(void);
 int  process_timeslice_expired(void);
 int32_t current_pid_get(void);
 int process_is_alive(int32_t pid);
+int process_block_current(void);
+int process_wake_pid(int32_t pid);
 int32_t process_terminate(int32_t pid);
 int32_t process_get_full_info(int32_t pid, void *info_out);
 int32_t process_get_capacity(void);

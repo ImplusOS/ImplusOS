@@ -1,22 +1,7 @@
-ARCH ?= x86_64
-
-ifeq ($(ARCH),arm64)
-    CC := aarch64-elf-gcc
-    CXX := aarch64-elf-g++
-    LD := aarch64-elf-ld
-    AR := aarch64-elf-ar
-    ARCH_CFLAGS := -mstrict-align -mno-outline-atomics
-else
-    CC := x86_64-elf-gcc
-    CXX := x86_64-elf-g++
-    LD := x86_64-elf-ld
-    AR := x86_64-elf-ar
-    ARCH_CFLAGS := -mcmodel=large -mno-red-zone
-endif
-
 APP_NAME := com_ImplusOS_procman
 SRC_DIR  := .
-BUILD_DIR := ../../../../Build/Userland/UserApps/$(APP_NAME)
+TOP_BUILD_DIR ?= ../../../../Build/$(ARCH)
+BUILD_DIR := $(TOP_BUILD_DIR)/Userland/UserApps/$(APP_NAME)
 ELF      := $(BUILD_DIR)/$(APP_NAME).ELF
 
 APP_SRC := $(shell find $(SRC_DIR) -name '*.c')
@@ -48,4 +33,4 @@ $(ELF): $(OBJS)
 clean:
 	rm -rf $(BUILD_DIR)
 
--include $(APP_OBJS:.o=.d)
+-include $(APP_OBJS:.o=.d) $(COMMON_DEPS)

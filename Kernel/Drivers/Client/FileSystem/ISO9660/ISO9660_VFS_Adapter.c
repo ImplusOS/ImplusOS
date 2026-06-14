@@ -13,7 +13,7 @@ static bool iso9660_vfs_find_file(const char *path, vfs_file_t *out_file) {
         free(iso_file);
         return false;
     }
-    
+
     out_file->internal_id = (uint64_t)iso_file;
     out_file->size = iso_file->size;
     out_file->driver_data = iso_file;

@@ -13,3 +13,5 @@
 #include "API/Time.h"
 #include "API/KVM.h"
 #include "API/SystemInfo.h"
+#include "API/Audio.h"
+#include "API/Socket.h"

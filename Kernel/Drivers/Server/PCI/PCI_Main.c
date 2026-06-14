@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define PCI_MAX_SCANNED_DEVICES 128u
+#define PCI_MAX_REGISTERED_DRIVERS 32u
+
 #ifdef IMPLUS_DRIVER_MODULE
 #include "Drivers/Module/DriverBinary.h"
 #else
@@ -87,6 +90,12 @@ static volatile uint32_t *arm64_pci_config_addr(uint8_t bus,
 static spinlock_t g_pci_lock = {0};
 #endif
 
+static pci_device_t g_pci_devices[PCI_MAX_SCANNED_DEVICES];
+static uint32_t g_pci_device_count = 0;
+static pci_bus_driver_t *g_pci_drivers[PCI_MAX_REGISTERED_DRIVERS];
+static uint32_t g_pci_driver_count = 0;
+static uint8_t g_pci_scan_done = 0;
+
 uint32_t pci_read_config(uint8_t bus, uint8_t device, uint8_t func, uint8_t offset)
 {
 #if defined(__aarch64__)
@@ -151,6 +160,168 @@ static void pci_read_bars(pci_device_t *dev)
     }
 }
 
+bool pci_get_bar_info(uint8_t bus,
+                      uint8_t device,
+                      uint8_t func,
+                      uint8_t bar_index,
+                      pci_bar_info_t *out_bar)
+{
+    if (out_bar == NULL || bar_index >= 6u) {
+        return false;
+    }
+
+    uint8_t offset = (uint8_t)(0x10u + bar_index * 4u);
+    uint32_t original_low = pci_read_config(bus, device, func, offset);
+    if (original_low == 0u || original_low == 0xFFFFFFFFu) {
+        return false;
+    }
+
+    out_bar->is_io = (original_low & 1u) != 0u;
+    out_bar->is_64bit = false;
+    out_bar->prefetchable = false;
+    out_bar->address = 0u;
+    out_bar->size = 0u;
+
+    uint32_t original_high = 0u;
+    if (out_bar->is_io) {
+        out_bar->address = (uint64_t)(original_low & ~0x3u);
+    } else {
+        uint32_t type = (original_low >> 1u) & 0x3u;
+        out_bar->prefetchable = (original_low & 0x8u) != 0u;
+        out_bar->is_64bit = type == 0x2u;
+        if (out_bar->is_64bit) {
+            if (bar_index >= 5u) {
+                return false;
+            }
+            original_high = pci_read_config(bus, device, func,
+                                            (uint8_t)(offset + 4u));
+            out_bar->address = ((uint64_t)original_high << 32u) |
+                               (uint64_t)(original_low & ~0xFu);
+        } else {
+            out_bar->address = (uint64_t)(original_low & ~0xFu);
+        }
+    }
+
+    uint32_t command = pci_read_config(bus, device, func, 0x04u);
+    pci_write_config(bus, device, func, 0x04u, command & ~0x3u);
+    pci_write_config(bus, device, func, offset, 0xFFFFFFFFu);
+    uint32_t size_low = pci_read_config(bus, device, func, offset);
+    uint32_t size_high = 0u;
+    if (out_bar->is_64bit) {
+        pci_write_config(bus, device, func, (uint8_t)(offset + 4u),
+                         0xFFFFFFFFu);
+        size_high = pci_read_config(bus, device, func,
+                                    (uint8_t)(offset + 4u));
+    }
+    pci_write_config(bus, device, func, offset, original_low);
+    if (out_bar->is_64bit) {
+        pci_write_config(bus, device, func, (uint8_t)(offset + 4u),
+                         original_high);
+    }
+    pci_write_config(bus, device, func, 0x04u, command);
+
+    if (out_bar->is_io) {
+        uint32_t mask = size_low & ~0x3u;
+        if (mask != 0u) {
+            out_bar->size = (uint64_t)(~mask + 1u);
+        }
+    } else if (out_bar->is_64bit) {
+        uint64_t mask = ((uint64_t)size_high << 32u) |
+                        (uint64_t)(size_low & ~0xFu);
+        if (mask != 0u) {
+            out_bar->size = ~mask + 1u;
+        }
+    } else {
+        uint32_t mask = size_low & ~0xFu;
+        if (mask != 0u) {
+            out_bar->size = (uint64_t)(~mask + 1u);
+        }
+    }
+    return out_bar->address != 0u;
+}
+
+int32_t pci_find_capability(uint8_t bus,
+                            uint8_t device,
+                            uint8_t func,
+                            uint8_t capability_id)
+{
+    uint32_t status_command = pci_read_config(bus, device, func, 0x04u);
+    if ((status_command & (1u << 20u)) == 0u) {
+        return -1;
+    }
+
+    uint8_t offset =
+        (uint8_t)(pci_read_config(bus, device, func, 0x34u) & 0xFCu);
+    for (uint32_t guard = 0u; offset >= 0x40u && guard < 64u; ++guard) {
+        uint32_t header = pci_read_config(bus, device, func,
+                                          (uint8_t)(offset & 0xFCu));
+        if ((uint8_t)(header & 0xFFu) == capability_id) {
+            return (int32_t)offset;
+        }
+        offset = (uint8_t)((header >> 8u) & 0xFCu);
+    }
+    return -1;
+}
+
+static uint32_t pci_device_class_key(const pci_device_t *dev)
+{
+    return ((uint32_t)dev->class_code << 16) |
+           ((uint32_t)dev->subclass << 8) |
+           (uint32_t)dev->prog_if;
+}
+
+static bool pci_id_matches(const pci_device_id_t *id, const pci_device_t *dev)
+{
+    if (id == NULL || dev == NULL) {
+        return false;
+    }
+    if (id->vendor_id != PCI_ANY_ID && id->vendor_id != dev->vendor_id) {
+        return false;
+    }
+    if (id->device_id != PCI_ANY_ID && id->device_id != dev->device_id) {
+        return false;
+    }
+    if (id->class_code != PCI_ANY_CLASS &&
+        id->class_code != pci_device_class_key(dev) &&
+        id->class_code != (uint32_t)dev->class_code) {
+        return false;
+    }
+    return true;
+}
+
+static void pci_probe_device_with_driver(const pci_device_t *dev, pci_bus_driver_t *driver)
+{
+    if (dev == NULL || driver == NULL ||
+        driver->id_table == NULL || driver->probe == NULL) {
+        return;
+    }
+
+    for (const pci_device_id_t *id = driver->id_table;
+         id->vendor_id != 0u || id->device_id != 0u || id->class_code != 0u;
+         ++id) {
+        if (pci_id_matches(id, dev)) {
+            (void)driver->probe(dev);
+            break;
+        }
+    }
+}
+
+static void pci_probe_device(const pci_device_t *dev)
+{
+    for (uint32_t i = 0; i < g_pci_driver_count; ++i) {
+        pci_probe_device_with_driver(dev, g_pci_drivers[i]);
+    }
+}
+
+static void pci_store_device(const pci_device_t *dev)
+{
+    if (dev == NULL || g_pci_device_count >= PCI_MAX_SCANNED_DEVICES) {
+        return;
+    }
+    g_pci_devices[g_pci_device_count++] = *dev;
+    pci_probe_device(dev);
+}
+
 int pci_find_device(uint16_t vendor_id, uint16_t device_id, pci_device_t *out_device)
 {
     if (out_device == NULL) {
@@ -181,6 +352,12 @@ int pci_find_device(uint16_t vendor_id, uint16_t device_id, pci_device_t *out_de
                     out_device->class_code = (uint8_t)((class_reg >> 24) & 0xFFu);
                     out_device->subclass = (uint8_t)((class_reg >> 16) & 0xFFu);
                     out_device->prog_if = (uint8_t)((class_reg >> 8) & 0xFFu);
+                    out_device->revision = (uint8_t)(class_reg & 0xFFu);
+                    uint32_t irq_reg = pci_read_config((uint8_t)bus, device,
+                                                       func, 0x3Cu);
+                    out_device->interrupt_line = (uint8_t)(irq_reg & 0xFFu);
+                    out_device->interrupt_pin =
+                        (uint8_t)((irq_reg >> 8u) & 0xFFu);
                     pci_read_bars(out_device);
                     return 1;
                 }
@@ -200,6 +377,11 @@ int pci_find_device(uint16_t vendor_id, uint16_t device_id, pci_device_t *out_de
 
 void pci_scan_bus(void)
 {
+    if (g_pci_scan_done != 0u) {
+        return;
+    }
+
+    g_pci_device_count = 0;
     for (uint16_t bus = 0; bus < 256; bus++) {
         for (uint8_t device = 0; device < 32; device++) {
             for (uint8_t func = 0; func < 8; func++) {
@@ -228,7 +410,13 @@ void pci_scan_bus(void)
                 dev.class_code = class_code;
                 dev.subclass = subclass;
                 dev.prog_if = prog_if;
+                dev.revision = (uint8_t)(class_reg & 0xFFu);
+                uint32_t irq_reg = pci_read_config((uint8_t)bus, device,
+                                                   func, 0x3Cu);
+                dev.interrupt_line = (uint8_t)(irq_reg & 0xFFu);
+                dev.interrupt_pin = (uint8_t)((irq_reg >> 8u) & 0xFFu);
                 pci_read_bars(&dev);
+                pci_store_device(&dev);
 
                 if (func == 0u) {
                     uint32_t header_type = pci_read_config((uint8_t)bus, device, func, 0x0C);
@@ -239,6 +427,47 @@ void pci_scan_bus(void)
             }
         }
     }
+    g_pci_scan_done = 1u;
+}
+
+uint32_t pci_get_device_count(void)
+{
+    if (g_pci_scan_done == 0u) {
+        pci_scan_bus();
+    }
+    return g_pci_device_count;
+}
+
+const pci_device_t *pci_get_device(uint32_t index)
+{
+    if (g_pci_scan_done == 0u) {
+        pci_scan_bus();
+    }
+    if (index >= g_pci_device_count) {
+        return NULL;
+    }
+    return &g_pci_devices[index];
+}
+
+int pci_register_driver(pci_bus_driver_t *driver)
+{
+    if (driver == NULL || driver->id_table == NULL || driver->probe == NULL) {
+        return -1;
+    }
+    if (g_pci_driver_count >= PCI_MAX_REGISTERED_DRIVERS) {
+        return -1;
+    }
+
+    g_pci_drivers[g_pci_driver_count++] = driver;
+    if (g_pci_scan_done == 0u) {
+        pci_scan_bus();
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < g_pci_device_count; ++i) {
+        pci_probe_device_with_driver(&g_pci_devices[i], driver);
+    }
+    return 0;
 }
 
 #ifdef IMPLUS_DRIVER_MODULE
@@ -248,6 +477,10 @@ static const pci_driver_t g_pci_driver = {
     .scan_bus = pci_scan_bus,
     .find_device = pci_find_device,
     .read_bar = pci_read_bar,
+    .get_device_count = pci_get_device_count,
+    .get_device = pci_get_device,
+    .get_bar_info = pci_get_bar_info,
+    .find_capability = pci_find_capability,
 };
 
 static void pci_driver_shutdown(void)

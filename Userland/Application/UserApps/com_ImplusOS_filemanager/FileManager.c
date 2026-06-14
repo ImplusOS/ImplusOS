@@ -13,6 +13,8 @@
 #define FM_MAX_PATH      512
 #define FM_STATUS_LEN    128
 #define FM_ENTRY_HEIGHT  24
+#define FM_ASSOC_FILE    "/Userland/file-associations.conf"
+#define FM_EDITOR_PATH   "/Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF"
 
 typedef struct {
     char    name[FM_MAX_NAME_LEN];
@@ -32,6 +34,11 @@ static int  g_selected = 0;
 static int  g_scroll_top = 0;
 static int  g_visible_rows = 0;
 static int  g_refresh_failed = 0;
+static int  g_rename_active = 0;
+static char g_rename_buffer[FM_MAX_NAME_LEN];
+static int  g_rename_length = 0;
+
+static void fm_refresh(void);
 
 #define COLOR_BG        0xFF0F1720
 #define COLOR_HEADER    0xFF162330
@@ -76,28 +83,23 @@ static int fm_name_compare(const char *a, const char *b)
     return (int)(unsigned char)fm_ascii_lower(*a) - (int)(unsigned char)fm_ascii_lower(*b);
 }
 
-static void fm_swap_entries(int a, int b)
+static int fm_entry_compare(const void *left, const void *right)
 {
-    fm_entry_t tmp = g_entries[a];
-    g_entries[a] = g_entries[b];
-    g_entries[b] = tmp;
+    const fm_entry_t *a = (const fm_entry_t *)left;
+    const fm_entry_t *b = (const fm_entry_t *)right;
+    if (a->is_dir != b->is_dir) {
+        return a->is_dir ? -1 : 1;
+    }
+    return fm_name_compare(a->name, b->name);
 }
 
 static void fm_sort_entries(int start_index)
 {
-    for (int i = start_index; i < g_entry_count - 1; ++i) {
-        for (int j = i + 1; j < g_entry_count; ++j) {
-            int should_swap = 0;
-            if (g_entries[i].is_dir != g_entries[j].is_dir) {
-                should_swap = g_entries[i].is_dir < g_entries[j].is_dir;
-            } else if (fm_name_compare(g_entries[i].name, g_entries[j].name) > 0) {
-                should_swap = 1;
-            }
-            if (should_swap) {
-                fm_swap_entries(i, j);
-            }
-        }
-    }
+    if (start_index < 0) start_index = 0;
+    if (start_index >= g_entry_count - 1) return;
+    size_t count = (size_t)(g_entry_count - start_index);
+    qsort(&g_entries[start_index], count, sizeof(g_entries[0]),
+          fm_entry_compare);
 }
 
 static void fm_join_path(const char *base, const char *name, char *out, int out_len)
@@ -112,6 +114,177 @@ static void fm_join_path(const char *base, const char *name, char *out, int out_
     } else {
         snprintf(out, (size_t)out_len, "%s/%s", base, name);
     }
+}
+
+static int fm_copy_file(const char *source_path, const char *destination_path)
+{
+    int32_t source = file_open(source_path, 0);
+    if (source < 0) return -1;
+    int32_t destination = file_creat(destination_path);
+    if (destination < 0) {
+        file_close(source);
+        return -1;
+    }
+    char buffer[4096];
+    int result = 0;
+    for (;;) {
+        int64_t count = file_read(source, buffer, sizeof(buffer));
+        if (count < 0) {
+            result = -1;
+            break;
+        }
+        if (count == 0) break;
+        int64_t written = 0;
+        while (written < count) {
+            int64_t chunk = file_write(destination, buffer + written,
+                                       (uint64_t)(count - written));
+            if (chunk <= 0) {
+                result = -1;
+                break;
+            }
+            written += chunk;
+        }
+        if (result < 0) break;
+    }
+    file_close(source);
+    file_close(destination);
+    if (result < 0) file_unlink(destination_path);
+    return result;
+}
+
+static const char *fm_extension(const char *name)
+{
+    const char *dot = strrchr(name, '.');
+    return dot && dot[1] ? dot + 1 : "";
+}
+
+static int fm_find_association(const char *name, char *path, size_t path_size)
+{
+    const char *extension = fm_extension(name);
+    int32_t fd = file_open(FM_ASSOC_FILE, 0);
+    if (fd >= 0) {
+        char buffer[16385];
+        int64_t count = file_read(fd, buffer, sizeof(buffer) - 1u);
+        file_close(fd);
+        if (count > 0) {
+            buffer[count] = '\0';
+            char *line = buffer;
+            while (*line) {
+                char *end = strchr(line, '\n');
+                if (end) *end = '\0';
+                char *separator = strchr(line, '=');
+                if (separator) {
+                    *separator = '\0';
+                    if (strcasecmp(line, extension) == 0 &&
+                        separator[1] == '/') {
+                        strlcpy(path, separator + 1, path_size);
+                        return path[0] ? 0 : -1;
+                    }
+                }
+                if (!end) break;
+                line = end + 1;
+            }
+        }
+    }
+    if (strcasecmp(extension, "txt") == 0 ||
+        strcasecmp(extension, "md") == 0 ||
+        strcasecmp(extension, "log") == 0 ||
+        strcasecmp(extension, "conf") == 0 ||
+        strcasecmp(extension, "c") == 0 ||
+        strcasecmp(extension, "h") == 0) {
+        strlcpy(path, FM_EDITOR_PATH, path_size);
+        return 0;
+    }
+    return -1;
+}
+
+static void fm_open_selected_file(const fm_entry_t *entry)
+{
+    char full_path[FM_MAX_PATH];
+    char app_path[FM_MAX_PATH];
+    fm_join_path(g_cwd, entry->name, full_path, FM_MAX_PATH);
+    if (fm_find_association(entry->name, app_path, sizeof(app_path)) < 0) {
+        fm_set_status("No application is associated with this file type.");
+        return;
+    }
+    int32_t pid = process_spawn_with_arg(app_path, full_path);
+    if (pid < 0) {
+        fm_set_status("The associated application could not be started.");
+        return;
+    }
+    char status[FM_STATUS_LEN];
+    snprintf(status, sizeof(status), "Opened %s", entry->name);
+    fm_set_status(status);
+}
+
+static void fm_copy_selected(const fm_entry_t *entry)
+{
+    if (!entry || entry->is_dir) {
+        fm_set_status("Folder copying is not supported.");
+        return;
+    }
+    char source[FM_MAX_PATH];
+    char destination[FM_MAX_PATH];
+    char copy_name[FM_MAX_NAME_LEN];
+    fm_join_path(g_cwd, entry->name, source, FM_MAX_PATH);
+    for (unsigned suffix = 1u; suffix < 1000u; ++suffix) {
+        snprintf(copy_name, sizeof(copy_name), "%s.copy%u", entry->name,
+                 suffix);
+        fm_join_path(g_cwd, copy_name, destination, FM_MAX_PATH);
+        file_stat_t stat;
+        if (file_stat(destination, &stat) < 0 || !stat.exists) break;
+    }
+    if (fm_copy_file(source, destination) < 0) {
+        fm_set_status("Copy failed.");
+        return;
+    }
+    fm_refresh();
+    fm_set_status("File copied.");
+}
+
+static void fm_delete_selected(const fm_entry_t *entry)
+{
+    if (!entry || entry->is_dir) {
+        fm_set_status("Only regular files can be deleted.");
+        return;
+    }
+    char path[FM_MAX_PATH];
+    fm_join_path(g_cwd, entry->name, path, FM_MAX_PATH);
+    if (file_unlink(path) < 0) {
+        fm_set_status("Delete failed.");
+        return;
+    }
+    fm_refresh();
+    fm_set_status("File deleted.");
+}
+
+static void fm_begin_rename(const fm_entry_t *entry)
+{
+    if (!entry || strcmp(entry->name, "..") == 0) return;
+    strlcpy(g_rename_buffer, entry->name, sizeof(g_rename_buffer));
+    g_rename_length = (int)strlen(g_rename_buffer);
+    g_rename_active = 1;
+}
+
+static void fm_finish_rename(void)
+{
+    if (g_selected < 0 || g_selected >= g_entry_count ||
+        g_rename_length == 0 || strchr(g_rename_buffer, '/')) {
+        g_rename_active = 0;
+        fm_set_status("Invalid file name.");
+        return;
+    }
+    char old_path[FM_MAX_PATH];
+    char new_path[FM_MAX_PATH];
+    fm_join_path(g_cwd, g_entries[g_selected].name, old_path, FM_MAX_PATH);
+    fm_join_path(g_cwd, g_rename_buffer, new_path, FM_MAX_PATH);
+    g_rename_active = 0;
+    if (file_rename(old_path, new_path) < 0) {
+        fm_set_status("Rename failed.");
+        return;
+    }
+    fm_refresh();
+    fm_set_status("Item renamed.");
 }
 
 static void fm_refresh(void)
@@ -305,10 +478,18 @@ static void fm_render(void)
         draw_fill_rect((uint32_t)(g_win_w - 4), thumb_y, 4, thumb_h, COLOR_ACCENT);
     }
 
-    window_draw_text(g_win, 12, (uint32_t)(g_win_h - footer_h + 6), g_status, g_refresh_failed ? COLOR_WARN : COLOR_DIM, 12.0f);
-    window_draw_text(g_win, 12, (uint32_t)(g_win_h - footer_h + 22), "Enter: open folder   Backspace: up   R: refresh   Q: quit", COLOR_DIM, 12.0f);
+    if (g_rename_active) {
+        char prompt[FM_STATUS_LEN];
+        snprintf(prompt, sizeof(prompt), "Rename to: %s", g_rename_buffer);
+        window_draw_text(g_win, 12, (uint32_t)(g_win_h - footer_h + 6),
+                         prompt, COLOR_TEXT, 12.0f);
+        window_draw_text(g_win, 12, (uint32_t)(g_win_h - footer_h + 22),
+                         "Enter: apply   Esc: cancel", COLOR_DIM, 12.0f);
+    } else {
+        window_draw_text(g_win, 12, (uint32_t)(g_win_h - footer_h + 6), g_status, g_refresh_failed ? COLOR_WARN : COLOR_DIM, 12.0f);
+        window_draw_text(g_win, 12, (uint32_t)(g_win_h - footer_h + 22), "Enter: open  C: copy  D: delete  N: rename  R: refresh", COLOR_DIM, 12.0f);
+    }
 
-    draw_present();
 }
 
 static void fm_ensure_visible(void)
@@ -347,6 +528,24 @@ void _start(void)
                 continue;
             }
 
+            if (g_rename_active) {
+                if (kbd.ascii == '\n' || kbd.keycode == 0x1C) {
+                    fm_finish_rename();
+                } else if (kbd.keycode == 0x01) {
+                    g_rename_active = 0;
+                    fm_set_status("Rename cancelled.");
+                } else if (kbd.ascii == '\b' || kbd.keycode == 0x0E) {
+                    if (g_rename_length > 0)
+                        g_rename_buffer[--g_rename_length] = '\0';
+                } else if (kbd.ascii >= 0x20 && kbd.ascii <= 0x7Eu &&
+                           g_rename_length < FM_MAX_NAME_LEN - 1) {
+                    g_rename_buffer[g_rename_length++] = (char)kbd.ascii;
+                    g_rename_buffer[g_rename_length] = '\0';
+                }
+                fm_render();
+                continue;
+            }
+
             if (kbd.keycode == 0x48) {
                 if (g_selected > 0) g_selected--;
                 fm_ensure_visible();
@@ -364,13 +563,7 @@ void _start(void)
                         fm_enter_dir(e->name);
                         fm_render();
                     } else {
-                        char full_path[FM_MAX_PATH];
-                        fm_join_path(g_cwd, e->name, full_path, FM_MAX_PATH);
-                        {
-                            char status[FM_STATUS_LEN];
-                            snprintf(status, sizeof(status), "Selected file: %s", full_path);
-                            fm_set_status(status);
-                        }
+                        fm_open_selected_file(e);
                         fm_render();
                     }
                 }
@@ -383,6 +576,24 @@ void _start(void)
 
             else if (kbd.ascii == 'r' || kbd.ascii == 'R') {
                 fm_refresh();
+                fm_render();
+            }
+
+            else if (kbd.ascii == 'c' || kbd.ascii == 'C') {
+                if (g_selected >= 0 && g_selected < g_entry_count)
+                    fm_copy_selected(&g_entries[g_selected]);
+                fm_render();
+            }
+
+            else if (kbd.ascii == 'd' || kbd.ascii == 'D') {
+                if (g_selected >= 0 && g_selected < g_entry_count)
+                    fm_delete_selected(&g_entries[g_selected]);
+                fm_render();
+            }
+
+            else if (kbd.ascii == 'n' || kbd.ascii == 'N') {
+                if (g_selected >= 0 && g_selected < g_entry_count)
+                    fm_begin_rename(&g_entries[g_selected]);
                 fm_render();
             }
             

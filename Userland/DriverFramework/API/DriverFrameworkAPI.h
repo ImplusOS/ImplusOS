@@ -15,9 +15,11 @@ extern "C" {
 
 #define DRIVER_FRAMEWORK_API_VERSION 1u
 #define DRIVER_FRAMEWORK_IPC_MAGIC 0x44524150u
+
 #define DRIVER_FRAMEWORK_KERNEL_ENDPOINT_PID (-4096)
 #define DRIVER_FRAMEWORK_INLINE_DATA_SIZE 192u
 #define DRIVER_FRAMEWORK_PENDING_MESSAGE_MAX 8u
+#define DRIVER_FRAMEWORK_CALL_TIMEOUT_MS 5000u
 
 typedef enum {
     DRIVER_FRAMEWORK_OP_INVALID = 0,
@@ -57,6 +59,12 @@ typedef struct {
     uint64_t value3;
     uint8_t data[DRIVER_FRAMEWORK_INLINE_DATA_SIZE];
 } driver_framework_ipc_message_t;
+
+typedef struct {
+    uint8_t offset;
+    uint8_t reserved[3];
+    uint32_t value;
+} driver_framework_pci_write_request_t;
 
 typedef char driver_framework_ipc_message_size_must_be_256[
     sizeof(driver_framework_ipc_message_t) == DRIVER_FRAMEWORK_IPC_MAX_SIZE ? 1 : -1

@@ -436,9 +436,6 @@ int32_t udp_user_recv(int32_t owner_pid,
     if (out_buf == NULL || out_buf_len < UDP_USER_HEADER_BYTES) {
         return -1;
     }
-    if (!process_user_buffer_is_valid(out_buf, out_buf_len)) {
-        return -1;
-    }
 
     uint32_t src_ip = 0u;
     uint16_t src_port = 0u;

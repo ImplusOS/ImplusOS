@@ -5,12 +5,13 @@ SHELL := /bin/bash
 export MTOOLSRC := /dev/null
 
 .PHONY: all kernel app_build driver_build driver_stage recovery_build install_payload \
-        image run_uefi_usb run_uefi_cdrom clean \
+        image run_uefi_usb run_uefi_cdrom qemu_disks clean \
         edk2_bootloader edk2_bootmanager
 
-ARCH ?= arm64
+ARCH ?= x86_64
 
-BUILD_DIR := Build
+BUILD_ROOT ?= Build
+BUILD_DIR ?= $(BUILD_ROOT)/$(ARCH)
 IMAGE_DIR := Image
 IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH).iso
 
@@ -58,7 +59,7 @@ INSTALL_DISK_IMAGE   := $(INSTALL_PAYLOAD_DIR)/ImplusOS-install.img
 INSTALL_MANIFEST     := $(INSTALL_PAYLOAD_DIR)/MANIFEST.txt
 
 IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
-ESP_IMAGE       := $(IMAGE_DIR)/esp.img
+ESP_IMAGE       := $(IMAGE_DIR)/esp-$(ARCH).img
 
 BOOT_RESOURCE_DIR := $(firstword $(wildcard BootManager/Resource))
 ifeq ($(BOOT_RESOURCE_DIR),)
@@ -97,7 +98,7 @@ endef
 
 DRIVER_MAKEFILES := $(shell find Kernel/Drivers/Server -name Makefile -print 2>/dev/null | sort)
 DRIVER_DIRS      := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
-DRIVER_BUILD_ROOT := $(BUILD_DIR)/Modules
+DRIVER_BUILD_ROOT := $(BUILD_ROOT)/Modules
 DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
 
 SHARELIB_C_SRCS := $(shell find ShareLib -name "*.c" 2>/dev/null)
@@ -194,7 +195,11 @@ app_build: $(USERLAND_INIT_OBJS)
 		Userland/Application/UserApps/com_ImplusOS_procman \
 		Userland/Application/UserApps/com_ImplusOS_settings \
 		Userland/Application/UserApps/com_ImplusOS_vm; do \
-			$(MAKE) -C $$dir ARCH=$(ARCH); \
+			$(MAKE) -C $$dir \
+				ARCH=$(ARCH) \
+				CROSS_COMPILE=$(CROSS_COMPILE) \
+				TOP_BUILD_DIR="$(abspath $(BUILD_DIR))" \
+				USERLAND_ARCH_CFLAGS="$(USERLAND_ARCH_CFLAGS)"; \
 		done
 
 recovery_build: $(RECOVERY_INIT_ELF)
@@ -235,7 +240,8 @@ $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 
 $(BUILD_DIR)/RecoveryEnviroment/%.o: $(RECOVERY_DIR)/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(USERLAND_CFLAGS) -IUserland -IUserland/API -c $< -o $@
+	$(CC) $(USERLAND_CFLAGS) $(if $(filter 1,$(RECOVERY_AUDIO_TEST)),-DRECOVERY_AUDIO_TEST) \
+		-IUserland -IUserland/API -c $< -o $@
 
 $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	@mkdir -p $(dir $@)
@@ -250,8 +256,9 @@ driver_build:
 driver_stage: driver_build
 	@mkdir -p $(DRIVER_STAGE_DIR)
 	@find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -delete
-	@if [ -d $(DRIVER_BUILD_ROOT) ]; then \
-		find $(DRIVER_BUILD_ROOT) -type f -name '*.ELF' -exec cp {} $(DRIVER_STAGE_DIR)/ \; ; \
+	@if [ -d $(DRIVER_BUILD_ROOT)/$(ARCH) ]; then \
+		find $(DRIVER_BUILD_ROOT)/$(ARCH) -type f -name '*.ELF' \
+			-exec cp {} $(DRIVER_STAGE_DIR)/ \; ; \
 	fi
 
 install_payload: all
@@ -350,17 +357,27 @@ image: install_payload recovery_build
 	@xorriso -as mkisofs \
 		-R \
 		-J \
+		-iso-level 3 \
 		-V IMPLUSOS \
-		-eltorito-alt-boot \
 		-e esp.img \
 		-no-emul-boot \
-		-append_partition 2 0xef $(ESP_IMAGE) \
-		-isohybrid-gpt-basdat \
 		-o $(IMAGE) \
 		$(IMAGE_STAGE_DIR)
 
+ifeq ($(ARCH),arm64)
+QEMU_MACHINE := virt
+else
+QEMU_MACHINE := pc
+endif
+
+QEMU_DISPLAY ?= cocoa
+QEMU_EXTRA ?=
+QEMU_DISK_SIZE ?= 128M
+QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
+QEMU_SYSTEM_X86_64 ?= qemu-system-x86_64
+
 QEMU_COMMON := \
-	-machine virt \
+	-machine $(QEMU_MACHINE) \
 	-cpu max \
 	-smp 1 \
 	-m 4G \
@@ -369,20 +386,25 @@ QEMU_COMMON := \
 	-device usb-mouse,bus=xhci.0 \
 	-device ahci,id=ahci \
 	-drive if=none,id=disk0,file=disk1.qcow2,format=qcow2 \
-	-device ide-hd,drive=disk0,bus=ahci.0 \
+	-device ide-hd,bus=ahci.0,drive=disk0,serial=disk1 \
 	-drive if=none,id=disk1,file=disk2.qcow2,format=qcow2 \
-	-device ide-hd,drive=disk1,bus=ahci.1 \
+	-device ide-hd,bus=ahci.1,drive=disk1,serial=disk2 \
 	-serial stdio \
-	-display cocoa \
-	-device virtio-gpu-pci \
-	-device ramfb
+	-nic user,model=virtio-net-pci \
+	$(QEMU_EXTRA)
 	
 QEMU_USB := \
 	-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick
 
 QEMU_DISK := \
-    -drive file=$(IMAGE),media=cdrom,format=raw,index=0
+	-drive file=$(IMAGE),media=cdrom,format=raw,index=0,readonly=on \
+	-drive if=none,id=cdrom0,file=$(IMAGE),media=cdrom,format=raw \
+	-device ide-cd,drive=cdrom0,bus=ahci.2
+
+qemu_disks:
+	@[ -f disk1.qcow2 ] || qemu-img create -f qcow2 disk1.qcow2 $(QEMU_DISK_SIZE)
+	@[ -f disk2.qcow2 ] || qemu-img create -f qcow2 disk2.qcow2 $(QEMU_DISK_SIZE)
 
 run_uefi_usb:
 	@if [ "$(ARCH)" = "arm64" ]; then \

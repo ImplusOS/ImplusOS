@@ -12,6 +12,6 @@ typedef struct {
 } arm64_exception_frame_t;
 
 void arm64_exception_init(void);
-void arm64_exception_dispatch(arm64_exception_frame_t *frame, uint64_t type);
+arm64_exception_frame_t *arm64_exception_dispatch(arm64_exception_frame_t *frame, uint64_t type);
 void arm64_exception_vector_table(void);
-
+void arm64_enter_user_from_frame(uint64_t saved_frame);

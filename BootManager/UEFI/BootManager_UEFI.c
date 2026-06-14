@@ -6,6 +6,7 @@
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/BlockIo.h>
 #include <Protocol/DevicePath.h>
+#include <Protocol/PciIo.h>
 #include <Library/DevicePathLib.h>
 #include <Guid/FileInfo.h>
 #include "../BootManager_libc/include/string.h"
@@ -270,13 +271,40 @@ static UINTN DevicePathNodeLengthLocal(const EFI_DEVICE_PATH_PROTOCOL *Node) {
     return (UINTN)Node->Length[0] | ((UINTN)Node->Length[1] << 8);
 }
 
-static BOOLEAN DevicePathIsPrefixOf(
+static BOOLEAN DevicePathNodeIsBootStorageEndpoint(
+    EFI_DEVICE_PATH_PROTOCOL *Node
+) {
+    if (!Node || IsDevicePathEnd(Node)) return FALSE;
+
+    if (DevicePathType(Node) == MEDIA_DEVICE_PATH) {
+        return TRUE;
+    }
+
+    if (DevicePathType(Node) != MESSAGING_DEVICE_PATH) {
+        return FALSE;
+    }
+
+    UINT8 SubType = DevicePathSubType(Node);
+
+    return (SubType == 1  ||
+            SubType == 2  ||
+            SubType == 5  ||
+            SubType == 15 ||
+            SubType == MSG_SATA_DP ||
+            SubType == MSG_NVME_NAMESPACE_DP ||
+            SubType == 25 ||
+            SubType == 26 ||
+            SubType == 29);
+}
+
+static BOOLEAN DevicePathIsSpecificBootDevicePrefixOf(
     EFI_DEVICE_PATH_PROTOCOL *Prefix,
     EFI_DEVICE_PATH_PROTOCOL *Path
 ) {
     if (!Prefix || !Path) return FALSE;
 
     BOOLEAN SawNode = FALSE;
+    BOOLEAN SawStorageEndpoint = FALSE;
 
     while (!IsDevicePathEnd(Prefix)) {
         if (IsDevicePathEnd(Path)) return FALSE;
@@ -285,14 +313,23 @@ static BOOLEAN DevicePathIsPrefixOf(
         UINTN PathLen   = DevicePathNodeLengthLocal(Path);
         if (PrefixLen < sizeof(EFI_DEVICE_PATH_PROTOCOL) ||
             PrefixLen != PathLen) return FALSE;
+
         SawNode = TRUE;
         if (memcmp(Prefix, Path, PrefixLen) != 0) return FALSE;
+
+        if (DevicePathNodeIsBootStorageEndpoint(Prefix)) {
+            SawStorageEndpoint = TRUE;
+        }
 
         Prefix = NextDevicePathNode(Prefix);
         Path   = NextDevicePathNode(Path);
     }
 
-    return SawNode;
+    if (!SawNode) return FALSE;
+    
+    if (IsDevicePathEnd(Path)) return TRUE;
+    if (SawStorageEndpoint) return TRUE;
+    return (DevicePathType(Path) == MEDIA_DEVICE_PATH);
 }
 
 static BOOLEAN HandlesReferToSameBootDevice(
@@ -316,8 +353,8 @@ static BOOLEAN HandlesReferToSameBootDevice(
         BootDeviceHandle, &gEfiDevicePathProtocolGuid, (VOID **)&BootPath);
     if (EFI_ERROR(Status) || !BootPath) return FALSE;
 
-    return DevicePathIsPrefixOf(CandidatePath, BootPath) ||
-           DevicePathIsPrefixOf(BootPath, CandidatePath);
+    return DevicePathIsSpecificBootDevicePrefixOf(CandidatePath, BootPath) ||
+           DevicePathIsSpecificBootDevicePrefixOf(BootPath, CandidatePath);
 }
 
 static BOOTLOADER_HANDOFF *FindBootloaderHandoff(EFI_SYSTEM_TABLE *ST) {
@@ -427,10 +464,97 @@ static uint32_t GetDriveTypeFromDevicePath(EFI_DEVICE_PATH_PROTOCOL *DevicePath)
                 DriveType = BOOT_DRIVE_TYPE_IDE;
             else if (DevicePathSubType(Node) == 18)
                 DriveType = BOOT_DRIVE_TYPE_AHCI;
+            else if (DevicePathSubType(Node) == MSG_NVME_NAMESPACE_DP)
+                DriveType = BOOT_DRIVE_TYPE_NVME;
         }
         Node = NextDevicePathNode(Node);
     }
     return DriveType;
+}
+
+static void CaptureBootStorageIdentity(
+    EFI_HANDLE DeviceHandle,
+    EFI_SYSTEM_TABLE *ST,
+    EFI_DEVICE_PATH_PROTOCOL *DevicePath,
+    BOOT_INFO *BootInfo)
+{
+    if (!ST || !BootInfo || !DevicePath) return;
+
+    BootInfo->BootStorageIdentityVersion = BOOT_STORAGE_IDENTITY_VERSION;
+    BootInfo->BootStorageIdentityFlags = 0;
+    BootInfo->BootStorageTransport =
+        (uint8_t)GetDriveTypeFromDevicePath(DevicePath);
+    BootInfo->BootStoragePort = 0xFFFFu;
+    BootInfo->BootStorageNamespace = 0;
+
+    EFI_DEVICE_PATH_PROTOCOL *Node = DevicePath;
+    while (!IsDevicePathEnd(Node)) {
+        if (DevicePathType(Node) == MESSAGING_DEVICE_PATH &&
+            DevicePathSubType(Node) == MSG_SATA_DP) {
+            SATA_DEVICE_PATH *Sata = (SATA_DEVICE_PATH *)Node;
+            BootInfo->BootStorageTransport = BOOT_DRIVE_TYPE_AHCI;
+            BootInfo->BootStoragePort = Sata->HBAPortNumber;
+        } else if (DevicePathType(Node) == MESSAGING_DEVICE_PATH &&
+                   DevicePathSubType(Node) == MSG_NVME_NAMESPACE_DP) {
+            NVME_NAMESPACE_DEVICE_PATH *Nvme =
+                (NVME_NAMESPACE_DEVICE_PATH *)Node;
+            BootInfo->BootStorageTransport = BOOT_DRIVE_TYPE_NVME;
+            BootInfo->BootStorageNamespace = Nvme->NamespaceId;
+        }
+        Node = NextDevicePathNode(Node);
+    }
+    if (BootInfo->BootStorageTransport != BOOT_DRIVE_TYPE_UNKNOWN) {
+        BootInfo->BootDriveType = BootInfo->BootStorageTransport;
+    }
+
+    EFI_DEVICE_PATH_PROTOCOL *Remaining = DevicePath;
+    EFI_HANDLE PciHandle = DeviceHandle;
+    EFI_STATUS Status = uefi_call_wrapper(
+        ST->BootServices->LocateDevicePath, 3,
+        &gEfiPciIoProtocolGuid, &Remaining, &PciHandle);
+    if (EFI_ERROR(Status)) return;
+
+    EFI_PCI_IO_PROTOCOL *PciIo = NULL;
+    Status = uefi_call_wrapper(
+        ST->BootServices->HandleProtocol, 3,
+        PciHandle, &gEfiPciIoProtocolGuid, (VOID **)&PciIo);
+    if (EFI_ERROR(Status) || !PciIo) return;
+
+    UINTN Segment = 0;
+    UINTN Bus = 0;
+    UINTN Device = 0;
+    UINTN Function = 0;
+    Status = uefi_call_wrapper(
+        PciIo->GetLocation, 5, PciIo,
+        &Segment, &Bus, &Device, &Function);
+    if (EFI_ERROR(Status)) return;
+
+    BootInfo->BootStoragePciSegment = (uint16_t)Segment;
+    BootInfo->BootStoragePciBus = (uint8_t)Bus;
+    BootInfo->BootStoragePciDevice = (uint8_t)Device;
+    BootInfo->BootStoragePciFunction = (uint8_t)Function;
+    BootInfo->BootStorageIdentityFlags |= BOOT_STORAGE_FLAG_PCI_VALID;
+
+    UINT16 Ids[2] = { 0xFFFFu, 0xFFFFu };
+    Status = uefi_call_wrapper(
+        PciIo->Pci.Read, 5, PciIo, EfiPciIoWidthUint16, 0, 2, Ids);
+    if (!EFI_ERROR(Status) && Ids[0] == 0x1AF4u &&
+        (Ids[1] == 0x1042u || Ids[1] == 0x1001u)) {
+        BootInfo->BootStorageTransport = BOOT_DRIVE_TYPE_VIRTIO;
+        BootInfo->BootDriveType = BOOT_DRIVE_TYPE_VIRTIO;
+    }
+}
+
+static UINT64 FinishBootStorageIdentity(
+    EFI_HANDLE DeviceHandle,
+    EFI_SYSTEM_TABLE *ST,
+    EFI_DEVICE_PATH_PROTOCOL *DevicePath,
+    BOOT_INFO *BootInfo,
+    UINT64 PartitionStart)
+{
+    CaptureBootStorageIdentity(DeviceHandle, ST, DevicePath, BootInfo);
+    BootInfo->BootStoragePartitionLBA = PartitionStart;
+    return PartitionStart;
 }
 
 static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST, BOOT_INFO *BootInfo) {
@@ -448,7 +572,9 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
         while (!IsDevicePathEnd(Node)) {
             if (DevicePathType(Node) == 4 && DevicePathSubType(Node) == 1) {
                 HARDDRIVE_DEVICE_PATH *HD = (HARDDRIVE_DEVICE_PATH *)Node;
-                return HD->PartitionStart;
+                return FinishBootStorageIdentity(
+                    DeviceHandle, ST, DevicePath, BootInfo,
+                    HD->PartitionStart);
             }
             Node = NextDevicePathNode(Node);
         }
@@ -469,9 +595,11 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
             if (!Bio || Bio->Media->LogicalPartition || Bio->Media->LastBlock < 200) continue;
             UINT64 Lba = ParseElToritoCatalog(Bio, ST);
             if (Lba) {
+                EFI_HANDLE FoundHandle = Handles[i];
                 BootInfo->BootDriveType = GetDriveTypeFromDevicePath(DevicePath);
                 uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
-                return Lba;
+                return FinishBootStorageIdentity(
+                    FoundHandle, ST, DevicePath, BootInfo, Lba);
             }
         }
 
@@ -485,11 +613,13 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
             UINT64 Lba = ParseElToritoCatalog(Bio, ST);
             if (Lba) {
                 EFI_DEVICE_PATH_PROTOCOL *DP = NULL;
+                EFI_HANDLE FoundHandle = Handles[i];
                 uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
                     Handles[i], &gEfiDevicePathProtocolGuid, (VOID **)&DP);
                 BootInfo->BootDriveType = GetDriveTypeFromDevicePath(DP);
                 uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
-                return Lba;
+                return FinishBootStorageIdentity(
+                    FoundHandle, ST, DP, BootInfo, Lba);
             }
         }
 
@@ -506,9 +636,12 @@ static UINT64 GetPartitionStartLBA(EFI_HANDLE DeviceHandle, EFI_SYSTEM_TABLE *ST
             while (!IsDevicePathEnd(Node)) {
                 if (DevicePathType(Node) == 4 && DevicePathSubType(Node) == 1) {
                     HARDDRIVE_DEVICE_PATH *HD = (HARDDRIVE_DEVICE_PATH *)Node;
+                    EFI_HANDLE FoundHandle = Handles[i];
+                    UINT64 PartitionStart = HD->PartitionStart;
                     BootInfo->BootDriveType = GetDriveTypeFromDevicePath(DP);
                     uefi_call_wrapper(ST->BootServices->FreePool, 1, Handles);
-                    return HD->PartitionStart;
+                    return FinishBootStorageIdentity(
+                        FoundHandle, ST, DP, BootInfo, PartitionStart);
                 }
                 Node = NextDevicePathNode(Node);
             }
@@ -559,6 +692,8 @@ static EFI_STATUS LoadFromISO(
     VOID            **Buffer,
     UINTN            *Size
 ) {
+    if (!BootDeviceHandle) return EFI_NOT_FOUND;
+
     UINTN       Count   = 0;
     EFI_HANDLE *Handles = NULL;
     EFI_STATUS  Status  = uefi_call_wrapper(ST->BootServices->LocateHandleBuffer, 5,
@@ -687,6 +822,8 @@ static EFI_STATUS PreloadDriversFromISO(
     EFI_HANDLE        BootDeviceHandle,
     BOOT_INFO        *BootInfo
 ) {
+    if (!BootDeviceHandle || !BootInfo) return EFI_NOT_FOUND;
+
     UINTN       Count   = 0;
     EFI_HANDLE *Handles = NULL;
     EFI_STATUS  Status  = uefi_call_wrapper(ST->BootServices->LocateHandleBuffer, 5,
@@ -1462,15 +1599,19 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
 
     BOOT_INFO BootInfo = {0};
     BOOTLOADER_HANDOFF *Handoff = FindBootloaderHandoff(ST);
+    EFI_HANDLE BootManagerDeviceHandle = NULL;
 
     EFI_STATUS Status = uefi_call_wrapper(
         ST->BootServices->HandleProtocol, 3,
         ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&LoadedImage);
     if (EFI_ERROR(Status) || !LoadedImage) return Status;
 
-    if (LoadedImage->DeviceHandle) {
+    BootManagerDeviceHandle = LoadedImage->DeviceHandle;
+    if (!BootManagerDeviceHandle) return EFI_NOT_FOUND;
+
+    {
         Status = uefi_call_wrapper(ST->BootServices->HandleProtocol, 3,
-            LoadedImage->DeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
+            BootManagerDeviceHandle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
         if (!EFI_ERROR(Status) && Fs) {
             uefi_call_wrapper(Fs->OpenVolume, 2, Fs, &Root);
         }
@@ -1501,7 +1642,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
             }
         }
         if (!loaded) {
-            if (!EFI_ERROR(LoadFromISO(ST, LoadedImage->DeviceHandle,
+            if (!EFI_ERROR(LoadFromISO(ST, BootManagerDeviceHandle,
                     "BootManager/Resource/Images/BootLogo.bmp",
                     &BmpBuf, &BmpSize)))
                 loaded = TRUE;
@@ -1528,7 +1669,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
         }
 
         if (!loaded) {
-            LoadFromISO(ST, LoadedImage->DeviceHandle,
+            LoadFromISO(ST, BootManagerDeviceHandle,
                 "BootManager/Resource/Fonts/NotoSansJP-Regular.ttf",
                 &FontBuffer, &FontSize);
         }
@@ -1555,16 +1696,20 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     BootInfo.VerticalResolution   = Gop->Mode->Info->VerticalResolution;
     BootInfo.PixelsPerScanLine    = Gop->Mode->Info->PixelsPerScanLine;
     
-    if (Handoff) {
-        BootInfo.PartitionStartLBA = Handoff->PartitionStartLBA;
-        BootInfo.BootDriveType     = Handoff->BootDriveType;
+    BootInfo.PartitionStartLBA = GetPartitionStartLBA(
+        BootManagerDeviceHandle, ST, &BootInfo);
+    DiscoverAcpiRsdp(ST, &BootInfo);
+
+    if (Handoff && BootInfo.AcpiRsdpAddress == 0 && Handoff->AcpiRsdpAddress != 0) {
         BootInfo.AcpiRsdpAddress   = Handoff->AcpiRsdpAddress;
         BootInfo.AcpiRsdpSize      = Handoff->AcpiRsdpSize;
         BootInfo.AcpiRsdpRevision  = Handoff->AcpiRsdpRevision;
-    } else {
-        BootInfo.PartitionStartLBA = GetPartitionStartLBA(LoadedImage->DeviceHandle, ST, &BootInfo);
-        DiscoverAcpiRsdp(ST, &BootInfo);
     }
+
+    CaptureBootStorageIdentity(
+        BootManagerDeviceHandle, ST, DevicePathFromHandle(
+            BootManagerDeviceHandle), &BootInfo);
+    BootInfo.BootStoragePartitionLBA = BootInfo.PartitionStartLBA;
 
     if (BootInfo.BootDriveType == BOOT_DRIVE_TYPE_UNKNOWN &&
         BootInfo.PartitionStartLBA != 0) {
@@ -1588,7 +1733,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
         uefi_call_wrapper(KernelFile->Close, 1, KernelFile);
     } else {
         KernelRoot = NULL;
-        Status = LoadFromISO(ST, LoadedImage->DeviceHandle,
+        Status = LoadFromISO(ST, BootManagerDeviceHandle,
             "Kernel/Kernel_Main.ELF", &KernelBuffer, &KernelSize);
         if (!EFI_ERROR(Status)) {
             BootInfo.PartitionStartLBA = 0;
@@ -1606,7 +1751,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     if (KernelRoot) {
         Status = PreloadDriverModules(ST, KernelRoot, &BootInfo);
     } else {
-        Status = PreloadDriversFromISO(ST, LoadedImage->DeviceHandle, &BootInfo);
+        Status = PreloadDriversFromISO(ST, BootManagerDeviceHandle, &BootInfo);
     }
 
     Status = ExitBootServicesComplete(ImageHandle, ST, &BootInfo);

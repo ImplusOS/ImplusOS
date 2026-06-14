@@ -12,10 +12,56 @@ extern int32_t socket_create (int32_t type);
 extern int32_t socket_connect(int32_t sockfd, uint32_t ip, uint16_t port);
 extern int32_t socket_bind   (int32_t sockfd, uint16_t port);
 extern int32_t socket_listen (int32_t sockfd);
+extern int32_t socket_listen_with_backlog(int32_t sockfd, int32_t backlog);
 extern int32_t socket_accept (int32_t sockfd);
 extern int32_t socket_send   (int32_t sockfd, const void *data, uint32_t len);
 extern int32_t socket_recv   (int32_t sockfd, void *buf, uint32_t buf_len);
 extern int32_t socket_close  (int32_t sockfd);
+extern int32_t socket_set_option(int32_t sockfd, int32_t level,
+                                 int32_t option, int32_t value);
+extern int32_t socket_get_option(int32_t sockfd, int32_t level,
+                                 int32_t option, int32_t *value_out);
+extern int32_t socket_shutdown(int32_t sockfd, int32_t how);
+extern void sleep_ms(uint64_t milliseconds);
+extern uint64_t get_uptime_ms(void);
+
+typedef struct {
+    uint32_t local_ip;
+    uint32_t remote_ip;
+    uint16_t local_port;
+    uint16_t remote_port;
+    uint32_t state;
+    int32_t error;
+} socket_info_t;
+
+extern int32_t socket_get_info(int32_t sockfd, socket_info_t *info_out);
+
+static int socket_address(int sockfd, int peer,
+                          struct sockaddr *addr, socklen_t *addrlen)
+{
+    if (!addr || !addrlen || *addrlen < sizeof(struct sockaddr_in)) {
+        errno = EINVAL;
+        return -1;
+    }
+    socket_info_t info;
+    int32_t result = socket_get_info((int32_t)sockfd, &info);
+    if (result < 0) {
+        posix_set_errno_from_status(result);
+        return -1;
+    }
+    if (peer && info.remote_port == 0u) {
+        errno = ENOTCONN;
+        return -1;
+    }
+    struct sockaddr_in value;
+    memset(&value, 0, sizeof(value));
+    value.sin_family = AF_INET;
+    value.sin_addr.s_addr = posix_htonl(peer ? info.remote_ip : info.local_ip);
+    value.sin_port = posix_htons(peer ? info.remote_port : info.local_port);
+    memcpy(addr, &value, sizeof(value));
+    *addrlen = (socklen_t)sizeof(value);
+    return 0;
+}
 
 uint16_t posix_htons(uint16_t h)
 {
@@ -105,12 +151,11 @@ char *posix_inet_ntoa(struct in_addr in)
 
 int posix_socket(int domain, int type, int protocol)
 {
-    (void)protocol;
     if (domain != AF_INET) {
         errno = EAFNOSUPPORT;
         return -1;
     }
-    if (type != SOCK_STREAM && type != SOCK_DGRAM) {
+    if (type != SOCK_STREAM || (protocol != 0 && protocol != IPPROTO_TCP)) {
         errno = EPROTONOSUPPORT;
         return -1;
     }
@@ -128,8 +173,7 @@ int posix_socket(int domain, int type, int protocol)
 
 int posix_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    (void)addrlen;
-    if (!addr) {
+    if (!addr || addrlen < sizeof(struct sockaddr_in)) {
         errno = EINVAL;
         return -1;
     }
@@ -152,8 +196,7 @@ int posix_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 
 int posix_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    (void)addrlen;
-    if (!addr) {
+    if (!addr || addrlen < sizeof(struct sockaddr_in)) {
         errno = EINVAL;
         return -1;
     }
@@ -169,6 +212,20 @@ int posix_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
         posix_set_errno_from_status((int64_t)r);
         return -1;
     }
+    uint64_t deadline = get_uptime_ms() + 10000u;
+    for (;;) {
+        socket_info_t info;
+        if (socket_get_info(sockfd, &info) < 0) {
+            errno = EIO;
+            return -1;
+        }
+        if (info.state == 4u) break;
+        if (info.state == 0u || get_uptime_ms() >= deadline) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        sleep_ms(1u);
+    }
     os_errno = 0;
     return 0;
 }
@@ -177,8 +234,11 @@ int posix_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 
 int posix_listen(int sockfd, int backlog)
 {
-    (void)backlog;
-    int32_t r = socket_listen((int32_t)sockfd);
+    if (backlog < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    int32_t r = socket_listen_with_backlog((int32_t)sockfd, backlog);
     if (r < 0) {
         posix_set_errno_from_status((int64_t)r);
         return -1;
@@ -191,17 +251,19 @@ int posix_listen(int sockfd, int backlog)
 
 int posix_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
-     
-    if (addr && addrlen && *addrlen >= sizeof(struct sockaddr_in)) {
-        memset(addr, 0, sizeof(struct sockaddr_in));
-        *addrlen = sizeof(struct sockaddr_in);
-    }
     int32_t fd = socket_accept((int32_t)sockfd);
     if (fd < 0) {
         posix_set_errno_from_status((int64_t)fd);
         return -1;
     }
     posix_fd_open((int)fd, POSIX_FD_TYPE_SOCKET, 0);
+    if (addr != NULL || addrlen != NULL) {
+        if (socket_address(fd, 1, addr, addrlen) < 0) {
+            (void)socket_close(fd);
+            posix_fd_close(fd);
+            return -1;
+        }
+    }
     os_errno = 0;
     return (int)fd;
 }
@@ -210,7 +272,10 @@ int posix_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 
 ssize_t posix_send(int sockfd, const void *buf, size_t len, int flags)
 {
-    (void)flags;
+    if ((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
     if (!buf) {
         errno = EINVAL;
         return -1;
@@ -228,12 +293,25 @@ ssize_t posix_send(int sockfd, const void *buf, size_t len, int flags)
 
 ssize_t posix_recv(int sockfd, void *buf, size_t len, int flags)
 {
-    (void)flags;
+    if ((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
     if (!buf) {
         errno = EINVAL;
         return -1;
     }
-    int32_t r = socket_recv((int32_t)sockfd, buf, (uint32_t)len);
+    int32_t r;
+    for (;;) {
+        r = socket_recv((int32_t)sockfd, buf, (uint32_t)len);
+        if (r != 0 || (flags & MSG_DONTWAIT) != 0) break;
+        socket_info_t info;
+        if (socket_get_info(sockfd, &info) < 0 ||
+            (info.state != 4u && info.state != 5u && info.state != 6u)) {
+            break;
+        }
+        sleep_ms(1u);
+    }
     if (r < 0) {
         posix_set_errno_from_status((int64_t)r);
         return -1;
@@ -247,21 +325,11 @@ ssize_t posix_recv(int sockfd, void *buf, size_t len, int flags)
 ssize_t posix_sendto(int sockfd, const void *buf, size_t len, int flags,
                      const struct sockaddr *dest_addr, socklen_t addrlen)
 {
-    (void)flags;
-    (void)addrlen;
-    if (!buf) {
-        errno = EINVAL;
+    if (dest_addr != NULL || addrlen != 0u) {
+        errno = EISCONN;
         return -1;
     }
-     
-    posix_fd_entry_t *e = posix_fd_entry(sockfd);
-    if (e && e->type == POSIX_FD_TYPE_SOCKET) {
-        if (dest_addr) {
-             
-            posix_connect(sockfd, dest_addr, addrlen);
-        }
-    }
-    return posix_send(sockfd, buf, len, 0);
+    return posix_send(sockfd, buf, len, flags);
 }
 
  
@@ -269,25 +337,27 @@ ssize_t posix_sendto(int sockfd, const void *buf, size_t len, int flags,
 ssize_t posix_recvfrom(int sockfd, void *buf, size_t len, int flags,
                        struct sockaddr *src_addr, socklen_t *addrlen)
 {
-    (void)flags;
-    if (src_addr && addrlen) {
-        memset(src_addr, 0, *addrlen);
+    ssize_t received = posix_recv(sockfd, buf, len, flags);
+    if (received >= 0 && (src_addr != NULL || addrlen != NULL) &&
+        socket_address(sockfd, 1, src_addr, addrlen) < 0) {
+        return -1;
     }
-    return posix_recv(sockfd, buf, len, 0);
+    return received;
 }
 
  
 
 int posix_shutdown(int sockfd, int how)
 {
-    (void)how;
-     
-    int32_t r = socket_close((int32_t)sockfd);
+    if (how < SHUT_RD || how > SHUT_RDWR) {
+        errno = EINVAL;
+        return -1;
+    }
+    int32_t r = socket_shutdown((int32_t)sockfd, how);
     if (r < 0) {
         posix_set_errno_from_status((int64_t)r);
         return -1;
     }
-    posix_fd_close(sockfd);
     os_errno = 0;
     return 0;
 }
@@ -311,8 +381,16 @@ int posix_closesocket(int sockfd)
 int posix_setsockopt(int sockfd, int level, int optname,
                      const void *optval, socklen_t optlen)
 {
-    (void)sockfd; (void)level; (void)optname; (void)optval; (void)optlen;
-     
+    if (!optval || optlen < (socklen_t)sizeof(int)) {
+        errno = EINVAL;
+        return -1;
+    }
+    int32_t result = socket_set_option(sockfd, level, optname,
+                                       *(const int *)optval);
+    if (result < 0) {
+        posix_set_errno_from_status(result);
+        return -1;
+    }
     os_errno = 0;
     return 0;
 }
@@ -322,38 +400,31 @@ int posix_setsockopt(int sockfd, int level, int optname,
 int posix_getsockopt(int sockfd, int level, int optname,
                      void *optval, socklen_t *optlen)
 {
-    (void)sockfd; (void)level;
-    if (optname == SO_ERROR && optval &&
-        optlen && *optlen >= (socklen_t)sizeof(int))
-    {
-        *(int *)optval = 0;
-        *optlen = (socklen_t)sizeof(int);
-        os_errno = 0;
-        return 0;
-    }
-    errno = ENOTSUP;
-    return -1;
-}
-
- 
-
-int posix_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
-{
-    (void)sockfd;
-    if (!addr || !addrlen || *addrlen < sizeof(struct sockaddr_in)) {
+    if (!optval || !optlen || *optlen < (socklen_t)sizeof(int)) {
         errno = EINVAL;
         return -1;
     }
-    memset(addr, 0, sizeof(struct sockaddr_in));
-    ((struct sockaddr_in *)addr)->sin_family  = AF_INET;
-    *addrlen = sizeof(struct sockaddr_in);
+    int32_t result = socket_get_option(sockfd, level, optname,
+                                       (int32_t *)optval);
+    if (result < 0) {
+        posix_set_errno_from_status(result);
+        return -1;
+    }
+    *optlen = (socklen_t)sizeof(int);
     os_errno = 0;
     return 0;
 }
 
  
 
+int posix_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+    return socket_address(sockfd, 0, addr, addrlen);
+}
+
+ 
+
 int posix_getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
-    return posix_getsockname(sockfd, addr, addrlen);
+    return socket_address(sockfd, 1, addr, addrlen);
 }

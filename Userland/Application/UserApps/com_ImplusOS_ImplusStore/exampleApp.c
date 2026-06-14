@@ -52,7 +52,6 @@ static void render(void)
 
     draw_fill_rect(0, 376, 620, 44, 0xFF172633);
     window_draw_text(g_win, 16, 392, g_status, 0xFFFFD38A, 12.0f);
-    draw_present();
 }
 
 void exampleApp_main(void)

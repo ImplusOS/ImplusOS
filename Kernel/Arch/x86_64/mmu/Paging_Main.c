@@ -228,7 +228,7 @@ static uint64_t *resolve_pd_table(uint64_t cr3, uint64_t pdpt_index)
     if (space->pd_tables[pdpt_index] == NULL &&
         (space->pdpt[pdpt_index] & PAGE_PRESENT) != 0) {
         space->pd_tables[pdpt_index] =
-            (uint64_t *)(uintptr_t)(space->pdpt[pdpt_index] & PAGE_MASK);
+            (uint64_t *)(uintptr_t)(space->pdpt[pdpt_index] & PAGE_FRAME_MASK);
     }
     return space->pd_tables[pdpt_index];
 }
@@ -241,19 +241,19 @@ static int resolve_user_page_entry(uint64_t cr3,
         return -1;
     }
 
-    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_MASK);
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_FRAME_MASK);
     uint64_t pml4e = pml4[PML4_INDEX(virt_addr)];
     if ((pml4e & PAGE_PRESENT) == 0 || (pml4e & PAGE_USER) == 0) {
         return -1;
     }
 
-    uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_MASK);
+    uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_FRAME_MASK);
     uint64_t pdpte = pdpt[PDPT_INDEX(virt_addr)];
     if ((pdpte & PAGE_PRESENT) == 0 || (pdpte & PAGE_USER) == 0) {
         return -1;
     }
 
-    uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_MASK);
+    uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_FRAME_MASK);
     uint64_t pde = pd[PD_INDEX(virt_addr)];
     if ((pde & PAGE_PRESENT) == 0 || (pde & PAGE_USER) == 0) {
         return -1;
@@ -264,7 +264,7 @@ static int resolve_user_page_entry(uint64_t cr3,
         return 0;
     }
 
-    uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_MASK);
+    uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_FRAME_MASK);
     uint64_t *pte = &pt[PT_INDEX(virt_addr)];
     if ((*pte & PAGE_PRESENT) == 0) {
         if (((*pte & PAGE_SWAP) == 0) || ((*pte & PAGE_USER) == 0)) {
@@ -307,7 +307,7 @@ static int split_huge_page(uint64_t *pd, uint64_t pd_index)
         return -1;
     }
 
-    uint64_t phys_base = pde & ~(MB2 - 1ULL);
+    uint64_t phys_base = pde & PAGE_FRAME_MASK & ~(MB2 - 1ULL);
 
     uint64_t inherit = pde & (PAGE_RW | PAGE_USER |
                               (1ULL << 3) |
@@ -332,19 +332,19 @@ static int resolve_user_pte_slot(uint64_t cr3,
         return -1;
     }
 
-    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_MASK);
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_FRAME_MASK);
     uint64_t pml4e = pml4[PML4_INDEX(virt_addr)];
     if ((pml4e & PAGE_PRESENT) == 0 || (pml4e & PAGE_USER) == 0) {
         return -1;
     }
 
-    uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_MASK);
+    uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_FRAME_MASK);
     uint64_t pdpte = pdpt[PDPT_INDEX(virt_addr)];
     if ((pdpte & PAGE_PRESENT) == 0 || (pdpte & PAGE_USER) == 0) {
         return -1;
     }
 
-    uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_MASK);
+    uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_FRAME_MASK);
     uint64_t pde = pd[PD_INDEX(virt_addr)];
     if ((pde & PAGE_PRESENT) == 0) {
         return -1;
@@ -359,7 +359,7 @@ static int resolve_user_pte_slot(uint64_t cr3,
         return 0;
     }
 
-    uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_MASK);
+    uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_FRAME_MASK);
     *pte_out = &pt[PT_INDEX(virt_addr)];
     return 0;
 }
@@ -383,19 +383,19 @@ static int resolve_fault_leaf_entry(uint64_t cr3,
         return -1;
     }
 
-    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_MASK);
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_FRAME_MASK);
     uint64_t *pml4e = &pml4[PML4_INDEX(virt_addr)];
     if ((*pml4e & PAGE_PRESENT) == 0) {
         return -1;
     }
 
-    uint64_t *pdpt = (uint64_t *)(uintptr_t)(*pml4e & PAGE_MASK);
+    uint64_t *pdpt = (uint64_t *)(uintptr_t)(*pml4e & PAGE_FRAME_MASK);
     uint64_t *pdpte = &pdpt[PDPT_INDEX(virt_addr)];
     if ((*pdpte & PAGE_PRESENT) == 0) {
         return -1;
     }
 
-    uint64_t *pd = (uint64_t *)(uintptr_t)(*pdpte & PAGE_MASK);
+    uint64_t *pd = (uint64_t *)(uintptr_t)(*pdpte & PAGE_FRAME_MASK);
     uint64_t *pde = &pd[PD_INDEX(virt_addr)];
     if ((*pde & PAGE_PRESENT) == 0) {
         return -1;
@@ -405,7 +405,7 @@ static int resolve_fault_leaf_entry(uint64_t cr3,
     if ((*pde & PAGE_PS) != 0) {
         entry = pde;
     } else {
-        uint64_t *pt = (uint64_t *)(uintptr_t)(*pde & PAGE_MASK);
+        uint64_t *pt = (uint64_t *)(uintptr_t)(*pde & PAGE_FRAME_MASK);
         entry = &pt[PT_INDEX(virt_addr)];
     }
 
@@ -637,41 +637,41 @@ uint64_t paging_virt_to_phys(uint64_t cr3, uint64_t virt_addr)
         return 0;
     }
 
-    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_MASK);
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_FRAME_MASK);
     uint64_t pml4e = pml4[PML4_INDEX(virt_addr)];
     if ((pml4e & PAGE_PRESENT) == 0) {
         return 0;
     }
 
-    uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_MASK);
+    uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_FRAME_MASK);
     uint64_t pdpte = pdpt[PDPT_INDEX(virt_addr)];
     if ((pdpte & PAGE_PRESENT) == 0) {
         return 0;
     }
     
     if ((pdpte & PAGE_PS) != 0) {
-        uint64_t phys_base = pdpte & ~(GB - 1ULL);
+        uint64_t phys_base = pdpte & PAGE_FRAME_MASK & ~(GB - 1ULL);
         return phys_base | (virt_addr & (GB - 1ULL));
     }
 
-    uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_MASK);
+    uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_FRAME_MASK);
     uint64_t pde = pd[PD_INDEX(virt_addr)];
     if ((pde & PAGE_PRESENT) == 0) {
         return 0;
     }
 
     if ((pde & PAGE_PS) != 0) {
-        uint64_t phys_base = pde & ~(MB2 - 1ULL);
+        uint64_t phys_base = pde & PAGE_FRAME_MASK & ~(MB2 - 1ULL);
         return phys_base | (virt_addr & (MB2 - 1ULL));
     }
 
-    uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_MASK);
+    uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_FRAME_MASK);
     uint64_t pte = pt[PT_INDEX(virt_addr)];
     if ((pte & PAGE_PRESENT) == 0) {
         return 0;
     }
 
-    return (pte & PAGE_MASK) | (virt_addr & (PAGE_SIZE_BYTES - 1ULL));
+    return (pte & PAGE_FRAME_MASK) | (virt_addr & (PAGE_SIZE_BYTES - 1ULL));
 }
 
 void paging_switch_cr3(uint64_t cr3)
@@ -765,7 +765,7 @@ void paging_destroy_process_space(uint64_t cr3)
                 continue;
             }
 
-            uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_MASK);
+            uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_FRAME_MASK);
             for (uint64_t k = 0; k < 512; ++k) {
                 uint64_t pte = pt[k];
                 if ((pte & PAGE_USER) == 0) {
@@ -773,9 +773,11 @@ void paging_destroy_process_space(uint64_t cr3)
                 }
                 uint64_t virt_addr = (i << 30) | (j << 21) | (k << 12);
                 if ((pte & PAGE_PRESENT) != 0) {
-                    free_page((void *)(uintptr_t)(pte & PAGE_MASK));
+                    if ((pte & PAGE_EXTERNAL) == 0) {
+                        free_page((void *)(uintptr_t)(pte & PAGE_FRAME_MASK));
+                    }
                 } else if ((pte & PAGE_SWAP) != 0) {
-                    uint32_t slot = (uint32_t)((pte & PAGE_MASK) >> 12);
+                    uint32_t slot = (uint32_t)((pte & PAGE_FRAME_MASK) >> 12);
                     swap_free_slot(slot);
                 }
                 swap_forget_track(cr3, virt_addr);
@@ -816,7 +818,7 @@ int paging_set_user_access(uint64_t cr3,
     uint64_t aligned_end   = (end + PAGE_SIZE_BYTES - 1ULL) & ~(PAGE_SIZE_BYTES - 1ULL);
     if (aligned_end < end) return -1;
 
-    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_MASK);
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_FRAME_MASK);
 
     for (uint64_t addr = aligned_start; addr < aligned_end; addr += PAGE_SIZE_BYTES)
     {
@@ -902,7 +904,7 @@ int paging_set_user_access(uint64_t cr3,
                                  PAGE_USER;
 
         } else {
-            uint64_t *pt = (uint64_t *)(uintptr_t)(pd_table[pd_index] & PAGE_MASK);
+            uint64_t *pt = (uint64_t *)(uintptr_t)(pd_table[pd_index] & PAGE_FRAME_MASK);
             uint64_t pte = pt[pt_index];
 
             if ((pte & PAGE_PRESENT) == 0 && (pte & PAGE_SWAP) == 0) {
@@ -958,6 +960,43 @@ int paging_set_user_access(uint64_t cr3,
     return 0;
 }
 
+int paging_protect_user_range(uint64_t cr3, uint64_t start, uint64_t size,
+                              uint64_t flags)
+{
+    if (cr3 == 0 || size == 0 || (start & (PAGE_SIZE_BYTES - 1ULL)) != 0)
+        return -1;
+    uint64_t end = (start + size + PAGE_SIZE_BYTES - 1ULL) &
+                   ~(PAGE_SIZE_BYTES - 1ULL);
+    if (end <= start) return -1;
+
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_FRAME_MASK);
+    for (uint64_t address = start; address < end; address += PAGE_SIZE_BYTES) {
+        uint64_t i4 = PML4_INDEX(address);
+        uint64_t i3 = PDPT_INDEX(address);
+        uint64_t i2 = PD_INDEX(address);
+        uint64_t i1 = PT_INDEX(address);
+        if ((pml4[i4] & PAGE_PRESENT) == 0) return -1;
+        uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4[i4] & PAGE_FRAME_MASK);
+        if ((pdpt[i3] & PAGE_PRESENT) == 0) return -1;
+        uint64_t *pd = (uint64_t *)(uintptr_t)(pdpt[i3] & PAGE_FRAME_MASK);
+        if ((pd[i2] & PAGE_PRESENT) == 0) return -1;
+        if ((pd[i2] & PAGE_PS) != 0 && split_huge_page(pd, i2) < 0) return -1;
+        uint64_t *pt = (uint64_t *)(uintptr_t)(pd[i2] & PAGE_FRAME_MASK);
+        uint64_t entry = pt[i1];
+        if ((entry & PAGE_PRESENT) == 0) return -1;
+        entry &= ~(PAGE_RW | PAGE_USER | PAGE_NX);
+        entry |= flags & (PAGE_RW | PAGE_USER | PAGE_NX);
+        pt[i1] = entry;
+        if ((flags & PAGE_USER) != 0u) {
+            pml4[i4] |= PAGE_USER | PAGE_RW;
+            pdpt[i3] |= PAGE_USER | PAGE_RW;
+            pd[i2] |= PAGE_USER | PAGE_RW;
+        }
+        tlb_shootdown_all(address, 1ULL);
+    }
+    return 0;
+}
+
 int paging_unmap_range(uint64_t cr3, uint64_t start, uint64_t size)
 {
     if (cr3 == 0 || size == 0) {
@@ -999,14 +1038,14 @@ int paging_unmap_range(uint64_t cr3, uint64_t start, uint64_t size)
             continue;
         }
 
-        uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_MASK);
+        uint64_t *pt = (uint64_t *)(uintptr_t)(pde & PAGE_FRAME_MASK);
         uint64_t old_pte = pt[pt_index];
         if ((old_pte & PAGE_SWAP) != 0 && (old_pte & PAGE_PRESENT) == 0) {
-            uint32_t slot = (uint32_t)((old_pte & PAGE_MASK) >> 12);
+            uint32_t slot = (uint32_t)((old_pte & PAGE_FRAME_MASK) >> 12);
             swap_free_slot(slot);
         } else if ((old_pte & PAGE_PRESENT) != 0 && (old_pte & PAGE_USER) != 0) {
             if ((old_pte & PAGE_EXTERNAL) == 0) {
-                free_page((void *)(uintptr_t)(old_pte & PAGE_MASK));
+                free_page((void *)(uintptr_t)(old_pte & PAGE_FRAME_MASK));
             }
         }
         swap_forget_track(cr3, addr);
@@ -1084,7 +1123,7 @@ int paging_map_user_page(uint64_t cr3,
         write_cr3(kernel_cr3);
     }
 
-    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_MASK);
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_FRAME_MASK);
     uint16_t i4 = PML4_INDEX(virt_addr);
     uint16_t i3 = PDPT_INDEX(virt_addr);
     uint16_t i2 = PD_INDEX(virt_addr);
@@ -1106,7 +1145,7 @@ int paging_map_user_page(uint64_t cr3,
             space->pdpt = pdpt;
         }
     } else {
-        pdpt = (uint64_t *)(uintptr_t)(pml4[i4] & PAGE_MASK);
+        pdpt = (uint64_t *)(uintptr_t)(pml4[i4] & PAGE_FRAME_MASK);
 
         if (is_kernel_table(pdpt)) {
             uint64_t *cloned = alloc_zeroed_page_table();
@@ -1134,7 +1173,7 @@ int paging_map_user_page(uint64_t cr3,
         }
         pdpt[i3] = ((uint64_t)pd) | PAGE_PRESENT | PAGE_RW | PAGE_USER;
     } else {
-        pd = (uint64_t *)(uintptr_t)(pdpt[i3] & PAGE_MASK);
+        pd = (uint64_t *)(uintptr_t)(pdpt[i3] & PAGE_FRAME_MASK);
 
         if (is_kernel_table(pd)) {
             uint64_t *cloned = alloc_zeroed_page_table();
@@ -1174,20 +1213,20 @@ int paging_map_user_page(uint64_t cr3,
         pd[i2] = ((uint64_t)pt) | PAGE_PRESENT | PAGE_RW | PAGE_USER;
     } else {
         pd[i2] |= PAGE_USER;
-        pt = (uint64_t *)(uintptr_t)(pd[i2] & PAGE_MASK);
+        pt = (uint64_t *)(uintptr_t)(pd[i2] & PAGE_FRAME_MASK);
     }
 
     uint64_t old_pte = pt[i1];
     if ((old_pte & PAGE_PRESENT) != 0 && (old_pte & PAGE_USER) != 0) {
         if ((old_pte & PAGE_EXTERNAL) == 0) {
-            free_page((void *)(uintptr_t)(old_pte & PAGE_MASK));
+            free_page((void *)(uintptr_t)(old_pte & PAGE_FRAME_MASK));
         }
     } else if ((old_pte & PAGE_SWAP) != 0 && (old_pte & PAGE_USER) != 0) {
-        uint32_t slot = (uint32_t)((old_pte & PAGE_MASK) >> 12);
+        uint32_t slot = (uint32_t)((old_pte & PAGE_FRAME_MASK) >> 12);
         swap_free_slot(slot);
     }
 
-    pt[i1] = (phys_addr & PAGE_MASK) |
+    pt[i1] = (phys_addr & PAGE_FRAME_MASK) |
              PAGE_PRESENT |
              PAGE_USER |
              (flags & (PAGE_RW | PAGE_PWT | PAGE_PCD | PAGE_EXTERNAL | PAGE_NX));
@@ -1308,7 +1347,7 @@ int paging_handle_swap_fault(uint64_t cr3, uint64_t fault_addr)
         return 0;
     }
 
-    uint32_t slot = (uint32_t)((entry & PAGE_MASK) >> 12);
+    uint32_t slot = (uint32_t)((entry & PAGE_FRAME_MASK) >> 12);
     if (slot >= SWAP_SLOT_COUNT || !g_swap_slots[slot].used) {
         return 0;
     }

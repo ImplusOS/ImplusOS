@@ -10,6 +10,8 @@
 #endif
 #include "Platform/io/IO_Main.h"
 #include "Drivers/Module/DriverModule.h"
+#include "Drivers/Module/BlockManager.h"
+#include "Drivers/Module/AudioManager.h"
 #include "Drivers/Module/InputManager.h"
 #include "Drivers/Module/DriverManager.h"
 #include "Drivers/Module/DriverSelect.h"
@@ -82,6 +84,7 @@ bool all_fs_initialize(void)
     }
     if (iso_ok) {
         vfs_mount("", iso9660_vfs_get_driver());
+        vfs_set_default_fs("iso9660");
     }
 
     return true;
@@ -250,6 +253,8 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     driver_module_init_all();
     irq_restore(driver_init_irq_flags);
 
+    audio_manager_init();
+
     driver_boot_framebuffer_t boot_fb = {
         .addr = (void *)(uintptr_t)boot_info->FrameBufferBase,
         .size_bytes = (uint32_t)boot_info->FrameBufferSize,
@@ -262,6 +267,7 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     debugger_init(boot_info);
     input_manager_init();
 
+    block_manager_set_boot_identity(boot_info);
     if (!disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType)) {
         kernel_panic("Disk Protocol initialization failed", "kernel_main");
     }
@@ -280,7 +286,6 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     ipc_init();
     syscall_file_init();
     network_stack_init();
-    timer_start_services();
     fb_snapshot_create(boot_info);
     load_bar_finish();
 
@@ -294,13 +299,11 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     }
 
     if (fs_ready) {
-        serial_write_string("Loading Userland");
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
-            while (1) { kernel_arch_halt(); }
+            kernel_panic("Failed to start Userland.", "kernel_main");
         }
     }
-    
-    serial_write_string("Entering Userland");
+    timer_start_services();
     uint64_t user_rsp = process_get_current_user_rsp();
     uint64_t saved_rsp = process_get_current_saved_rsp();
     uint64_t user_cr3 = process_get_current_cr3();
@@ -310,18 +313,13 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         if (ops && ops->disable_interrupts) {
             ops->disable_interrupts();
         }
-        while (1) { kernel_arch_halt(); }
+        kernel_panic("Failed get RSP and CR3", "kernel_main");
     }
 
     {
         const arch_ops_t *ops = arch_ops_get();
         if (ops) {
-#ifdef PLATFORM_ARM64
-        serial_write_string("Enter Userland");
-            ops->enter_user_mode(user_entry, user_rsp, user_cr3);
-#else
             ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
-#endif
         }
     }
 

@@ -26,12 +26,15 @@
 
  
 typedef struct posix_thread_desc {
+    pthread_t  tid;
     void    *(*routine)(void *);   
     void     *arg;                 
     void     *retval;              
     volatile int done;             
     int       detached;            
     int       cancel_state;        
+    int       creator_ready;
+    volatile int cleanup_claimed;
 } posix_thread_desc_t;
 
  
@@ -83,3 +86,6 @@ int         posix_pthread_key_create (pthread_key_t *key,
 int         posix_pthread_key_delete (pthread_key_t key);
 void       *posix_pthread_getspecific(pthread_key_t key);
 int         posix_pthread_setspecific(pthread_key_t key, const void *value);
+
+uint64_t   *posix_pthread_signal_mask_storage(void);
+uint64_t   *posix_pthread_signal_pending_storage(void);

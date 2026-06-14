@@ -1,0 +1,124 @@
+name: Build ImplusOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    name: make image / ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            make \
+            clang \
+            lld \
+            llvm \
+            python3 \
+            uuid-dev \
+            acpica-tools \
+            nasm \
+            mtools \
+            xorriso \
+            qemu-system-arm \
+            qemu-system-x86 \
+            qemu-utils \
+            ovmf \
+            qemu-efi-aarch64
+
+      - name: Create LLVM cross-prefix wrappers
+        run: |
+          mkdir -p "$PWD/.ci-bin"
+
+          make_triple_wrappers() {
+            triple="$1"
+
+            cat > ".ci-bin/${triple}-gcc" <<EOF
+          #!/usr/bin/env bash
+          exec clang --target=${triple} "\$@"
+          EOF
+
+            cat > ".ci-bin/${triple}-g++" <<EOF
+          #!/usr/bin/env bash
+          exec clang++ --target=${triple} "\$@"
+          EOF
+
+            cat > ".ci-bin/${triple}-as" <<EOF
+          #!/usr/bin/env bash
+          exec clang --target=${triple} -c "\$@"
+          EOF
+
+            ln -sf "$(command -v ld.lld)" ".ci-bin/${triple}-ld"
+            ln -sf "$(command -v llvm-objcopy)" ".ci-bin/${triple}-objcopy"
+            ln -sf "$(command -v llvm-ar)" ".ci-bin/${triple}-ar"
+            ln -sf "$(command -v llvm-ranlib)" ".ci-bin/${triple}-ranlib"
+
+            chmod +x ".ci-bin/${triple}-"*
+          }
+
+          make_triple_wrappers aarch64-elf
+          make_triple_wrappers x86_64-elf
+
+          echo "$PWD/.ci-bin" >> "$GITHUB_PATH"
+
+      - name: Prepare UEFI firmware files
+        run: |
+          cp "$(find /usr/share -path '*AAVMF*' -name 'AAVMF_CODE.fd' | head -n 1)" ./AAVMF_CODE.fd
+          cp "$(find /usr/share -path '*OVMF*' -name 'OVMF_CODE_4M.fd' | head -n 1)" ./OVMF_CODE_4M.fd
+
+          test -s ./AAVMF_CODE.fd
+          test -s ./OVMF_CODE_4M.fd
+
+      - name: Setup EDK2
+        env:
+          EDK2_REF: edk2-stable202605
+        run: |
+          git clone --depth 1 --branch "$EDK2_REF" https://github.com/tianocore/edk2.git "$HOME/edk2"
+          git -C "$HOME/edk2" submodule update --init --depth 1
+          make -C "$HOME/edk2/BaseTools" -j"$(nproc)"
+
+      - name: Build ISO
+        run: |
+          make ARCH=${{ matrix.arch }} image
+          test -s Image/ImplusOS-${{ matrix.arch }}.iso
+
+      - name: Smoke boot via make run_uefi_usb
+        run: |
+          set +e
+          timeout 90s make ARCH=${{ matrix.arch }} QEMU_DISPLAY=none run_uefi_usb 2>&1 | tee qemu-${{ matrix.arch }}.log
+          status=${PIPESTATUS[0]}
+          set -e
+          
+          if [ "$status" -eq 124 ]; then
+            echo "QEMU smoke test reached timeout without crashing."
+            exit 0
+          fi
+
+          exit "$status"
+
+      - name: Upload ISO and QEMU log
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImplusOS-${{ matrix.arch }}
+          path: |
+            Image/ImplusOS-${{ matrix.arch }}.iso
+            qemu-${{ matrix.arch }}.log

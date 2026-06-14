@@ -12,7 +12,12 @@
 #define SOL_SOCKET 1
 #define SO_REUSEADDR 2
 #define SO_ERROR 4
+#define SHUT_RD 0
+#define SHUT_WR 1
 #define SHUT_RDWR 2
+
+#define MSG_DONTWAIT 0x40
+#define MSG_NOSIGNAL 0x4000
 
 struct sockaddr {
     sa_family_t sa_family;
@@ -30,3 +35,5 @@ int closesocket(int sockfd);
 int shutdown(int sockfd, int how);
 int setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen);
 int getsockopt(int sockfd, int level, int optname, void* optval, socklen_t* optlen);
+int getsockname(int sockfd, struct sockaddr* addr, socklen_t* addrlen);
+int getpeername(int sockfd, struct sockaddr* addr, socklen_t* addrlen);

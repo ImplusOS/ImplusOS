@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 #include <sys/syscalls.h>
 #include "Syscalls.h"
 #include "API/File.h"
@@ -13,11 +14,17 @@
 #include "API/Window.h"
 #include "API/Serial.h"
 #include "API/SystemInfo.h"
+#include "API/Audio.h"
+#include "API/Socket.h"
 
 static uint32_t g_current_window_id = 0;
 static uint32_t g_wm_request_id = 0;
+static int32_t g_cached_wm_pid = -1;
 
 #define MAX_INPUT_QUEUE             32
+#define MAX_DEFERRED_IPC_QUEUE      32
+#define WM_RPC_TIMEOUT_MS         5000ULL
+#define WM_SEND_RETRY_TIMEOUT_MS  1000ULL
 
 static input_keyboard_event_t g_kbd_queue[MAX_INPUT_QUEUE];
 static uint32_t g_kbd_head = 0, g_kbd_tail = 0, g_kbd_count = 0;
@@ -25,82 +32,19 @@ static uint32_t g_kbd_head = 0, g_kbd_tail = 0, g_kbd_count = 0;
 static input_mouse_event_t g_mouse_queue[MAX_INPUT_QUEUE];
 static uint32_t g_mouse_head = 0, g_mouse_tail = 0, g_mouse_count = 0;
 
-static void handle_input_message(ipc_message_t *msg) {
-    if (msg->size >= sizeof(wm_msg_header_t)) {
-        wm_msg_header_t *hdr = (wm_msg_header_t *)msg->data;
-        if (hdr->type == WM_KEYBOARD_EVENT) {
-            if (g_kbd_count < MAX_INPUT_QUEUE) {
-                memcpy(&g_kbd_queue[g_kbd_head], msg->data + sizeof(wm_msg_header_t), sizeof(input_keyboard_event_t));
-                g_kbd_head = (g_kbd_head + 1) % MAX_INPUT_QUEUE;
-                g_kbd_count++;
-            }
-        } else if (hdr->type == WM_MOUSE_EVENT) {
-            if (g_mouse_count < MAX_INPUT_QUEUE) {
-                memcpy(&g_mouse_queue[g_mouse_head], msg->data + sizeof(wm_msg_header_t), sizeof(input_mouse_event_t));
-                g_mouse_head = (g_mouse_head + 1) % MAX_INPUT_QUEUE;
-                g_mouse_count++;
-            }
-        }
-    }
-}
+static ipc_message_t g_deferred_ipc[MAX_DEFERRED_IPC_QUEUE];
+static uint32_t g_deferred_head;
+static uint32_t g_deferred_tail;
+static uint32_t g_deferred_count;
 
-#define SYSCALL_SERIAL_PUTCHAR    1ULL
-#define SYSCALL_SERIAL_PUTS       2ULL
-#define SYSCALL_SERIAL_WRITE_U64  3ULL
-#define SYSCALL_SERIAL_WRITE_U32  4ULL
-#define SYSCALL_SERIAL_WRITE_U16  5ULL
-#define SYSCALL_PROCESS_CREATE    6ULL
-#define SYSCALL_PROCESS_YIELD     7ULL
-#define SYSCALL_PROCESS_EXIT      8ULL
-#define SYSCALL_THREAD_CREATE     9ULL
-#define SYSCALL_FILE_OPEN         23ULL
-#define SYSCALL_FILE_READ         24ULL
-#define SYSCALL_FILE_WRITE        25ULL
-#define SYSCALL_FILE_CLOSE        26ULL
-#define SYSCALL_FILE_SEEK         34ULL
-#define SYSCALL_USER_MALLOC      27ULL
-#define SYSCALL_USER_FREE        28ULL
-#define SYSCALL_USER_MEMCPY       29ULL
-#define SYSCALL_USER_MEMCMP       30ULL
-#define SYSCALL_USER_MEMSET       31ULL
-#define SYSCALL_INPUT_READ_KEYBOARD 32ULL
-#define SYSCALL_INPUT_READ_MOUSE  33ULL
-#define SYSCALL_FILE_MKDIR        37ULL
-#define SYSCALL_FILE_OPENDIR      38ULL
-#define SYSCALL_FILE_READDIR      39ULL
-#define SYSCALL_FILE_CLOSEDIR     40ULL
-#define SYSCALL_FILE_UNLINK       41ULL
-#define SYSCALL_FILE_CREAT        42ULL
-#define SYSCALL_USER_MMAP         43ULL
-#define SYSCALL_PROCESS_SIGNAL    44ULL
-#define SYSCALL_IPC_SEND_MESSAGE  45ULL
-#define SYSCALL_UDP_SEND          100ULL
-#define SYSCALL_TCP_CONNECT       101ULL
-#define SYSCALL_TCP_LISTEN        102ULL
-#define SYSCALL_TCP_ACCEPT        103ULL
-#define SYSCALL_TCP_SEND          104ULL
-#define SYSCALL_TCP_RECV          105ULL
-#define SYSCALL_TCP_CLOSE         106ULL
-#define SYSCALL_TCP_GET_STATE     107ULL
-#define SYSCALL_UDP_BIND          108ULL
-#define SYSCALL_UDP_UNBIND        109ULL
-#define SYSCALL_UDP_RECV          138ULL
-#define SYSCALL_IPC_SEND_MESSAGE  45ULL
-#define SYSCALL_IPC_RECEIVE_MESSAGE 46ULL
-#define SYSCALL_PROCESS_GET_PID   47ULL
-#define SYSCALL_GET_DISPLAY_WIDTH  48ULL
-#define SYSCALL_GET_DISPLAY_HEIGHT 49ULL
-#define SYSCALL_WINDOW_REGISTER_SERVICE 50ULL
-#define SYSCALL_WINDOW_GET_WM_PID 51ULL
-#define SYSCALL_DISPLAY_DRAW_PIXEL 52ULL
-#define SYSCALL_DISPLAY_FILL_RECT 53ULL
-#define SYSCALL_DISPLAY_PRESENT 54ULL
-#define SYSCALL_GET_DISPLAY_FRAMEBUFFER 55ULL
-#define SYSCALL_DISPLAY_GET_PIXEL  56ULL
-#define SYSCALL_SYSTEM_SHUTDOWN    250ULL
-#define SYSCALL_SYSTEM_REBOOT      251ULL
-#define SYSCALL_SYSTEM_SHUTDOWN_BROADCAST 252ULL
-#define SYSCALL_PROCESS_SPAWN_ELF 36ULL
+typedef struct {
+    window_id_t window_id;
+    int32_t handle;
+    uint32_t *address;
+    uint32_t size_bytes;
+} window_backing_mapping_t;
+
+static window_backing_mapping_t g_window_backing_mappings[256];
 
 extern uint64_t syscall0(uint64_t num);
 extern uint64_t syscall1(uint64_t num, uint64_t arg1);
@@ -108,6 +52,76 @@ extern uint64_t syscall2(uint64_t num, uint64_t arg1, uint64_t arg2);
 extern uint64_t syscall3(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3);
 extern uint64_t syscall4(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4);
 extern uint64_t syscall5(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5);
+
+static int32_t os_errno_from_i32_status(int32_t value);
+
+static int32_t ipc_receive_raw(ipc_message_t *out_message)
+{
+    return os_errno_from_i32_status((int32_t)syscall1(
+        SYSCALL_IPC_RECEIVE_MESSAGE, (uint64_t)out_message));
+}
+
+static int32_t deferred_ipc_push(const ipc_message_t *message)
+{
+    if (message == NULL || g_deferred_count >= MAX_DEFERRED_IPC_QUEUE) {
+        os_set_errno(message == NULL ? EINVAL : ENOBUFS);
+        return -1;
+    }
+    g_deferred_ipc[g_deferred_head] = *message;
+    g_deferred_head = (g_deferred_head + 1u) % MAX_DEFERRED_IPC_QUEUE;
+    ++g_deferred_count;
+    return 0;
+}
+
+static int32_t deferred_ipc_pop(ipc_message_t *out_message)
+{
+    if (out_message == NULL || g_deferred_count == 0u) return -1;
+    *out_message = g_deferred_ipc[g_deferred_tail];
+    g_deferred_tail = (g_deferred_tail + 1u) % MAX_DEFERRED_IPC_QUEUE;
+    --g_deferred_count;
+    return 0;
+}
+
+static bool handle_input_message(const ipc_message_t *msg)
+{
+    if (msg == NULL || msg->size < sizeof(wm_msg_header_t)) return false;
+    const wm_msg_header_t *hdr = (const wm_msg_header_t *)msg->data;
+    if (hdr->type == WM_KEYBOARD_EVENT) {
+        if (msg->size < sizeof(wm_msg_header_t) + sizeof(input_keyboard_event_t))
+            return true;
+        if (g_kbd_count < MAX_INPUT_QUEUE) {
+            memcpy(&g_kbd_queue[g_kbd_head],
+                   msg->data + sizeof(wm_msg_header_t),
+                   sizeof(input_keyboard_event_t));
+            g_kbd_head = (g_kbd_head + 1u) % MAX_INPUT_QUEUE;
+            ++g_kbd_count;
+        }
+        return true;
+    }
+    if (hdr->type == WM_MOUSE_EVENT) {
+        if (msg->size < sizeof(wm_msg_header_t) + sizeof(input_mouse_event_t))
+            return true;
+        if (g_mouse_count < MAX_INPUT_QUEUE) {
+            memcpy(&g_mouse_queue[g_mouse_head],
+                   msg->data + sizeof(wm_msg_header_t),
+                   sizeof(input_mouse_event_t));
+            g_mouse_head = (g_mouse_head + 1u) % MAX_INPUT_QUEUE;
+            ++g_mouse_count;
+        }
+        return true;
+    }
+    return false;
+}
+
+static void preserve_unhandled_message(const ipc_message_t *message)
+{
+    if (!handle_input_message(message)) (void)deferred_ipc_push(message);
+}
+
+static bool deadline_expired(uint64_t deadline_ms)
+{
+    return get_uptime_ms() >= deadline_ms;
+}
 
 int os_get_errno(void)
 {
@@ -137,19 +151,19 @@ int os_status_to_errno(int64_t status_code)
 
     switch (status_code) {
         case OS_STATUS_INVALID_ARG:
-            return 22;
+            return EINVAL;
         case OS_STATUS_NOT_FOUND:
-            return 2;
+            return ENOENT;
         case OS_STATUS_ACCESS_DENIED:
-            return 13;
+            return EACCES;
         case OS_STATUS_LIMIT_REACHED:
-            return 24;
+            return EMFILE;
         case OS_STATUS_IO_ERROR:
-            return 5;
+            return EIO;
         case OS_STATUS_FAULT:
-            return 14;
+            return EFAULT;
         case OS_STATUS_NOT_SUPPORTED:
-            return 95;
+            return ENOTSUP;
         case OS_STATUS_INTERNAL:
             return 255;
         default:
@@ -182,15 +196,7 @@ static int64_t os_errno_from_i64_status(int64_t value)
 
 size_t os_strnlen(const char *str, size_t max_len)
 {
-    if (str == NULL) {
-        return 0;
-    }
-
-    size_t len = 0;
-    while (len < max_len && str[len] != '\0') {
-        ++len;
-    }
-    return len;
+    return strnlen(str, max_len);
 }
 
 int os_strcpy_s(char *dst, size_t dst_size, const char *src)
@@ -198,15 +204,9 @@ int os_strcpy_s(char *dst, size_t dst_size, const char *src)
     if (dst == NULL || src == NULL || dst_size == 0) {
         return -1;
     }
-
-    size_t src_len = os_strnlen(src, dst_size);
-    if (src_len >= dst_size) {
+    if (strlcpy(dst, src, dst_size) >= dst_size) {
         dst[0] = '\0';
         return -1;
-    }
-
-    for (size_t i = 0; i <= src_len; ++i) {
-        dst[i] = src[i];
     }
     return 0;
 }
@@ -217,21 +217,7 @@ int os_strcat_s(char *dst, size_t dst_size, const char *src)
         return -1;
     }
 
-    size_t dst_len = os_strnlen(dst, dst_size);
-    if (dst_len >= dst_size) {
-        return -1;
-    }
-
-    size_t remaining = dst_size - dst_len;
-    size_t src_len = os_strnlen(src, remaining);
-    if (src_len >= remaining) {
-        return -1;
-    }
-
-    for (size_t i = 0; i <= src_len; ++i) {
-        dst[dst_len + i] = src[i];
-    }
-    return 0;
+    return strlcat(dst, src, dst_size) < dst_size ? 0 : -1;
 }
 
 
@@ -285,18 +271,63 @@ __attribute__((unused)) int32_t file_unlink(const char *path)
     return os_errno_from_i32_status((int32_t)syscall1(SYSCALL_FILE_UNLINK, (uint64_t)path));
 }
 
-void *os_mmap(uint64_t length, uint64_t flags)
+__attribute__((unused)) int32_t file_rename(const char *old_path,
+                                             const char *new_path)
 {
-    void *ptr = (void *)(uintptr_t)syscall2(SYSCALL_USER_MMAP, length, flags);
-    if (ptr == NULL && length != 0ULL) {
-        os_set_errno(12);
-    } else {
-        os_clear_errno();
-    }
-    return ptr;
+    return os_errno_from_i32_status((int32_t)syscall2(
+        SYSCALL_RENAME, (uint64_t)old_path, (uint64_t)new_path));
 }
 
-signal_handler_t signal(int32_t signum, signal_handler_t handler)
+void *os_mmap(uint64_t length, uint64_t flags)
+{
+    int64_t raw = (int64_t)syscall2(SYSCALL_USER_MMAP, length, flags);
+    if (raw <= 0 && length != 0ULL) {
+        os_set_errno(raw < 0 ? os_status_to_errno(raw) : ENOMEM);
+        return NULL;
+    }
+    os_clear_errno();
+    return (void *)(uintptr_t)(uint64_t)raw;
+}
+
+int32_t os_shared_memory_create(uint32_t size)
+{
+    return os_errno_from_i32_status(
+        (int32_t)syscall1(SYSCALL_SHM_CREATE, size));
+}
+
+int32_t os_shared_memory_grant(int32_t handle, int32_t pid)
+{
+    return os_errno_from_i32_status(
+        (int32_t)syscall2(SYSCALL_SHM_GRANT,
+                          (uint64_t)(int64_t)handle,
+                          (uint64_t)(int64_t)pid));
+}
+
+void *os_shared_memory_map(int32_t handle)
+{
+    void *address = (void *)(uintptr_t)syscall1(
+        SYSCALL_SHM_MAP, (uint64_t)(int64_t)handle);
+    if (!address) os_set_errno(ENOMEM);
+    else os_clear_errno();
+    return address;
+}
+
+int32_t os_shared_memory_unmap(int32_t handle, void *address)
+{
+    return os_errno_from_i32_status(
+        (int32_t)syscall2(SYSCALL_SHM_UNMAP,
+                          (uint64_t)(int64_t)handle,
+                          (uint64_t)(uintptr_t)address));
+}
+
+int32_t os_shared_memory_close(int32_t handle)
+{
+    return os_errno_from_i32_status(
+        (int32_t)syscall1(SYSCALL_SHM_CLOSE,
+                          (uint64_t)(int64_t)handle));
+}
+
+signal_handler_t os_signal(int32_t signum, signal_handler_t handler)
 {
     uint64_t raw = syscall2(SYSCALL_PROCESS_SIGNAL,
                             (uint64_t)signum,
@@ -360,7 +391,7 @@ int32_t input_read_mouse(input_mouse_event_t *event_out)
 int32_t ipc_send_message(int32_t target_pid, const void *message, uint32_t size)
 {
     if (size > IPC_MESSAGE_MAX_SIZE) {
-        os_set_errno(22);
+        os_set_errno(EINVAL);
         return -1;
     }
     return os_errno_from_i32_status((int32_t)syscall3(SYSCALL_IPC_SEND_MESSAGE,
@@ -371,7 +402,15 @@ int32_t ipc_send_message(int32_t target_pid, const void *message, uint32_t size)
 
 int32_t ipc_receive_message(ipc_message_t *out_message)
 {
-    return os_errno_from_i32_status((int32_t)syscall1(SYSCALL_IPC_RECEIVE_MESSAGE, (uint64_t)out_message));
+    if (out_message == NULL) {
+        os_set_errno(EINVAL);
+        return -1;
+    }
+    if (deferred_ipc_pop(out_message) == 0) {
+        os_clear_errno();
+        return 0;
+    }
+    return ipc_receive_raw(out_message);
 }
 
 int32_t process_get_current_pid(void)
@@ -384,18 +423,46 @@ int32_t process_spawn(const char *path)
     return os_errno_from_i32_status((int32_t)syscall1(SYSCALL_PROCESS_SPAWN_ELF, (uint64_t)path));
 }
 
+int32_t process_spawn_with_arg(const char *path, const char *argument)
+{
+    if (!path || !argument) {
+        os_set_errno(EINVAL);
+        return -1;
+    }
+    return os_errno_from_i32_status((int32_t)syscall2(
+        SYSCALL_PROCESS_SPAWN_ELF_ARG, (uint64_t)path,
+        (uint64_t)argument));
+}
+
+int32_t process_get_launch_argument(char *buffer, uint32_t capacity)
+{
+    if (!buffer || capacity == 0u) {
+        os_set_errno(EINVAL);
+        return -1;
+    }
+    return os_errno_from_i32_status((int32_t)syscall2(
+        SYSCALL_PROCESS_GET_LAUNCH_ARG, (uint64_t)buffer,
+        (uint64_t)capacity));
+}
+
 int32_t window_register_service(void)
 {
-    return os_errno_from_i32_status((int32_t)syscall0(SYSCALL_WINDOW_REGISTER_SERVICE));
+    int32_t result = os_errno_from_i32_status(
+        (int32_t)syscall0(SYSCALL_WINDOW_REGISTER_SERVICE));
+    if (result == 0) g_cached_wm_pid = process_get_current_pid();
+    return result;
 }
 
 int32_t window_get_wm_pid(void)
 {
+    if (g_cached_wm_pid >= 0) return g_cached_wm_pid;
     int32_t pid = (int32_t)syscall0(SYSCALL_WINDOW_GET_WM_PID);
     if (pid < 0) {
-        os_set_errno(14);
+        os_set_errno(EFAULT);
         return -1;
     }
+    g_cached_wm_pid = pid;
+    os_clear_errno();
     return pid;
 }
 
@@ -434,21 +501,26 @@ window_id_t window_create_ex(uint32_t x, uint32_t y, uint32_t width, uint32_t he
     }
 
     ipc_message_t resp __attribute__((aligned(16)));
-    while (1) {
-        if (ipc_receive_message(&resp) == 0) {
+    uint64_t deadline = get_uptime_ms() + WM_RPC_TIMEOUT_MS;
+    while (!deadline_expired(deadline)) {
+        if (ipc_receive_raw(&resp) == 0) {
             wm_msg_header_t *hdr = (wm_msg_header_t *)resp.data;
-            if (hdr->type == WM_WINDOW_CREATED && hdr->request_id == cmd.hdr.request_id) {
+            if (resp.size >= sizeof(*hdr) &&
+                hdr->type == WM_WINDOW_CREATED &&
+                hdr->request_id == cmd.hdr.request_id) {
                 return hdr->window_id;
-            } else {
-                handle_input_message(&resp);
             }
+            preserve_unhandled_message(&resp);
         }
         process_yield();
     }
+    os_set_errno(ETIMEDOUT);
+    return 0;
 }
 
 void window_destroy(window_id_t wid)
 {
+    window_release_backing_store(wid);
     wm_msg_header_t hdr;
     hdr.type = WM_DESTROY_WINDOW;
     hdr.window_id = wid;
@@ -510,7 +582,7 @@ void window_set_focus(window_id_t wid)
 int32_t window_get_rect(window_id_t wid, uint32_t *x, uint32_t *y, uint32_t *w, uint32_t *h)
 {
     if (wid == 0 || x == NULL || y == NULL || w == NULL || h == NULL) {
-        os_set_errno(22);
+        os_set_errno(EINVAL);
         return WM_STATUS_INVALID_ARG;
     }
 
@@ -531,8 +603,9 @@ int32_t window_get_rect(window_id_t wid, uint32_t *x, uint32_t *y, uint32_t *w, 
     }
 
     ipc_message_t resp __attribute__((aligned(16)));
-    while (1) {
-        if (ipc_receive_message(&resp) == 0) {
+    uint64_t deadline = get_uptime_ms() + WM_RPC_TIMEOUT_MS;
+    while (!deadline_expired(deadline)) {
+        if (ipc_receive_raw(&resp) == 0) {
             if (resp.size >= sizeof(wm_msg_header_t) + sizeof(int32_t) + (sizeof(uint32_t) * 4U)) {
                 struct {
                     wm_msg_header_t hdr;
@@ -551,15 +624,14 @@ int32_t window_get_rect(window_id_t wid, uint32_t *x, uint32_t *y, uint32_t *w, 
                     *h = reply->h;
                     os_clear_errno();
                     return WM_STATUS_OK;
-                } else {
-                    handle_input_message(&resp);
                 }
-            } else {
-                handle_input_message(&resp);
             }
+            preserve_unhandled_message(&resp);
         }
         process_yield();
     }
+    os_set_errno(ETIMEDOUT);
+    return -1;
 }
 
 window_id_t window_get_focus(void)
@@ -581,8 +653,9 @@ window_id_t window_get_focus(void)
     }
 
     ipc_message_t resp __attribute__((aligned(16)));
-    while (1) {
-        if (ipc_receive_message(&resp) == 0) {
+    uint64_t deadline = get_uptime_ms() + WM_RPC_TIMEOUT_MS;
+    while (!deadline_expired(deadline)) {
+        if (ipc_receive_raw(&resp) == 0) {
             if (resp.size >= sizeof(wm_msg_header_t) + sizeof(int32_t) + sizeof(uint32_t)) {
                 struct {
                     wm_msg_header_t hdr;
@@ -598,15 +671,14 @@ window_id_t window_get_focus(void)
                     }
                     os_clear_errno();
                     return reply->focused_window_id;
-                } else {
-                    handle_input_message(&resp);
                 }
-            } else {
-                handle_input_message(&resp);
             }
+            preserve_unhandled_message(&resp);
         }
         process_yield();
     }
+    os_set_errno(ETIMEDOUT);
+    return 0;
 }
 
 int32_t window_subscribe_keyboard(window_id_t wid)
@@ -784,9 +856,13 @@ void *sys_get_display_framebuffer(void)
 
 int32_t window_input_keyboard_poll(input_keyboard_event_t *out)
 {
+    if (out == NULL) {
+        os_set_errno(EINVAL);
+        return -1;
+    }
     ipc_message_t msg;
-    while (ipc_receive_message(&msg) == 0) {
-        handle_input_message(&msg);
+    while (ipc_receive_raw(&msg) == 0) {
+        preserve_unhandled_message(&msg);
     }
     
     if (g_kbd_count > 0) {
@@ -800,9 +876,13 @@ int32_t window_input_keyboard_poll(input_keyboard_event_t *out)
 
 int32_t window_input_mouse_poll(input_mouse_event_t *out)
 {
+    if (out == NULL) {
+        os_set_errno(EINVAL);
+        return -1;
+    }
     ipc_message_t msg;
-    while (ipc_receive_message(&msg) == 0) {
-        handle_input_message(&msg);
+    while (ipc_receive_raw(&msg) == 0) {
+        preserve_unhandled_message(&msg);
     }
 
     if (g_mouse_count > 0) {
@@ -833,8 +913,8 @@ int32_t window_input_mouse_wait(input_mouse_event_t *out)
 int32_t window_input_keyboard_pending(void)
 {
     ipc_message_t msg;
-    while (ipc_receive_message(&msg) == 0) {
-        handle_input_message(&msg);
+    while (ipc_receive_raw(&msg) == 0) {
+        preserve_unhandled_message(&msg);
     }
     return (int32_t)g_kbd_count;
 }
@@ -842,15 +922,18 @@ int32_t window_input_keyboard_pending(void)
 int32_t window_input_mouse_pending(void)
 {
     ipc_message_t msg;
-    while (ipc_receive_message(&msg) == 0) {
-        handle_input_message(&msg);
+    while (ipc_receive_raw(&msg) == 0) {
+        preserve_unhandled_message(&msg);
     }
     return (int32_t)g_mouse_count;
 }
 
 int32_t window_set_layout_xml(window_id_t wid, const char *xml_str, uint32_t xml_len)
 {
-    if (wid == 0 || !xml_str) return -1;
+    if (wid == 0 || !xml_str) {
+        os_set_errno(EINVAL);
+        return -1;
+    }
     
     struct {
         uint32_t type;
@@ -866,8 +949,9 @@ int32_t window_set_layout_xml(window_id_t wid, const char *xml_str, uint32_t xml
     
     int32_t wm_pid = window_get_wm_pid();
     int32_t res = ipc_send_message(wm_pid, &start_cmd, sizeof(start_cmd));
-    
-    while (res == -24) {
+
+    uint64_t retry_deadline = get_uptime_ms() + WM_SEND_RETRY_TIMEOUT_MS;
+    while (res == OS_STATUS_LIMIT_REACHED && !deadline_expired(retry_deadline)) {
         process_yield();
         res = ipc_send_message(wm_pid, &start_cmd, sizeof(start_cmd));
     }
@@ -887,7 +971,8 @@ int32_t window_set_layout_xml(window_id_t wid, const char *xml_str, uint32_t xml
         memcpy(chunk_msg + sizeof(wm_msg_header_t), xml_str + offset, copy_size);
         
         res = ipc_send_message(wm_pid, chunk_msg, sizeof(wm_msg_header_t) + copy_size);
-        while (res == -24) {
+        retry_deadline = get_uptime_ms() + WM_SEND_RETRY_TIMEOUT_MS;
+        while (res == OS_STATUS_LIMIT_REACHED && !deadline_expired(retry_deadline)) {
             process_yield();
             res = ipc_send_message(wm_pid, chunk_msg, sizeof(wm_msg_header_t) + copy_size);
         }
@@ -902,7 +987,8 @@ int32_t window_set_layout_xml(window_id_t wid, const char *xml_str, uint32_t xml
     end_cmd.window_id = wid;
     
     res = ipc_send_message(wm_pid, &end_cmd, sizeof(end_cmd));
-    while (res == -24) {
+    retry_deadline = get_uptime_ms() + WM_SEND_RETRY_TIMEOUT_MS;
+    while (res == OS_STATUS_LIMIT_REACHED && !deadline_expired(retry_deadline)) {
         process_yield();
         res = ipc_send_message(wm_pid, &end_cmd, sizeof(end_cmd));
     }
@@ -973,6 +1059,194 @@ void window_show_notification(const char *title, const char *message)
     os_strcpy_s(cmd.message, sizeof(cmd.message), message);
 
     ipc_send_message(window_get_wm_pid(), &cmd, sizeof(cmd));
+}
+
+uint32_t window_get_capabilities(void)
+{
+    wm_msg_header_t command;
+    memset(&command, 0, sizeof(command));
+    command.type = WM_GET_CAPABILITIES;
+    command.request_id = ++g_wm_request_id;
+    int32_t wm_pid = window_get_wm_pid();
+    if (wm_pid < 0 || ipc_send_message(wm_pid, &command, sizeof(command)) < 0) return 0;
+
+    ipc_message_t response __attribute__((aligned(16)));
+    uint64_t deadline = get_uptime_ms() + WM_RPC_TIMEOUT_MS;
+    while (!deadline_expired(deadline)) {
+        if (ipc_receive_raw(&response) == 0) {
+            if (response.size >= sizeof(wm_msg_header_t) + sizeof(int32_t) + sizeof(uint32_t)) {
+                struct {
+                    wm_msg_header_t header;
+                    int32_t status;
+                    uint32_t capabilities;
+                } *reply = (void *)response.data;
+                if (reply->header.type == WM_GET_CAPABILITIES &&
+                    reply->header.request_id == command.request_id) {
+                    return reply->status == WM_STATUS_OK ? reply->capabilities : 0u;
+                }
+            }
+            preserve_unhandled_message(&response);
+        }
+        process_yield();
+    }
+    os_set_errno(ETIMEDOUT);
+    return 0;
+}
+
+uint32_t *window_get_backing_store(window_id_t wid, uint32_t *out_w, uint32_t *out_h)
+{
+    if (out_w) *out_w = 0u;
+    if (out_h) *out_h = 0u;
+    if (wid == 0u) {
+        os_set_errno(EINVAL);
+        return NULL;
+    }
+
+    wm_msg_header_t request;
+    memset(&request, 0, sizeof(request));
+    request.type = WM_GET_BACKING_STORE;
+    request.request_id = ++g_wm_request_id;
+    request.window_id = wid;
+
+    int32_t wm_pid = window_get_wm_pid();
+    if (wm_pid < 0 ||
+        ipc_send_message(wm_pid, &request, sizeof(request)) < 0) {
+        return NULL;
+    }
+
+    ipc_message_t incoming __attribute__((aligned(16)));
+    uint64_t deadline = get_uptime_ms() + WM_RPC_TIMEOUT_MS;
+    while (!deadline_expired(deadline)) {
+        if (ipc_receive_raw(&incoming) == 0) {
+            if (incoming.size >= sizeof(wm_backing_store_response_t)) {
+                const wm_backing_store_response_t *response =
+                    (const void *)incoming.data;
+                if (response->header.type == WM_BACKING_STORE_READY &&
+                    response->header.request_id == request.request_id) {
+                    if (response->status != WM_STATUS_OK ||
+                        response->shared_memory_handle <= 0 ||
+                        response->width == 0u || response->height == 0u ||
+                        response->size_bytes <
+                            (uint64_t)response->width * response->height *
+                            sizeof(uint32_t)) {
+                        if (response->status != WM_STATUS_OK)
+                            (void)os_errno_from_i32_status(response->status);
+                        else
+                            os_set_errno(EINVAL);
+                        return NULL;
+                    }
+
+                    window_backing_mapping_t *free_slot = NULL;
+                    for (uint32_t i = 0u;
+                         i < sizeof(g_window_backing_mappings) /
+                             sizeof(g_window_backing_mappings[0]);
+                         ++i) {
+                        window_backing_mapping_t *mapping =
+                            &g_window_backing_mappings[i];
+                        if (mapping->window_id == wid) {
+                            if (mapping->handle ==
+                                response->shared_memory_handle) {
+                                if (out_w) *out_w = response->width;
+                                if (out_h) *out_h = response->height;
+                                os_clear_errno();
+                                return mapping->address;
+                            }
+                            (void)os_shared_memory_unmap(
+                                mapping->handle, mapping->address);
+                            memset(mapping, 0, sizeof(*mapping));
+                            free_slot = mapping;
+                            break;
+                        }
+                        if (!free_slot && mapping->window_id == 0u)
+                            free_slot = mapping;
+                    }
+                    if (!free_slot) {
+                        os_set_errno(ENOBUFS);
+                        return NULL;
+                    }
+
+                    uint32_t *address = (uint32_t *)os_shared_memory_map(
+                        response->shared_memory_handle);
+                    if (!address) return NULL;
+                    free_slot->window_id = wid;
+                    free_slot->handle = response->shared_memory_handle;
+                    free_slot->address = address;
+                    free_slot->size_bytes = response->size_bytes;
+                    if (out_w) *out_w = response->width;
+                    if (out_h) *out_h = response->height;
+                    os_clear_errno();
+                    return address;
+                }
+            }
+            preserve_unhandled_message(&incoming);
+        }
+        process_yield();
+    }
+    os_set_errno(ETIMEDOUT);
+    return NULL;
+}
+
+void window_release_backing_store(window_id_t wid)
+{
+    if (wid == 0u) return;
+    for (uint32_t i = 0u;
+         i < sizeof(g_window_backing_mappings) /
+             sizeof(g_window_backing_mappings[0]);
+         ++i) {
+        window_backing_mapping_t *mapping = &g_window_backing_mappings[i];
+        if (mapping->window_id != wid) continue;
+        (void)os_shared_memory_unmap(mapping->handle, mapping->address);
+        memset(mapping, 0, sizeof(*mapping));
+        return;
+    }
+}
+
+void window_damage(window_id_t wid, uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    struct {
+        wm_msg_header_t header;
+        uint32_t x, y, w, h;
+    } command;
+    memset(&command, 0, sizeof(command));
+    command.header.type = WM_DAMAGE;
+    command.header.window_id = wid;
+    command.x = x;
+    command.y = y;
+    command.w = w;
+    command.h = h;
+    (void)ipc_send_message(window_get_wm_pid(), &command, sizeof(command));
+}
+
+void window_begin_transaction(window_id_t wid)
+{
+    wm_msg_header_t command;
+    memset(&command, 0, sizeof(command));
+    command.type = WM_BEGIN_TRANSACTION;
+    command.window_id = wid;
+    (void)ipc_send_message(window_get_wm_pid(), &command, sizeof(command));
+}
+
+void window_end_transaction(window_id_t wid)
+{
+    wm_msg_header_t command;
+    memset(&command, 0, sizeof(command));
+    command.type = WM_END_TRANSACTION;
+    command.window_id = wid;
+    (void)ipc_send_message(window_get_wm_pid(), &command, sizeof(command));
+}
+
+int32_t window_set_icon_path(window_id_t wid, const char *path)
+{
+    if (wid == 0u || !path) return WM_STATUS_INVALID_ARG;
+    struct {
+        wm_msg_header_t header;
+        char path[192];
+    } command;
+    memset(&command, 0, sizeof(command));
+    command.header.type = WM_SET_WINDOW_ICON_PATH;
+    command.header.window_id = wid;
+    os_strcpy_s(command.path, sizeof(command.path), path);
+    return ipc_send_message(window_get_wm_pid(), &command, sizeof(command));
 }
 bool udp_send(uint32_t dst_ipv4_addr,
               uint16_t src_port,
@@ -1172,46 +1446,45 @@ int32_t file_dup2(int32_t oldfd, int32_t newfd)
                              (uint64_t)(int64_t)newfd);
 }
 
-#define SYSCALL_SOCKET_CREATE_NUM  130ULL
-#define SYSCALL_SOCKET_CONNECT_NUM 131ULL
-#define SYSCALL_SOCKET_BIND_NUM    132ULL
-#define SYSCALL_SOCKET_LISTEN_NUM  133ULL
-#define SYSCALL_SOCKET_ACCEPT_NUM  134ULL
-#define SYSCALL_SOCKET_SEND_NUM    135ULL
-#define SYSCALL_SOCKET_RECV_NUM    136ULL
-#define SYSCALL_SOCKET_CLOSE_NUM   137ULL
-
 int32_t socket_create(int32_t type)
 {
-    return (int32_t)syscall1(SYSCALL_SOCKET_CREATE_NUM, (uint64_t)(int64_t)type);
+    return (int32_t)syscall1(SYSCALL_SOCKET_CREATE, (uint64_t)(int64_t)type);
 }
 
 int32_t socket_connect(int32_t sockfd, uint32_t ip, uint16_t port)
 {
-    (void)sockfd;
-    return (int32_t)syscall2(SYSCALL_SOCKET_CONNECT_NUM,
-                             (uint64_t)ip, (uint64_t)port);
+    return (int32_t)syscall3(SYSCALL_SOCKET_CONNECT,
+                             (uint64_t)(int64_t)sockfd,
+                             (uint64_t)ip,
+                             (uint64_t)port);
 }
 
 int32_t socket_bind(int32_t sockfd, uint16_t port)
 {
-    return (int32_t)syscall2(SYSCALL_SOCKET_BIND_NUM,
+    return (int32_t)syscall2(SYSCALL_SOCKET_BIND,
                              (uint64_t)(int64_t)sockfd, (uint64_t)port);
 }
 
 int32_t socket_listen(int32_t sockfd)
 {
-    return (int32_t)syscall1(SYSCALL_SOCKET_LISTEN_NUM, (uint64_t)(int64_t)sockfd);
+    return (int32_t)syscall1(SYSCALL_SOCKET_LISTEN, (uint64_t)(int64_t)sockfd);
+}
+
+int32_t socket_listen_with_backlog(int32_t sockfd, int32_t backlog)
+{
+    return (int32_t)syscall2(SYSCALL_SOCKET_LISTEN_EX,
+                             (uint64_t)(int64_t)sockfd,
+                             (uint64_t)(int64_t)backlog);
 }
 
 int32_t socket_accept(int32_t sockfd)
 {
-    return (int32_t)syscall1(SYSCALL_SOCKET_ACCEPT_NUM, (uint64_t)(int64_t)sockfd);
+    return (int32_t)syscall1(SYSCALL_SOCKET_ACCEPT, (uint64_t)(int64_t)sockfd);
 }
 
 int32_t socket_send(int32_t sockfd, const void *data, uint32_t len)
 {
-    return (int32_t)syscall3(SYSCALL_SOCKET_SEND_NUM,
+    return (int32_t)syscall3(SYSCALL_SOCKET_SEND,
                              (uint64_t)(int64_t)sockfd,
                              (uint64_t)(uintptr_t)data,
                              (uint64_t)len);
@@ -1219,7 +1492,7 @@ int32_t socket_send(int32_t sockfd, const void *data, uint32_t len)
 
 int32_t socket_recv(int32_t sockfd, void *buf, uint32_t buf_len)
 {
-    return (int32_t)syscall3(SYSCALL_SOCKET_RECV_NUM,
+    return (int32_t)syscall3(SYSCALL_SOCKET_RECV,
                              (uint64_t)(int64_t)sockfd,
                              (uint64_t)(uintptr_t)buf,
                              (uint64_t)buf_len);
@@ -1227,7 +1500,41 @@ int32_t socket_recv(int32_t sockfd, void *buf, uint32_t buf_len)
 
 int32_t socket_close(int32_t sockfd)
 {
-    return (int32_t)syscall1(SYSCALL_SOCKET_CLOSE_NUM, (uint64_t)(int64_t)sockfd);
+    return (int32_t)syscall1(SYSCALL_SOCKET_CLOSE, (uint64_t)(int64_t)sockfd);
+}
+
+int32_t socket_get_info(int32_t sockfd, socket_info_t *info_out)
+{
+    return (int32_t)syscall2(SYSCALL_SOCKET_GET_INFO,
+                             (uint64_t)(int64_t)sockfd,
+                             (uint64_t)(uintptr_t)info_out);
+}
+
+int32_t socket_set_option(int32_t sockfd, int32_t level,
+                          int32_t option, int32_t value)
+{
+    return (int32_t)syscall4(SYSCALL_SOCKET_SET_OPTION,
+                             (uint64_t)(int64_t)sockfd,
+                             (uint64_t)(int64_t)level,
+                             (uint64_t)(int64_t)option,
+                             (uint64_t)(int64_t)value);
+}
+
+int32_t socket_get_option(int32_t sockfd, int32_t level,
+                          int32_t option, int32_t *value_out)
+{
+    return (int32_t)syscall4(SYSCALL_SOCKET_GET_OPTION,
+                             (uint64_t)(int64_t)sockfd,
+                             (uint64_t)(int64_t)level,
+                             (uint64_t)(int64_t)option,
+                             (uint64_t)(uintptr_t)value_out);
+}
+
+int32_t socket_shutdown(int32_t sockfd, int32_t how)
+{
+    return (int32_t)syscall2(SYSCALL_SOCKET_SHUTDOWN,
+                             (uint64_t)(int64_t)sockfd,
+                             (uint64_t)(int64_t)how);
 }
 
 #define SYSCALL_KVM_OPEN_NUM   240ULL
@@ -1314,7 +1621,7 @@ int64_t os_get_disk_info(uint32_t index, system_disk_info_t *out_info)
     return syscall2(SYSCALL_GET_DISK_INFO, (uint64_t)index, (uint64_t)(uintptr_t)out_info);
 }
 
-int64_t os_raw_block_read(uint32_t disk_index, uint32_t lba, void *buffer, uint32_t sectors)
+int64_t os_raw_block_read(uint32_t disk_index, uint64_t lba, void *buffer, uint32_t sectors)
 {
     if (buffer == NULL && sectors != 0) {
         return -22;
@@ -1326,7 +1633,7 @@ int64_t os_raw_block_read(uint32_t disk_index, uint32_t lba, void *buffer, uint3
                     (uint64_t)sectors);
 }
 
-int64_t os_raw_block_write(uint32_t disk_index, uint32_t lba, const void *buffer, uint32_t sectors)
+int64_t os_raw_block_write(uint32_t disk_index, uint64_t lba, const void *buffer, uint32_t sectors)
 {
     if (buffer == NULL && sectors != 0) {
         return -22;
@@ -1386,4 +1693,34 @@ int64_t os_get_system_info(system_info_t *out_info)
         return -22;
     }
     return syscall1(SYSCALL_GET_SYSTEM_INFO, (uint64_t)(uintptr_t)out_info);
+}
+
+int32_t os_audio_open(void)
+{
+    return os_errno_from_i32_status((int32_t)syscall0(SYSCALL_AUDIO_OPEN));
+}
+
+int32_t os_audio_get_info(os_audio_info_t *out_info)
+{
+    if (out_info == NULL) return -22;
+    return os_errno_from_i32_status((int32_t)syscall1(
+        SYSCALL_AUDIO_GET_INFO, (uint64_t)(uintptr_t)out_info));
+}
+
+int64_t os_audio_write(const void *pcm, uint64_t bytes)
+{
+    if (pcm == NULL || bytes == 0u || (bytes & 3u) != 0u) return -22;
+    return os_errno_from_i64_status((int64_t)syscall2(
+        SYSCALL_AUDIO_WRITE, (uint64_t)(uintptr_t)pcm, bytes));
+}
+
+int32_t os_audio_drain(uint32_t timeout_ms)
+{
+    return os_errno_from_i32_status((int32_t)syscall1(
+        SYSCALL_AUDIO_DRAIN, timeout_ms));
+}
+
+int32_t os_audio_close(void)
+{
+    return os_errno_from_i32_status((int32_t)syscall0(SYSCALL_AUDIO_CLOSE));
 }

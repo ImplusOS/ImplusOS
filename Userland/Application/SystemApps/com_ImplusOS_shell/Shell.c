@@ -28,14 +28,81 @@ static int  g_char_w = 8;
 static int  g_char_h = 16;
 static int  g_cols = 0;
 static int  g_rows = 0;
+static char *g_screen_chars = NULL;
+
+static int shell_cursor_row(void);
+static int shell_cursor_col(void);
+static void shell_grid_put(int row, int col, char character);
+
+static void shell_draw_run(const char *text, uint32_t color)
+{
+    if (!text || !*text) return;
+
+    int row = shell_cursor_row();
+    int col = shell_cursor_col();
+    int length = (int)strlen(text);
+    for (int i = 0; i < length && col + i < g_cols; ++i)
+        shell_grid_put(row, col + i, text[i]);
+
+    window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
+                     text, color, 14.0f);
+    g_cursor_x += length * g_char_w;
+}
+
+static int shell_cursor_row(void)
+{
+    int row = (g_cursor_y - 4) / g_char_h;
+    if (row < 0) row = 0;
+    if (row >= g_rows) row = g_rows - 1;
+    return row;
+}
+
+static int shell_cursor_col(void)
+{
+    int col = g_cursor_x / g_char_w;
+    if (col < 0) col = 0;
+    if (col >= g_cols) col = g_cols - 1;
+    return col;
+}
+
+static void shell_grid_put(int row, int col, char character)
+{
+    if (!g_screen_chars || row < 0 || row >= g_rows ||
+        col < 0 || col >= g_cols) return;
+    g_screen_chars[row * g_cols + col] = character;
+}
+
+static void shell_redraw_grid(void)
+{
+    draw_fill_rect(0, 0, (uint32_t)g_win_w, (uint32_t)g_win_h,
+                   0xFF1E1E2E);
+    if (!g_screen_chars) return;
+    char *line = (char *)malloc((size_t)g_cols + 1u);
+    if (!line) return;
+    for (int row = 0; row < g_rows; ++row) {
+        memcpy(line, &g_screen_chars[row * g_cols], (size_t)g_cols);
+        int length = g_cols;
+        while (length > 0 && line[length - 1] == ' ') --length;
+        line[length] = '\0';
+        if (length > 0) {
+            window_draw_text(g_win, 0u, (uint32_t)(4 + row * g_char_h),
+                             line, 0xFFCDD6F4, 14.0f);
+        }
+    }
+    free(line);
+}
 
 static void shell_scroll_up(void)
 {
-    g_cursor_y = g_win_h - g_char_h - 4;
-    draw_fill_rect(0, 0, (uint32_t)g_win_w, (uint32_t)g_win_h, 0xFF1E1E2E);
-    draw_present();
+    if (g_screen_chars && g_rows > 1) {
+        memmove(g_screen_chars, g_screen_chars + g_cols,
+                (size_t)(g_rows - 1) * (size_t)g_cols);
+        memset(g_screen_chars + (g_rows - 1) * g_cols, ' ',
+               (size_t)g_cols);
+    }
+    shell_redraw_grid();
     g_cursor_x = 0;
-    g_cursor_y = 4;
+    g_cursor_y = 4 + (g_rows - 1) * g_char_h;
 }
 
 static void shell_putchar(char c)
@@ -55,6 +122,7 @@ static void shell_putchar(char c)
     if (c == '\b') {
         if (g_cursor_x >= g_char_w) {
             g_cursor_x -= g_char_w;
+            shell_grid_put(shell_cursor_row(), shell_cursor_col(), ' ');
             draw_fill_rect((uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
                            (uint32_t)g_char_w, (uint32_t)g_char_h, 0xFF1E1E2E);
         }
@@ -67,6 +135,7 @@ static void shell_putchar(char c)
     }
     if (g_win != 0) {
         char tmp[2] = {c, 0};
+        shell_grid_put(shell_cursor_row(), shell_cursor_col(), c);
         window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
                          tmp, 0xFFCDD6F4, 14.0f);
     }
@@ -84,7 +153,38 @@ static void shell_puts(const char *s)
 {
     if (!s) return;
     while (*s) {
-        shell_putchar(*s++);
+        if (*s == '\n' || *s == '\r' || *s == '\b' || *s == '\t') {
+            shell_putchar(*s++);
+            continue;
+        }
+        int available = g_cols - shell_cursor_col();
+        if (available <= 0) {
+            shell_putchar('\n');
+            continue;
+        }
+        char run[256];
+        int length = 0;
+        while (s[length] && s[length] != '\n' && s[length] != '\r' &&
+               s[length] != '\b' && s[length] != '\t' &&
+               length < available && length < (int)sizeof(run) - 1) {
+            run[length] = s[length];
+            ++length;
+        }
+        if (length == 0) {
+            shell_putchar(*s++);
+            continue;
+        }
+        run[length] = '\0';
+        int row = shell_cursor_row();
+        int col = shell_cursor_col();
+        for (int i = 0; i < length; ++i)
+            shell_grid_put(row, col + i, run[i]);
+        window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
+                         run, 0xFFCDD6F4, 14.0f);
+        g_cursor_x += length * g_char_w;
+        s += length;
+        if (g_cursor_x + g_char_w > g_win_w && *s)
+            shell_putchar('\n');
     }
 }
 
@@ -122,27 +222,15 @@ static void shell_print_u32(uint32_t n)
 static void shell_prompt(void)
 {
     if (g_win != 0) {
-        window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
-                         "ish", 0xFF89B4FA, 14.0f);
-        g_cursor_x += 3 * g_char_w;
-
-        window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
-                         ":", 0xFFCDD6F4, 14.0f);
-        g_cursor_x += g_char_w;
-
-        window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
-                         g_cwd, 0xFFA6E3A1, 14.0f);
-        g_cursor_x += (int)strlen(g_cwd) * g_char_w;
-
-        window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
-                         "$ ", 0xFFCDD6F4, 14.0f);
-        g_cursor_x += 2 * g_char_w;
+        shell_draw_run("ish", 0xFF89B4FA);
+        shell_draw_run(":", 0xFFCDD6F4);
+        shell_draw_run(g_cwd, 0xFFA6E3A1);
+        shell_draw_run("$ ", 0xFFCDD6F4);
     } else {
         shell_puts("ish:");
         shell_puts(g_cwd);
         shell_puts("$ ");
     }
-    draw_present();
 }
 
 static void history_add(const char *cmd)
@@ -295,12 +383,8 @@ static int cmd_ls(int argc, char **argv)
         int is_dir = (de.attributes & 0x10) != 0;
         if (is_dir) {
             if (g_win != 0) {
-                window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
-                                 de.name, 0xFF89B4FA, 14.0f);
-                g_cursor_x += (int)strlen(de.name) * g_char_w;
-                window_draw_text(g_win, (uint32_t)g_cursor_x, (uint32_t)g_cursor_y,
-                                 "/", 0xFF89B4FA, 14.0f);
-                g_cursor_x += g_char_w;
+                shell_draw_run(de.name, 0xFF89B4FA);
+                shell_draw_run("/", 0xFF89B4FA);
             } else {
                 shell_puts(de.name);
                 shell_putchar('/');
@@ -434,8 +518,9 @@ static int cmd_ps(int argc, char **argv)
 static int cmd_clear(int argc, char **argv)
 {
     (void)argc; (void)argv;
+    if (g_screen_chars)
+        memset(g_screen_chars, ' ', (size_t)g_cols * (size_t)g_rows);
     draw_fill_rect(0, 0, (uint32_t)g_win_w, (uint32_t)g_win_h, 0xFF1E1E2E);
-    draw_present();
     g_cursor_x = 0;
     g_cursor_y = 4;
     return 0;
@@ -558,6 +643,124 @@ static const char *find_app_alias(const char *name)
     return (const char *)0;
 }
 
+static const char *const g_builtin_names[] = {
+    "echo", "pwd", "cd", "ls", "cat", "mkdir", "rm", "cp", "touch",
+    "stat", "ps", "clear", "uname", "uptime", "help", "exit"
+};
+
+static int prefix_matches(const char *text, const char *prefix)
+{
+    return strncmp(text, prefix, strlen(prefix)) == 0;
+}
+
+static void completion_consider(const char *candidate, const char *prefix,
+                                char *match, size_t match_size,
+                                int *match_count)
+{
+    if (!candidate || !prefix_matches(candidate, prefix)) return;
+    if (*match_count == 0) {
+        strncpy(match, candidate, match_size - 1u);
+        match[match_size - 1u] = '\0';
+    }
+    ++(*match_count);
+}
+
+static void shell_complete_command(void)
+{
+    int token_start = g_cmd_len;
+    while (token_start > 0 &&
+           g_cmd_buf[token_start - 1] != ' ' &&
+           g_cmd_buf[token_start - 1] != '\t') {
+        --token_start;
+    }
+
+    char prefix[ISH_MAX_PATH];
+    int prefix_len = g_cmd_len - token_start;
+    if (prefix_len >= (int)sizeof(prefix))
+        prefix_len = (int)sizeof(prefix) - 1;
+    memcpy(prefix, g_cmd_buf + token_start, (size_t)prefix_len);
+    prefix[prefix_len] = '\0';
+
+    char match[ISH_MAX_PATH] = {0};
+    int match_count = 0;
+    int first_token = token_start == 0;
+    if (first_token && !strchr(prefix, '/')) {
+        for (size_t i = 0;
+             i < sizeof(g_builtin_names) / sizeof(g_builtin_names[0]); ++i) {
+            completion_consider(g_builtin_names[i], prefix, match,
+                                sizeof(match), &match_count);
+        }
+        for (size_t i = 0;
+             i < sizeof(g_app_aliases) / sizeof(g_app_aliases[0]); ++i) {
+            completion_consider(g_app_aliases[i].name, prefix, match,
+                                sizeof(match), &match_count);
+        }
+    }
+
+    const char *slash = strrchr(prefix, '/');
+    char directory[ISH_MAX_PATH];
+    char name_prefix[ISH_MAX_PATH];
+    char display_base[ISH_MAX_PATH];
+    if (slash) {
+        size_t base_len = (size_t)(slash - prefix + 1);
+        if (base_len >= sizeof(display_base)) base_len = sizeof(display_base) - 1u;
+        memcpy(display_base, prefix, base_len);
+        display_base[base_len] = '\0';
+        strncpy(name_prefix, slash + 1, sizeof(name_prefix) - 1u);
+        if (slash == prefix) {
+            strcpy(directory, "/");
+        } else {
+            char input_dir[ISH_MAX_PATH];
+            size_t dir_len = (size_t)(slash - prefix);
+            if (dir_len >= sizeof(input_dir)) dir_len = sizeof(input_dir) - 1u;
+            memcpy(input_dir, prefix, dir_len);
+            input_dir[dir_len] = '\0';
+            resolve_path(input_dir, directory, ISH_MAX_PATH);
+        }
+    } else {
+        display_base[0] = '\0';
+        strncpy(name_prefix, prefix, sizeof(name_prefix) - 1u);
+        name_prefix[sizeof(name_prefix) - 1u] = '\0';
+        strncpy(directory, g_cwd, sizeof(directory) - 1u);
+        directory[sizeof(directory) - 1u] = '\0';
+    }
+
+    int32_t dh = file_opendir(directory);
+    if (dh >= 0) {
+        file_dirent_t entry;
+        while (file_readdir(dh, &entry) == 0) {
+            if (!entry.name[0] || !prefix_matches(entry.name, name_prefix))
+                continue;
+            char candidate[ISH_MAX_PATH];
+            candidate[0] = '\0';
+            strncat(candidate, display_base, sizeof(candidate) - 1u);
+            strncat(candidate, entry.name,
+                    sizeof(candidate) - strlen(candidate) - 1u);
+            if ((entry.attributes & 0x10u) != 0u) {
+                strncat(candidate, "/",
+                        sizeof(candidate) - strlen(candidate) - 1u);
+            }
+            completion_consider(candidate, prefix, match,
+                                sizeof(match), &match_count);
+        }
+        file_closedir(dh);
+    }
+
+    if (match_count == 1 && (int)strlen(match) >= prefix_len) {
+        const char *suffix = match + prefix_len;
+        while (*suffix && g_cmd_len < ISH_MAX_CMD_LEN - 1) {
+            g_cmd_buf[g_cmd_len++] = *suffix;
+            shell_putchar(*suffix++);
+        }
+        if (g_cmd_len < ISH_MAX_CMD_LEN - 1 &&
+            g_cmd_len > 0 && g_cmd_buf[g_cmd_len - 1] != '/') {
+            g_cmd_buf[g_cmd_len++] = ' ';
+            shell_putchar(' ');
+        }
+        g_cmd_buf[g_cmd_len] = '\0';
+    }
+}
+
 static int execute_builtin(int argc, char **argv)
 {
     if (argc == 0) return -1;
@@ -618,14 +821,12 @@ static void execute_command(char *cmd)
 
     int ret = execute_builtin(argc, argv);
     if (ret >= 0) {
-        draw_present();
         return;
     }
 
     const char *alias_path = find_app_alias(argv[0]);
     if (alias_path) {
         execute_external(alias_path);
-        draw_present();
         return;
     }
 
@@ -644,7 +845,6 @@ static void execute_command(char *cmd)
             shell_puts(": command not found\n");
         }
     }
-    draw_present();
 }
 
 static void replace_current_command(const char *cmd)
@@ -659,7 +859,6 @@ static void replace_current_command(const char *cmd)
     g_cmd_buf[ISH_MAX_CMD_LEN - 1] = '\0';
     g_cmd_len = (int)strlen(g_cmd_buf);
     shell_puts(g_cmd_buf);
-    draw_present();
 }
 
 void _start(void)
@@ -681,7 +880,13 @@ void _start(void)
         g_win_h = 480;
     }
     g_cols = g_win_w / g_char_w;
-    g_rows = g_win_h / g_char_h;
+    g_rows = (g_win_h - 4) / g_char_h;
+    if (g_cols < 1) g_cols = 1;
+    if (g_rows < 1) g_rows = 1;
+    g_screen_chars =
+        (char *)malloc((size_t)g_cols * (size_t)g_rows);
+    if (g_screen_chars)
+        memset(g_screen_chars, ' ', (size_t)g_cols * (size_t)g_rows);
 
     draw_fill_rect(0, 0, (uint32_t)g_win_w, (uint32_t)g_win_h, 0xFF1E1E2E);
 
@@ -689,8 +894,14 @@ void _start(void)
     g_cursor_y = 4;
 
     if (g_win != 0) {
+        const char *banner = "ImplusOS Shell (ish) v1.0";
+        for (int i = 0; banner[i] && i + 1 < g_cols; ++i)
+            shell_grid_put(0, i + 1, banner[i]);
         window_draw_text(g_win, 8, 4, "ImplusOS Shell (ish) v1.0", 0xFFF5C2E7, 14.0f);
         g_cursor_y += g_char_h;
+        const char *hint = "Type 'help' for available commands.";
+        for (int i = 0; hint[i] && i + 1 < g_cols; ++i)
+            shell_grid_put(1, i + 1, hint[i]);
         window_draw_text(g_win, 8, (uint32_t)g_cursor_y, "Type 'help' for available commands.", 0xFF6C7086, 14.0f);
         g_cursor_y += g_char_h;
         g_cursor_x = 0;
@@ -700,7 +911,6 @@ void _start(void)
         shell_puts("Type 'help' for available commands.\n\n");
     }
 
-    draw_present();
     shell_prompt();
 
     g_cmd_len = 0;
@@ -716,7 +926,6 @@ void _start(void)
 
             if (c == '\n' || kbd.keycode == 0x1C) {
                 shell_putchar('\n');
-                draw_present();
                 g_cmd_buf[g_cmd_len] = '\0';
                 execute_command(g_cmd_buf);
                 g_cmd_len = 0;
@@ -730,8 +939,12 @@ void _start(void)
                     g_cmd_len--;
                     g_cmd_buf[g_cmd_len] = '\0';
                     shell_putchar('\b');
-                    draw_present();
                 }
+                continue;
+            }
+
+            if (c == '\t' || kbd.keycode == 0x0F) {
+                shell_complete_command();
                 continue;
             }
 
@@ -757,7 +970,6 @@ void _start(void)
             if (c >= 0x20 && c <= 0x7E && g_cmd_len < ISH_MAX_CMD_LEN - 1) {
                 g_cmd_buf[g_cmd_len++] = c;
                 shell_putchar(c);
-                draw_present();
             }
         }
         process_yield();

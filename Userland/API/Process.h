@@ -4,10 +4,12 @@
 
 typedef void (*signal_handler_t)(int32_t signum);
 
-signal_handler_t signal(int32_t signum, signal_handler_t handler);
+signal_handler_t os_signal(int32_t signum, signal_handler_t handler);
 void process_yield(void);
 int32_t process_get_current_pid(void);
 int32_t process_spawn(const char *path);
+int32_t process_spawn_with_arg(const char *path, const char *argument);
+int32_t process_get_launch_argument(char *buffer, uint32_t capacity);
 int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options);
 int32_t process_getppid(void);
 void process_exit(int32_t status);

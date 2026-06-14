@@ -15,6 +15,7 @@
 #define PAGE_NX      (1ULL << 63)
 #define PAGE_SIZE 4096ULL
 #define PAGE_MASK 0xFFFFFFFFFFFFF000ULL
+#define PAGE_FRAME_MASK 0x000FFFFFFFFFF000ULL
 
 #define PML4_INDEX(x) (((x) >> 39) & 0x1FF)
 #define PDPT_INDEX(x) (((x) >> 30) & 0x1FF)
@@ -29,6 +30,8 @@ void paging_switch_cr3(uint64_t cr3);
 uint64_t paging_create_process_space(void);
 void paging_destroy_process_space(uint64_t cr3);
 int paging_set_user_access(uint64_t cr3, uint64_t start, uint64_t size, int enable_user);
+int paging_protect_user_range(uint64_t cr3, uint64_t start, uint64_t size,
+                              uint64_t flags);
 int paging_unmap_range(uint64_t cr3, uint64_t start, uint64_t size);
 int paging_is_user_range_mapped(uint64_t cr3, uint64_t start, uint64_t size);
 int paging_map_user_page(uint64_t cr3,

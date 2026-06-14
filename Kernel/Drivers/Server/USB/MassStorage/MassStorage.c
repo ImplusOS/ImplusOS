@@ -42,6 +42,7 @@ typedef struct {
     uint16_t ep_out_mps;
     uint32_t block_size;
     uint32_t max_lba;
+    bool     write_protected;
 } usb_bot_device_t;
 
 #define MAX_BOT_DEVICES 4
@@ -52,6 +53,7 @@ static uint32_t g_bot_current_device = 0;
 static uint32_t bot_tag        = 1;
 static uint32_t bot_block_size = 512;
 static uint32_t bot_max_lba    = 0;
+static bool     bot_write_protected = false;
 static uint8_t  bot_bounce_buffer[65536];
 
 void bot_add_device(uint8_t addr, uint8_t interface, uint8_t ep_in, uint8_t ep_out, uint16_t ep_in_mps, uint16_t ep_out_mps)
@@ -84,6 +86,7 @@ bool bot_select_device(uint32_t index)
     g_mass_storage_ep_out_mps = g_bot_devices[index].ep_out_mps;
     bot_block_size = g_bot_devices[index].block_size;
     bot_max_lba = g_bot_devices[index].max_lba;
+    bot_write_protected = g_bot_devices[index].write_protected;
     return true;
 }
 
@@ -91,6 +94,16 @@ uint64_t bot_get_total_bytes(void)
 {
     if (g_bot_device_count == 0) return 0;
     return (uint64_t)(g_bot_devices[g_bot_current_device].max_lba + 1) * g_bot_devices[g_bot_current_device].block_size;
+}
+
+uint32_t bot_get_block_size(void)
+{
+    return bot_block_size;
+}
+
+bool bot_is_read_only(void)
+{
+    return bot_write_protected;
 }
 
 static void bot_clear_endpoint_halts(void);
@@ -221,6 +234,24 @@ bool bot_read_capacity(void)
     return true;
 }
 
+static bool bot_read_write_protect(bool *write_protected)
+{
+    uint8_t cb[16] = {0};
+    uint8_t buf[4] = {0};
+
+    cb[0] = 0x1A;
+    cb[1] = 0x08;
+    cb[2] = 0x3F;
+    cb[4] = sizeof(buf);
+    if (!bot_execute_command(cb, 6, 1, sizeof(buf), buf)) {
+        return false;
+    }
+    if (write_protected != NULL) {
+        *write_protected = (buf[2] & 0x80u) != 0u;
+    }
+    return true;
+}
+
 bool bot_init(void)
 {
     if (g_bot_device_count == 0) return false;
@@ -246,6 +277,12 @@ bool bot_init(void)
 
         if (!bot_retry_simple_command(bot_read_capacity, 4, 20)) {
             continue;
+        }
+
+        bool write_protected = false;
+        if (bot_read_write_protect(&write_protected)) {
+            bot_write_protected = write_protected;
+            g_bot_devices[i].write_protected = write_protected;
         }
 
         if (!bot_wait_ready(4, 10, 40)) {
@@ -385,7 +422,8 @@ bool bot_read_sectors(uint32_t lba, uint8_t *buffer, uint32_t sectors)
 
 bool bot_write_sectors(uint32_t lba, const uint8_t *buffer, uint32_t sectors)
 {
-    if (g_mass_storage_addr == 0 || g_mass_storage_ep_in == 0 || g_mass_storage_ep_out == 0) return false;
+    if (bot_write_protected || g_mass_storage_addr == 0 ||
+        g_mass_storage_ep_in == 0 || g_mass_storage_ep_out == 0) return false;
 
     uint32_t total_sectors_done = 0;
 
@@ -463,4 +501,15 @@ bool bot_write_sectors(uint32_t lba, const uint8_t *buffer, uint32_t sectors)
     }
 
     return true;
+}
+
+bool bot_flush(void)
+{
+    if (g_mass_storage_addr == 0 || g_mass_storage_ep_in == 0 ||
+        g_mass_storage_ep_out == 0) {
+        return false;
+    }
+    uint8_t cb[16] = {0};
+    cb[0] = 0x35;
+    return bot_execute_command(cb, 10u, 0u, 0u, NULL);
 }

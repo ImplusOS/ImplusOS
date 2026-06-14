@@ -15,7 +15,7 @@
 #define DMA_POOL_SIZE   (8u * 1024u * 1024u)
 #endif
 #define DMA_MIN_ALIGN       64u
-#define DMA_MAX_BLOCKS      4096u
+#define DMA_MAX_BLOCKS      8192u
 #define DMA_MAX_SEGMENTS    16u
 #define DMA_GROWTH_CHUNK    (4u * 1024u * 1024u)
 #ifndef VIRT_TO_PHYS_OFFSET
@@ -48,6 +48,7 @@ typedef struct {
 
 static dma_pool_t g_pool;
 static spinlock_t g_lock;
+static volatile uint32_t g_lock_initialized = 0;
 
 static size_t dma_align_up(size_t value, size_t align)
 {
@@ -74,8 +75,6 @@ static bool dma_add_segment_locked(size_t min_bytes)
         return false;
     }
 
-    memset(virt, 0, num_pages * PAGE_SIZE);
-
     dma_segment_t *segment = &g_pool.segments[g_pool.segment_count++];
     segment->base_virt = (uint8_t *)virt;
     segment->base_phys = (uint64_t)(uintptr_t)virt + VIRT_TO_PHYS_OFFSET;
@@ -97,7 +96,9 @@ static bool dma_init_locked(void)
 
 bool dma_init(void)
 {
-    spinlock_init(&g_lock);
+    if (__atomic_exchange_n(&g_lock_initialized, 1u, __ATOMIC_ACQ_REL) == 0u) {
+        spinlock_init(&g_lock);
+    }
     spinlock_lock(&g_lock);
     bool ok = dma_init_locked();
     spinlock_unlock(&g_lock);
@@ -149,7 +150,9 @@ static void dma_coalesce_locked(void)
     g_pool.block_cnt = write_index;
 }
 
-static dma_block_t *dma_find_reusable_block_locked(size_t aligned_bytes, size_t need_align)
+static dma_block_t *dma_find_reusable_block_locked(size_t aligned_bytes,
+                                                   size_t need_align,
+                                                   uint64_t max_address)
 {
     dma_block_t *best = NULL;
     size_t best_diff = SIZE_MAX;
@@ -160,6 +163,11 @@ static dma_block_t *dma_find_reusable_block_locked(size_t aligned_bytes, size_t 
             continue;
         }
         if ((block->virt & (need_align - 1u)) != 0u) {
+            continue;
+        }
+        if (max_address != 0u &&
+            (block->phys > max_address ||
+             aligned_bytes - 1u > max_address - block->phys)) {
             continue;
         }
 
@@ -191,9 +199,16 @@ static dma_block_t *dma_append_block_locked(uint16_t segment_index,
     return block;
 }
 
-void *dma_alloc(size_t bytes, uint64_t *phys_out)
+void *dma_alloc_ex(size_t bytes, size_t alignment, uint64_t max_address,
+                   uint64_t *phys_out)
 {
     if (bytes == 0u) {
+        return NULL;
+    }
+    if (alignment < DMA_MIN_ALIGN) {
+        alignment = DMA_MIN_ALIGN;
+    }
+    if ((alignment & (alignment - 1u)) != 0u) {
         return NULL;
     }
 
@@ -204,10 +219,14 @@ void *dma_alloc(size_t bytes, uint64_t *phys_out)
         return NULL;
     }
 
-    size_t need_align = (bytes >= (size_t)PAGE_SIZE) ? (size_t)PAGE_SIZE : (size_t)DMA_MIN_ALIGN;
+    size_t need_align = alignment;
+    if (bytes >= (size_t)PAGE_SIZE && need_align < (size_t)PAGE_SIZE) {
+        need_align = (size_t)PAGE_SIZE;
+    }
     size_t aligned_bytes = dma_align_up(bytes, need_align);
 
-    dma_block_t *reuse = dma_find_reusable_block_locked(aligned_bytes, need_align);
+    dma_block_t *reuse =
+        dma_find_reusable_block_locked(aligned_bytes, need_align, max_address);
     if (reuse != NULL) {
         reuse->used = true;
         if (phys_out != NULL) {
@@ -227,6 +246,11 @@ void *dma_alloc(size_t bytes, uint64_t *phys_out)
 
         uintptr_t virt = (uintptr_t)(segment->base_virt + aligned_offset);
         uint64_t phys = segment->base_phys + aligned_offset;
+        if (max_address != 0u &&
+            (phys > max_address ||
+             aligned_bytes - 1u > max_address - phys)) {
+            continue;
+        }
         dma_block_t *block = dma_append_block_locked(segment_index, virt, phys, aligned_bytes);
         if (block == NULL) {
             spinlock_unlock(&g_lock);
@@ -248,8 +272,16 @@ void *dma_alloc(size_t bytes, uint64_t *phys_out)
     }
 
     dma_segment_t *segment = &g_pool.segments[g_pool.segment_count - 1u];
-    uintptr_t virt = (uintptr_t)segment->base_virt;
-    uint64_t phys = segment->base_phys;
+    size_t aligned_offset = dma_align_up(segment->offset, need_align);
+    uintptr_t virt = (uintptr_t)(segment->base_virt + aligned_offset);
+    uint64_t phys = segment->base_phys + aligned_offset;
+    if (aligned_offset + aligned_bytes > segment->total ||
+        (max_address != 0u &&
+         (phys > max_address ||
+          aligned_bytes - 1u > max_address - phys))) {
+        spinlock_unlock(&g_lock);
+        return NULL;
+    }
     dma_block_t *block = dma_append_block_locked((uint16_t)(g_pool.segment_count - 1u),
                                                  virt,
                                                  phys,
@@ -259,13 +291,20 @@ void *dma_alloc(size_t bytes, uint64_t *phys_out)
         return NULL;
     }
 
-    segment->offset = aligned_bytes;
+    segment->offset = aligned_offset + aligned_bytes;
     if (phys_out != NULL) {
         *phys_out = phys;
     }
     spinlock_unlock(&g_lock);
     memset((void *)virt, 0, aligned_bytes);
     return (void *)virt;
+}
+
+void *dma_alloc(size_t bytes, uint64_t *phys_out)
+{
+    size_t alignment =
+        (bytes >= (size_t)PAGE_SIZE) ? (size_t)PAGE_SIZE : (size_t)DMA_MIN_ALIGN;
+    return dma_alloc_ex(bytes, alignment, 0u, phys_out);
 }
 
 void dma_free(void *virt, size_t bytes)
@@ -285,10 +324,12 @@ void dma_free(void *virt, size_t bytes)
             return;
         }
 
+        uintptr_t zero_virt = block->virt;
+        size_t zero_size = block->size;
         block->used = false;
-        memset((void *)block->virt, 0, block->size);
         dma_coalesce_locked();
         spinlock_unlock(&g_lock);
+        memset((void *)zero_virt, 0, zero_size);
         return;
     }
     spinlock_unlock(&g_lock);

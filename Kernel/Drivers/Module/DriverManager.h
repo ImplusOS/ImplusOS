@@ -73,8 +73,8 @@ int32_t driver_manager_input_ps2_read_keyboard(driver_keyboard_event_t *out_even
 int32_t driver_manager_input_ps2_read_mouse(driver_mouse_event_t *out_event);
 
 void driver_manager_input_usb_init(void);
-bool driver_manager_input_usb_read_sectors(uint32_t lba, uint8_t *buffer, uint32_t sectors);
-bool driver_manager_input_usb_write_sectors(uint32_t lba, const uint8_t *buffer, uint32_t sectors);
+bool driver_manager_input_usb_read_sectors(uint64_t lba, uint8_t *buffer, uint32_t sectors);
+bool driver_manager_input_usb_write_sectors(uint64_t lba, const uint8_t *buffer, uint32_t sectors);
 int32_t driver_manager_input_usb_read_keyboard(driver_keyboard_event_t *out_event);
 int32_t driver_manager_input_usb_read_mouse(driver_mouse_event_t *out_event);
 void driver_manager_input_usb_poll(void);

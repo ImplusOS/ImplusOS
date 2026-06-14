@@ -1,5 +1,6 @@
 #include "Syscall_Main.h"
 #include "Core/process/ProcessManager.h"
+#include "Core/usercopy/Usercopy.h"
 #include "Core/timer/Timer.h"
 #include "Drivers/RTC/RTC.h"
 
@@ -21,14 +22,15 @@ int64_t syscall_clock_gettime(int32_t clk_id, uint64_t tp_ptr)
         return -14;
     }
 
+    kernel_timespec_t value = {0};
     if (clk_id == CLOCK_MONOTONIC) {
         uint32_t hz = timer_hz();
         if (hz == 0) hz = 60;
         uint64_t ticks = timer_ticks();
         uint64_t ms = (ticks * 1000ULL) / hz;
-        tp->tv_sec  = (int64_t)(ms / 1000ULL);
-        tp->tv_nsec = (int64_t)((ms % 1000ULL) * 1000000LL);
-        return 0;
+        value.tv_sec  = (int64_t)(ms / 1000ULL);
+        value.tv_nsec = (int64_t)((ms % 1000ULL) * 1000000LL);
+        return (copy_to_user(tp, &value, sizeof(value)) == 0u) ? 0 : -14;
     }
 
     if (clk_id == CLOCK_REALTIME) {
@@ -50,9 +52,9 @@ int64_t syscall_clock_gettime(int32_t clk_id, uint64_t tp_ptr)
         days += (uint64_t)(rtc.day - 1);
         uint64_t secs = days * 86400ULL + (uint64_t)rtc.hour * 3600ULL +
                         (uint64_t)rtc.minute * 60ULL + (uint64_t)rtc.second;
-        tp->tv_sec  = (int64_t)secs;
-        tp->tv_nsec = 0;
-        return 0;
+        value.tv_sec  = (int64_t)secs;
+        value.tv_nsec = 0;
+        return (copy_to_user(tp, &value, sizeof(value)) == 0u) ? 0 : -14;
     }
 
     return -22;
@@ -67,9 +69,11 @@ int64_t syscall_clock_getres(int32_t clk_id, uint64_t res_ptr)
     }
 
     if (clk_id == CLOCK_REALTIME || clk_id == CLOCK_MONOTONIC) {
-        res->tv_sec  = 0;
-        res->tv_nsec = 1000000;
-        return 0;
+        kernel_timespec_t value = {
+            .tv_sec = 0,
+            .tv_nsec = 1000000,
+        };
+        return (copy_to_user(res, &value, sizeof(value)) == 0u) ? 0 : -14;
     }
     return -22;
 }

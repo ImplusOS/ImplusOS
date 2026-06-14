@@ -1,7 +1,6 @@
 #include "SHA256.h"
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
 static const uint32_t k[64] = {
@@ -58,86 +57,89 @@ static inline uint32_t small_sigma1(uint32_t x)
     return rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10);
 }
 
+static void sha256_process_block(const uint8_t block[64], uint32_t h[8])
+{
+    uint32_t w[64];
+    for (int i = 0; i < 16; ++i) {
+        size_t offset = (size_t)i * 4u;
+        w[i] = ((uint32_t)block[offset] << 24) |
+               ((uint32_t)block[offset + 1u] << 16) |
+               ((uint32_t)block[offset + 2u] << 8) |
+               (uint32_t)block[offset + 3u];
+    }
+    for (int i = 16; i < 64; ++i) {
+        w[i] = small_sigma1(w[i - 2]) + w[i - 7] +
+               small_sigma0(w[i - 15]) + w[i - 16];
+    }
+
+    uint32_t a = h[0];
+    uint32_t b = h[1];
+    uint32_t c = h[2];
+    uint32_t d = h[3];
+    uint32_t e = h[4];
+    uint32_t f = h[5];
+    uint32_t g = h[6];
+    uint32_t hh = h[7];
+
+    for (int i = 0; i < 64; ++i) {
+        uint32_t t1 = hh + big_sigma1(e) + ch(e, f, g) + k[i] + w[i];
+        uint32_t t2 = big_sigma0(a) + maj(a, b, c);
+        hh = g;
+        g = f;
+        f = e;
+        e = d + t1;
+        d = c;
+        c = b;
+        b = a;
+        a = t1 + t2;
+    }
+
+    h[0] += a;
+    h[1] += b;
+    h[2] += c;
+    h[3] += d;
+    h[4] += e;
+    h[5] += f;
+    h[6] += g;
+    h[7] += hh;
+}
+
 void crypto_sha256(const uint8_t *data, size_t len, uint8_t out_hash[32])
 {
     uint32_t h[8] = {
-        0x6a09e667u,
-        0xbb67ae85u,
-        0x3c6ef372u,
-        0xa54ff53au,
-        0x510e527fu,
-        0x9b05688cu,
-        0x1f83d9abu,
-        0x5be0cd19u
+        0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
+        0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u
     };
+    size_t offset = 0;
 
-    size_t bit_len = len * 8;
-    size_t padded_len = ((len + 9 + 63) / 64) * 64;
-    uint8_t *buffer = (uint8_t *)malloc(padded_len);
-    if (!buffer) {
-        memset(out_hash, 0, 32);
+    if (out_hash == NULL || (data == NULL && len != 0u)) {
         return;
     }
 
-    memcpy(buffer, data, len);
-    buffer[len] = 0x80;
-    memset(buffer + len + 1, 0, padded_len - len - 1);
-
-    buffer[padded_len - 8] = (uint8_t)(bit_len >> 56);
-    buffer[padded_len - 7] = (uint8_t)(bit_len >> 48);
-    buffer[padded_len - 6] = (uint8_t)(bit_len >> 40);
-    buffer[padded_len - 5] = (uint8_t)(bit_len >> 32);
-    buffer[padded_len - 4] = (uint8_t)(bit_len >> 24);
-    buffer[padded_len - 3] = (uint8_t)(bit_len >> 16);
-    buffer[padded_len - 2] = (uint8_t)(bit_len >> 8);
-    buffer[padded_len - 1] = (uint8_t)(bit_len & 0xFF);
-
-    for (size_t chunk = 0; chunk < padded_len; chunk += 64) {
-        uint32_t w[64];
-        for (int i = 0; i < 16; ++i) {
-            size_t offset = chunk + i * 4;
-            w[i] = ((uint32_t)buffer[offset] << 24) |
-                   ((uint32_t)buffer[offset + 1] << 16) |
-                   ((uint32_t)buffer[offset + 2] << 8) |
-                   ((uint32_t)buffer[offset + 3]);
-        }
-        for (int i = 16; i < 64; ++i) {
-            w[i] = small_sigma1(w[i - 2]) + w[i - 7] + small_sigma0(w[i - 15]) + w[i - 16];
-        }
-
-        uint32_t a = h[0];
-        uint32_t b = h[1];
-        uint32_t c = h[2];
-        uint32_t d = h[3];
-        uint32_t e = h[4];
-        uint32_t f = h[5];
-        uint32_t g = h[6];
-        uint32_t hh = h[7];
-
-        for (int i = 0; i < 64; ++i) {
-            uint32_t t1 = hh + big_sigma1(e) + ch(e, f, g) + k[i] + w[i];
-            uint32_t t2 = big_sigma0(a) + maj(a, b, c);
-            hh = g;
-            g = f;
-            f = e;
-            e = d + t1;
-            d = c;
-            c = b;
-            b = a;
-            a = t1 + t2;
-        }
-
-        h[0] += a;
-        h[1] += b;
-        h[2] += c;
-        h[3] += d;
-        h[4] += e;
-        h[5] += f;
-        h[6] += g;
-        h[7] += hh;
+    while (len - offset >= 64u) {
+        sha256_process_block(data + offset, h);
+        offset += 64u;
     }
 
-    free(buffer);
+    uint8_t tail[128];
+    size_t tail_len = len - offset;
+    if (tail_len != 0u) {
+        memcpy(tail, data + offset, tail_len);
+    }
+    tail[tail_len++] = 0x80u;
+
+    size_t padded_len = tail_len <= 56u ? 64u : 128u;
+    memset(tail + tail_len, 0, padded_len - tail_len);
+
+    uint64_t bit_len = (uint64_t)len * 8u;
+    for (uint32_t i = 0; i < 8u; ++i) {
+        tail[padded_len - 1u - i] = (uint8_t)(bit_len >> (i * 8u));
+    }
+
+    sha256_process_block(tail, h);
+    if (padded_len == 128u) {
+        sha256_process_block(tail + 64u, h);
+    }
 
     for (int i = 0; i < 8; ++i) {
         out_hash[i * 4 + 0] = (uint8_t)(h[i] >> 24);

@@ -8,6 +8,7 @@
 #include "Drivers/Module/InputManager.h"
 #include "Network/network_main.h"
 #include "smp/SMP_Main.h"
+#include "Platform/timer/HPET.h"
 
 static const timer_hal_t* g_timer_hal = NULL;
 static volatile uint64_t g_tick_count = 0;
@@ -17,25 +18,26 @@ static volatile uint32_t g_timer_clock_started = 0;
 static volatile uint32_t g_timer_services_started = 0;
 static uint32_t g_requested_hz = 0;
 
-#define TIMER_DEFAULT_HZ 60u
+#define TIMER_DEFAULT_HZ 250u
 
 static void timer_core_handler(void) {
-    if (smp_get_current_cpu_id() == 0) {
-        g_tick_count++;
+    if (smp_get_current_cpu_id() != 0u) {
+        return;
+    }
+    g_tick_count++;
 
-        if (__atomic_load_n(&g_timer_clock_started, __ATOMIC_ACQUIRE) != 0u) {
-            timer_callback_t cb = g_tick_callback;
-            if (cb) {
-                cb(g_tick_count);
-            }
+    if (__atomic_load_n(&g_timer_clock_started, __ATOMIC_ACQUIRE) != 0u) {
+        timer_callback_t cb = g_tick_callback;
+        if (cb) {
+            cb(g_tick_count);
         }
+    }
 
-        if (__atomic_load_n(&g_timer_services_started, __ATOMIC_ACQUIRE) != 0u) {
-            process_on_timer_tick();
-            input_manager_schedule_poll();
-            network_stack_on_timer_tick();
-            wm_kernel_on_timer();
-        }
+    if (__atomic_load_n(&g_timer_services_started, __ATOMIC_ACQUIRE) != 0u) {
+        process_on_timer_tick();
+        input_manager_schedule_poll();
+        network_stack_on_timer_tick();
+        wm_kernel_on_timer();
     }
 }
 
@@ -46,6 +48,7 @@ void timer_init(const timer_hal_t* hal) {
 
     g_timer_hal = hal;
     g_requested_hz = TIMER_DEFAULT_HZ;
+    (void)hpet_init();
 
     if (g_timer_hal && g_timer_hal->init) {
         if (g_timer_hal->set_handler) {
@@ -85,6 +88,19 @@ uint64_t timer_ticks(void) {
 
 uint32_t timer_hz(void) {
     return (g_requested_hz != 0) ? g_requested_hz : TIMER_DEFAULT_HZ;
+}
+
+uint64_t timer_monotonic_ns(void) {
+    if (hpet_is_available()) {
+        return hpet_monotonic_ns();
+    }
+    uint32_t hz = timer_hz();
+    uint64_t ticks = timer_ticks();
+    if (hz == 0u) {
+        return 0u;
+    }
+    return (ticks / hz) * 1000000000ULL +
+           ((ticks % hz) * 1000000000ULL) / hz;
 }
 
 void timer_disable_irq0(void) {

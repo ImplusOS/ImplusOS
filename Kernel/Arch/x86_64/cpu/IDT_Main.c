@@ -9,6 +9,7 @@
 #include "smp/SMP_Main.h"
 #include "Debug/serial/Serial.h"
 #include "Debug/panic/Panic.h"
+#include "Drivers/Module/InterruptManager.h"
 
 #include <stdint.h>
 
@@ -27,6 +28,7 @@ extern void isr_nmi(void);
 extern void isr_general_protection(void);
 extern void isr_machine_check(void);
 extern void isr_tlb_shootdown(void);
+extern void (*isr_driver_table[])(void);
 extern void load_idt(IDT_Ptr *idt_ptr);
 extern void syscall_enter_user_from_frame(uint64_t next_saved_rsp,
                                           uint64_t next_user_rsp);
@@ -184,6 +186,7 @@ void irq_handler(uint16_t irq_num)
     if (irq_num < MAX_IRQS && irq_routines[irq_num]) {
         irq_routines[irq_num]();
     }
+    interrupt_manager_dispatch(irq_num);
 
     if (irq_num >= 32) {
         platform_interrupts_eoi(irq_num);
@@ -260,6 +263,9 @@ void init_idt(void)
     }
 
     set_interrupt_handler(32, isr_irq0);
+    for (uint16_t vector = 64u; vector <= 127u; ++vector) {
+        set_interrupt_handler(vector, isr_driver_table[vector - 64u]);
+    }
     set_interrupt_handler_with_ist(2, isr_nmi, 2);
     set_interrupt_handler_with_ist(8, isr_double_fault, 1);
     set_interrupt_handler(13, isr_general_protection);

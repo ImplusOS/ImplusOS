@@ -53,7 +53,6 @@ static void render(void)
     for (int i = 0; i < g_log_count; ++i) {
         window_draw_text(g_win, 18, (uint32_t)(64 + i * 22), g_log[i], 0xFFD8E8EE, 13.0f);
     }
-    draw_present();
 }
 
 static void run_tests(void)

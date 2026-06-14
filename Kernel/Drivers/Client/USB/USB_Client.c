@@ -5,6 +5,7 @@
 
 static const usb_master_vtable_t *g_usb_vtable = NULL;
 static volatile uint32_t g_usb_poll_pending = 0;
+static uint32_t g_usb_storage_index = 0;
 
 static bool usb_driver_client_refresh(void)
 {
@@ -24,26 +25,43 @@ void usb_driver_client_init(void)
     }
 }
 
-bool usb_driver_client_read_sectors(uint32_t lba, uint8_t *buffer, uint32_t sectors)
+bool usb_driver_client_read_sectors(uint64_t lba, uint8_t *buffer, uint32_t sectors)
 {
     if (!usb_driver_client_refresh()) {
         return false;
     }
-    if (g_usb_vtable == NULL || g_usb_vtable->storage.read_sectors == NULL) {
+    if (g_usb_vtable == NULL || g_usb_vtable->storage.read_blocks == NULL) {
         return false;
     }
-    return g_usb_vtable->storage.read_sectors(lba, buffer, sectors);
+    driver_block_info_t info;
+    if (!g_usb_vtable->storage.get_info(g_usb_storage_index, &info) ||
+        info.logical_block_size < 512u ||
+        (info.logical_block_size % 512u) != 0u) {
+        return false;
+    }
+    uint32_t factor = info.logical_block_size / 512u;
+    if (factor != 1u || lba > UINT64_MAX / 512u) {
+        return false;
+    }
+    return g_usb_vtable->storage.read_blocks(g_usb_storage_index, lba,
+                                              buffer, sectors);
 }
 
-bool usb_driver_client_write_sectors(uint32_t lba, const uint8_t *buffer, uint32_t sectors)
+bool usb_driver_client_write_sectors(uint64_t lba, const uint8_t *buffer, uint32_t sectors)
 {
     if (!usb_driver_client_refresh()) {
         return false;
     }
-    if (g_usb_vtable == NULL || g_usb_vtable->storage.write_sectors == NULL) {
+    if (g_usb_vtable == NULL || g_usb_vtable->storage.write_blocks == NULL) {
         return false;
     }
-    return g_usb_vtable->storage.write_sectors(lba, buffer, sectors);
+    driver_block_info_t info;
+    if (!g_usb_vtable->storage.get_info(g_usb_storage_index, &info) ||
+        info.logical_block_size != 512u) {
+        return false;
+    }
+    return g_usb_vtable->storage.write_blocks(g_usb_storage_index, lba,
+                                               buffer, sectors);
 }
 
 uint32_t usb_driver_client_get_device_count(void)
@@ -56,15 +74,28 @@ uint32_t usb_driver_client_get_device_count(void)
 bool usb_driver_client_select_device(uint32_t index)
 {
     if (!usb_driver_client_refresh()) return false;
-    if (g_usb_vtable == NULL || g_usb_vtable->storage.select_device == NULL) return false;
-    return g_usb_vtable->storage.select_device(index);
+    if (g_usb_vtable == NULL ||
+        index >= g_usb_vtable->storage.get_device_count()) return false;
+    g_usb_storage_index = index;
+    return true;
 }
 
 uint64_t usb_driver_client_get_total_bytes(void)
 {
     if (!usb_driver_client_refresh()) return 0;
-    if (g_usb_vtable == NULL || g_usb_vtable->storage.get_total_bytes == NULL) return 0;
-    return g_usb_vtable->storage.get_total_bytes();
+    if (g_usb_vtable == NULL || g_usb_vtable->storage.get_info == NULL) return 0;
+    driver_block_info_t info;
+    if (!g_usb_vtable->storage.get_info(g_usb_storage_index, &info)) return 0;
+    return info.block_count * info.logical_block_size;
+}
+
+uint32_t usb_driver_client_get_block_size(void)
+{
+    if (!usb_driver_client_refresh() ||
+        g_usb_vtable->storage.get_info == NULL) return 0u;
+    driver_block_info_t info;
+    if (!g_usb_vtable->storage.get_info(g_usb_storage_index, &info)) return 0u;
+    return info.logical_block_size;
 }
 
 int32_t usb_driver_client_read_keyboard(driver_keyboard_event_t *out_event)

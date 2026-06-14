@@ -25,6 +25,7 @@ typedef unsigned int pthread_key_t;
 #define PTHREAD_CREATE_JOINABLE 0
 #define PTHREAD_CREATE_DETACHED 1
 #define PTHREAD_MUTEX_NORMAL 0
+#define PTHREAD_MUTEX_RECURSIVE 1
 #define PTHREAD_MUTEX_ERRORCHECK 2
 #define PTHREAD_CANCEL_ENABLE 0
 #define PTHREAD_CANCEL_DISABLE 1
@@ -42,6 +43,7 @@ int pthread_once(pthread_once_t* once_control, void (*init_routine)(void));
 int pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr);
 int pthread_mutex_destroy(pthread_mutex_t* mutex);
 int pthread_mutex_lock(pthread_mutex_t* mutex);
+int pthread_mutex_trylock(pthread_mutex_t* mutex);
 int pthread_mutex_unlock(pthread_mutex_t* mutex);
 int pthread_mutexattr_init(pthread_mutexattr_t* attr);
 int pthread_mutexattr_destroy(pthread_mutexattr_t* attr);
@@ -58,3 +60,6 @@ int pthread_condattr_init(pthread_condattr_t* attr);
 int pthread_condattr_destroy(pthread_condattr_t* attr);
 
 int pthread_key_create(pthread_key_t* key, void (*destructor)(void*));
+int pthread_key_delete(pthread_key_t key);
+void* pthread_getspecific(pthread_key_t key);
+int pthread_setspecific(pthread_key_t key, const void* value);

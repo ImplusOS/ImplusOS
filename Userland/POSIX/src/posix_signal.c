@@ -2,6 +2,7 @@
 
 #include "../include/posix_signal.h"
 #include "../include/posix_process.h"
+#include "../include/posix_thread.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -9,14 +10,23 @@
  
 
 typedef void (*os_signal_handler_t)(int32_t signum);
-extern os_signal_handler_t signal(int32_t signum, os_signal_handler_t handler);
+extern os_signal_handler_t os_signal(int32_t signum, os_signal_handler_t handler);
 extern void sleep_ms(uint64_t ms);
 
  
 
 static struct sigaction g_sigact[NSIG];      
-static sigset_t         g_signal_mask = 0;   
-static sigset_t         g_pending     = 0;   
+
+static int signal_state(sigset_t **mask, sigset_t **pending)
+{
+    *mask = posix_pthread_signal_mask_storage();
+    *pending = posix_pthread_signal_pending_storage();
+    if (!*mask || !*pending) {
+        errno = ENOMEM;
+        return -1;
+    }
+    return 0;
+}
 
  
 
@@ -26,10 +36,13 @@ static void signal_trampoline(int signum)
     if (signum < 1 || signum >= NSIG) {
         return;
     }
+    sigset_t *signal_mask;
+    sigset_t *pending;
+    if (signal_state(&signal_mask, &pending) < 0) return;
 
      
-    if (g_signal_mask & (1ULL << (signum - 1))) {
-        g_pending |= (1ULL << (signum - 1));
+    if (*signal_mask & (1ULL << (signum - 1))) {
+        *pending |= (1ULL << (signum - 1));
         return;
     }
 
@@ -47,23 +60,23 @@ static void signal_trampoline(int signum)
     }
 
      
-    sigset_t saved = g_signal_mask;
-    g_signal_mask |= sa->sa_mask;
+    sigset_t saved = *signal_mask;
+    *signal_mask |= sa->sa_mask;
     if (!(sa->sa_flags & SA_NODEFER)) {
-        g_signal_mask |= (1ULL << (signum - 1));
+        *signal_mask |= (1ULL << (signum - 1));
     }
 
      
     if (sa->sa_flags & SA_RESETHAND) {
         sighandler_t old = sa->sa_handler;
         sa->sa_handler = SIG_DFL;
-        signal((int32_t)signum, (os_signal_handler_t)signal_trampoline);
+        os_signal((int32_t)signum, (os_signal_handler_t)signal_trampoline);
         old(signum);
     } else {
         sa->sa_handler(signum);
     }
 
-    g_signal_mask = saved;
+    *signal_mask = saved;
 }
 
  
@@ -82,8 +95,8 @@ sighandler_t posix_signal(int signum, sighandler_t handler)
     g_sigact[signum].sa_flags = 0;
 
      
-    os_signal_handler_t ret = signal((int32_t)signum,
-                                     (os_signal_handler_t)signal_trampoline);
+    os_signal_handler_t ret = os_signal((int32_t)signum,
+                                        (os_signal_handler_t)signal_trampoline);
     if ((uintptr_t)ret == (uintptr_t)SIG_ERR) {
         errno = EINVAL;
         return SIG_ERR;
@@ -116,12 +129,12 @@ int posix_sigaction(int signum, const struct sigaction *act,
         memcpy(&g_sigact[signum], act, sizeof(struct sigaction));
          
         if (act->sa_handler != SIG_DFL && act->sa_handler != SIG_IGN) {
-            signal((int32_t)signum, (os_signal_handler_t)signal_trampoline);
+            os_signal((int32_t)signum, (os_signal_handler_t)signal_trampoline);
         } else if (act->sa_handler == SIG_IGN) {
-            signal((int32_t)signum, (os_signal_handler_t)signal_trampoline);
+            os_signal((int32_t)signum, (os_signal_handler_t)signal_trampoline);
         } else {
              
-            signal((int32_t)signum, (os_signal_handler_t)signal_trampoline);
+            os_signal((int32_t)signum, (os_signal_handler_t)signal_trampoline);
         }
     }
 
@@ -133,8 +146,11 @@ int posix_sigaction(int signum, const struct sigaction *act,
 
 int posix_sigprocmask(int how, const sigset_t *set, sigset_t *oldset)
 {
+    sigset_t *signal_mask;
+    sigset_t *pending;
+    if (signal_state(&signal_mask, &pending) < 0) return -1;
     if (oldset) {
-        *oldset = g_signal_mask;
+        *oldset = *signal_mask;
     }
 
     if (!set) {
@@ -144,23 +160,23 @@ int posix_sigprocmask(int how, const sigset_t *set, sigset_t *oldset)
 
     switch (how) {
         case SIG_BLOCK:
-            g_signal_mask |= *set;
+            *signal_mask |= *set;
             break;
         case SIG_UNBLOCK:
-            g_signal_mask &= ~(*set);
+            *signal_mask &= ~(*set);
              
             {
-                sigset_t deliverable = g_pending & ~g_signal_mask;
+                sigset_t deliverable = *pending & ~*signal_mask;
                 for (int s = 1; s < NSIG; s++) {
                     if (deliverable & (1ULL << (s - 1))) {
-                        g_pending &= ~(1ULL << (s - 1));
+                        *pending &= ~(1ULL << (s - 1));
                         signal_trampoline(s);
                     }
                 }
             }
             break;
         case SIG_SETMASK:
-            g_signal_mask = *set;
+            *signal_mask = *set;
             break;
         default:
             errno = EINVAL;
@@ -179,7 +195,11 @@ int posix_sigpending(sigset_t *set)
         errno = EINVAL;
         return -1;
     }
-    *set = g_pending;
+    sigset_t *signal_mask;
+    sigset_t *pending;
+    if (signal_state(&signal_mask, &pending) < 0) return -1;
+    (void)signal_mask;
+    *set = *pending;
     os_errno = 0;
     return 0;
 }

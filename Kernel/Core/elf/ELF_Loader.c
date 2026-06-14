@@ -211,6 +211,60 @@ static bool runtime_range_ok(uint64_t image_start,
     return size <= (image_span - offset);
 }
 
+static bool resolve_kernel_symbol(const char *name, uint64_t *addr_out)
+{
+    if (name == NULL || addr_out == NULL) {
+        return false;
+    }
+
+    if (strcmp(name, "memcpy") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)memcpy;
+        return true;
+    }
+    if (strcmp(name, "memmove") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)memmove;
+        return true;
+    }
+    if (strcmp(name, "memset") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)memset;
+        return true;
+    }
+    if (strcmp(name, "memcmp") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)memcmp;
+        return true;
+    }
+    if (strcmp(name, "strlen") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)strlen;
+        return true;
+    }
+    if (strcmp(name, "strcmp") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)strcmp;
+        return true;
+    }
+    if (strcmp(name, "strncmp") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)strncmp;
+        return true;
+    }
+    if (strcmp(name, "strcasecmp") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)strcasecmp;
+        return true;
+    }
+    if (strcmp(name, "strncpy") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)strncpy;
+        return true;
+    }
+    if (strcmp(name, "malloc") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)malloc;
+        return true;
+    }
+    if (strcmp(name, "free") == 0) {
+        *addr_out = (uint64_t)(uintptr_t)free;
+        return true;
+    }
+
+    return false;
+}
+
 static bool elf_validate_ehdr_arch(const Elf64_Ehdr *ehdr,
                                    uint64_t file_size,
                                    bool allow_exec)
@@ -289,8 +343,71 @@ static void sync_instruction_cache_range(uintptr_t start, uintptr_t end)
 #endif
 }
 
+static bool copy_to_address_space(uint64_t target_cr3,
+                                  uint64_t dst_vaddr,
+                                  const uint8_t *src,
+                                  uint64_t size,
+                                  bool executable)
+{
+    uint64_t copied = 0;
+    while (copied < size) {
+        uint64_t va = dst_vaddr + copied;
+        uint64_t phys = paging_virt_to_phys(target_cr3, va);
+        if (phys == 0) {
+            return false;
+        }
+
+        uint64_t page_left = ELF_PAGE_SIZE - (va & (ELF_PAGE_SIZE - 1ULL));
+        uint64_t chunk = size - copied;
+        if (chunk > page_left) {
+            chunk = page_left;
+        }
+
+        uint8_t *dst = (uint8_t *)(uintptr_t)phys;
+        memcpy(dst, src + copied, (size_t)chunk);
+        if (executable) {
+            sync_instruction_cache_range((uintptr_t)dst,
+                                         (uintptr_t)(dst + chunk));
+        }
+        copied += chunk;
+    }
+    return true;
+}
+
+static bool zero_address_space(uint64_t target_cr3,
+                               uint64_t dst_vaddr,
+                               uint64_t size,
+                               bool executable)
+{
+    uint64_t cleared = 0;
+    while (cleared < size) {
+        uint64_t va = dst_vaddr + cleared;
+        uint64_t phys = paging_virt_to_phys(target_cr3, va);
+        if (phys == 0) {
+            return false;
+        }
+
+        uint64_t page_left = ELF_PAGE_SIZE - (va & (ELF_PAGE_SIZE - 1ULL));
+        uint64_t chunk = size - cleared;
+        if (chunk > page_left) {
+            chunk = page_left;
+        }
+
+        uint8_t *dst = (uint8_t *)(uintptr_t)phys;
+        memset(dst, 0, (size_t)chunk);
+        if (executable) {
+            sync_instruction_cache_range((uintptr_t)dst,
+                                         (uintptr_t)(dst + chunk));
+        }
+        cleared += chunk;
+    }
+    return true;
+}
+
 static bool sym_value_for_reloc(const Elf64_Sym *symbols,
                                 uint32_t         symbol_count,
+                                const char       *symbol_strings,
+                                uint64_t         symbol_strings_size,
                                 uint32_t         sym_index,
                                 uint64_t         load_bias,
                                 bool             must_have_symbol,
@@ -307,9 +424,22 @@ static bool sym_value_for_reloc(const Elf64_Sym *symbols,
         return false;
     }
     const Elf64_Sym *sym = &symbols[sym_index];
-    *sym_addr_out = (sym->st_shndx == SHN_UNDEF)
-                    ? 0ULL
-                    : (load_bias + sym->st_value);
+    if (sym->st_shndx == SHN_UNDEF) {
+        const char *name = NULL;
+        if (symbol_strings != NULL && sym->st_name < symbol_strings_size) {
+            name = symbol_strings + sym->st_name;
+        }
+        if (resolve_kernel_symbol(name, sym_addr_out)) {
+            return true;
+        }
+        if (must_have_symbol) {
+            return false;
+        }
+        *sym_addr_out = 0;
+        return true;
+    }
+
+    *sym_addr_out = load_bias + sym->st_value;
     return true;
 }
 
@@ -417,6 +547,8 @@ static bool apply_relocations(const uint8_t     *image,
 
     const Elf64_Sym *symbols      = NULL;
     uint32_t         symbol_count = 0;
+    const char      *symbol_strings = NULL;
+    uint64_t         symbol_strings_size = 0;
 
     if (rel_sec->sh_link < shnum) {
         const Elf64_Shdr *sym_sec = &shdrs[rel_sec->sh_link];
@@ -424,6 +556,14 @@ static bool apply_relocations(const uint8_t     *image,
             range_in_file(file_size, sym_sec->sh_offset, sym_sec->sh_size)) {
             symbols      = (const Elf64_Sym *)(image + sym_sec->sh_offset);
             symbol_count = (uint32_t)(sym_sec->sh_size / sym_sec->sh_entsize);
+
+            if (sym_sec->sh_link < shnum) {
+                const Elf64_Shdr *str_sec = &shdrs[sym_sec->sh_link];
+                if (range_in_file(file_size, str_sec->sh_offset, str_sec->sh_size)) {
+                    symbol_strings = (const char *)(image + str_sec->sh_offset);
+                    symbol_strings_size = str_sec->sh_size;
+                }
+            }
         }
     }
 
@@ -449,6 +589,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias,
                                          true,
                                          &sym_addr)) {
@@ -470,6 +611,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -491,6 +633,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -512,6 +655,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -531,6 +675,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -554,6 +699,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -598,6 +744,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -642,6 +789,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -671,6 +819,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -694,6 +843,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -725,6 +875,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -762,6 +913,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -800,6 +952,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -823,6 +976,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -842,6 +996,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -863,6 +1018,7 @@ static bool apply_relocations(const uint8_t     *image,
                 }
                 uint64_t sym_addr;
                 if (!sym_value_for_reloc(symbols, symbol_count,
+                                         symbol_strings, symbol_strings_size,
                                          sym_index, load_bias, true, &sym_addr)) {
                     return false;
                 }
@@ -945,7 +1101,6 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
 
     int    load_segments = 0;
     uint64_t phdr_vaddr  = 0;
-    uint64_t old_cr3     = paging_get_active_cr3();
     bool   failed        = false;
 
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
@@ -1008,22 +1163,30 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
             failed = true; break;
         }
 
-        paging_switch_cr3(target_cr3);
-
-        uint8_t *dst = (uint8_t *)(uintptr_t)ph->p_vaddr;
+        bool executable = ((ph->p_flags & PF_X) != 0);
         if (ph->p_filesz > 0) {
-            memcpy(dst, seg_buf, (size_t)ph->p_filesz);
+            if (!copy_to_address_space(target_cr3,
+                                       ph->p_vaddr,
+                                       seg_buf,
+                                       ph->p_filesz,
+                                       executable)) {
+                if (seg_buf != NULL) {
+                    free(seg_buf);
+                }
+                failed = true; break;
+            }
         }
         if (ph->p_memsz > ph->p_filesz) {
-            memset(dst + ph->p_filesz, 0,
-                   (size_t)(ph->p_memsz - ph->p_filesz));
+            if (!zero_address_space(target_cr3,
+                                    ph->p_vaddr + ph->p_filesz,
+                                    ph->p_memsz - ph->p_filesz,
+                                    executable)) {
+                if (seg_buf != NULL) {
+                    free(seg_buf);
+                }
+                failed = true; break;
+            }
         }
-        if ((ph->p_flags & PF_X) != 0) {
-            sync_instruction_cache_range((uintptr_t)dst,
-                                         (uintptr_t)(dst + ph->p_memsz));
-        }
-
-        paging_switch_cr3(old_cr3);
 
         if (seg_buf != NULL) {
             free(seg_buf);
@@ -1079,7 +1242,6 @@ bool elf_loader_load_from_memory(uint64_t target_cr3,
     const Elf64_Phdr *phdrs = (const Elf64_Phdr *)(file_bytes + ehdr->e_phoff);
     int    load_segments    = 0;
     uint64_t phdr_vaddr     = 0;
-    uint64_t old_cr3        = paging_get_active_cr3();
     bool   failed           = false;
 
     for (uint16_t i = 0; i < ehdr->e_phnum; ++i) {
@@ -1119,20 +1281,24 @@ bool elf_loader_load_from_memory(uint64_t target_cr3,
             failed = true; break;
         }
 
-        paging_switch_cr3(target_cr3);
-        uint8_t *dst = (uint8_t *)(uintptr_t)ph->p_vaddr;
+        bool executable = ((ph->p_flags & PF_X) != 0);
         if (ph->p_filesz > 0) {
-            memcpy(dst, file_bytes + ph->p_offset, (size_t)ph->p_filesz);
+            if (!copy_to_address_space(target_cr3,
+                                       ph->p_vaddr,
+                                       file_bytes + ph->p_offset,
+                                       ph->p_filesz,
+                                       executable)) {
+                failed = true; break;
+            }
         }
         if (ph->p_memsz > ph->p_filesz) {
-            memset(dst + ph->p_filesz, 0,
-                   (size_t)(ph->p_memsz - ph->p_filesz));
+            if (!zero_address_space(target_cr3,
+                                    ph->p_vaddr + ph->p_filesz,
+                                    ph->p_memsz - ph->p_filesz,
+                                    executable)) {
+                failed = true; break;
+            }
         }
-        if ((ph->p_flags & PF_X) != 0) {
-            sync_instruction_cache_range((uintptr_t)dst,
-                                         (uintptr_t)(dst + ph->p_memsz));
-        }
-        paging_switch_cr3(old_cr3);
         ++load_segments;
     }
 

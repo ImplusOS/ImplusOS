@@ -20,6 +20,7 @@
 #define ARM64_DESC_ATTRIDX_NORMAL   (1ULL << 2)
 #define ARM64_DESC_PXN              (1ULL << 53)
 #define ARM64_DESC_UXN              (1ULL << 54)
+#define ARM64_DESC_EXTERNAL         (1ULL << 55)
 #define ARM64_DESC_ADDR_MASK        0x0000FFFFFFFFF000ULL
 
 #define ARM64_L0_SHIFT              39U
@@ -139,7 +140,8 @@ static inline uint64_t block_or_page_desc(uint64_t phys, uint64_t flags, int use
            sh |
            ap |
            attr |
-           xn;
+           xn |
+           ((flags & PAGE_EXTERNAL) ? ARM64_DESC_EXTERNAL : 0u);
 }
 
 static inline uint64_t kernel_block_desc(uint64_t phys, int device)
@@ -392,7 +394,15 @@ static void free_user_tables(uint64_t *l1)
             if (!desc_is_table(l2_desc, 2)) {
                 continue;
             }
-            free_page(desc_to_table(l2_desc));
+            uint64_t *l3 = desc_to_table(l2_desc);
+            for (uint32_t k = 0; k < ARM64_TABLE_ENTRIES; ++k) {
+                if (desc_is_valid(l3[k]) &&
+                    (l3[k] & ARM64_DESC_EXTERNAL) == 0u) {
+                    free_page((void *)(uintptr_t)
+                              (l3[k] & ARM64_DESC_ADDR_MASK));
+                }
+            }
+            free_page(l3);
         }
         free_page(l2);
     }
@@ -540,7 +550,7 @@ int paging_set_user_access(uint64_t address_space, uint64_t start, uint64_t size
     }
 
     for (uint64_t va = start & ~(PAGE_SIZE - 1ULL); va < end; va += PAGE_SIZE) {
-        uint64_t *pte = walk_l3(address_space, va, 0);
+        uint64_t *pte = walk_l3_preserve_blocks(address_space, va, 1);
         if (pte == NULL || !desc_is_valid(*pte)) {
             return -1;
         }
@@ -548,6 +558,7 @@ int paging_set_user_access(uint64_t address_space, uint64_t start, uint64_t size
         uint64_t phys = *pte & ARM64_DESC_ADDR_MASK;
         uint64_t ap = *pte & (3ULL << 6);
         uint64_t flags = ((*pte & ARM64_DESC_UXN) != 0) ? PAGE_NX : 0;
+        if ((*pte & ARM64_DESC_EXTERNAL) != 0) flags |= PAGE_EXTERNAL;
         if (ap != ARM64_DESC_AP_EL1_RO && ap != ARM64_DESC_AP_EL0_RO) {
             flags |= PAGE_RW;
         }
@@ -557,6 +568,26 @@ int paging_set_user_access(uint64_t address_space, uint64_t start, uint64_t size
         *pte = block_or_page_desc(phys, flags, enable_user != 0);
     }
 
+    __asm__ volatile("dsb ish; tlbi vmalle1is; dsb ish; isb" ::: "memory");
+    return 0;
+}
+
+int paging_protect_user_range(uint64_t address_space, uint64_t start, uint64_t size,
+                              uint64_t flags)
+{
+    if (address_space == 0 || size == 0 || (start & (PAGE_SIZE - 1ULL)) != 0)
+        return -1;
+    uint64_t end = (start + size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+    if (end <= start) return -1;
+
+    for (uint64_t va = start; va < end; va += PAGE_SIZE) {
+        uint64_t *pte = walk_l3_preserve_blocks(address_space, va, 0);
+        if (pte == NULL || !desc_is_valid(*pte)) return -1;
+        uint64_t physical = *pte & ARM64_DESC_ADDR_MASK;
+        int user = (flags & PAGE_USER) != 0u;
+        if ((*pte & ARM64_DESC_EXTERNAL) != 0) flags |= PAGE_EXTERNAL;
+        *pte = block_or_page_desc(physical, flags, user);
+    }
     __asm__ volatile("dsb ish; tlbi vmalle1is; dsb ish; isb" ::: "memory");
     return 0;
 }
@@ -577,7 +608,9 @@ int paging_unmap_range(uint64_t address_space, uint64_t start, uint64_t size)
         if (pte == NULL || !desc_is_valid(*pte)) {
             continue;
         }
-        free_page((void *)(uintptr_t)(*pte & ARM64_DESC_ADDR_MASK));
+        if ((*pte & ARM64_DESC_EXTERNAL) == 0u) {
+            free_page((void *)(uintptr_t)(*pte & ARM64_DESC_ADDR_MASK));
+        }
         *pte = 0;
     }
 
@@ -620,7 +653,8 @@ int paging_map_user_page(uint64_t address_space, uint64_t virt_addr, uint64_t ph
         return -1;
     }
 
-    if (desc_is_valid(*pte) && (*pte & ARM64_DESC_ADDR_MASK) != 0) {
+    if (desc_is_valid(*pte) && (*pte & ARM64_DESC_ADDR_MASK) != 0 &&
+        (*pte & ARM64_DESC_EXTERNAL) == 0u) {
         free_page((void *)(uintptr_t)(*pte & ARM64_DESC_ADDR_MASK));
     }
 

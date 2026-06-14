@@ -89,8 +89,8 @@ int posix_clock_gettime(clockid_t clk_id, struct timespec *tp)
     if (clk_id == CLOCK_REALTIME) {
         rtc_time_t rtc;
         if (sys_get_rtc_time(&rtc) < 0) {
-             
-            return posix_clock_gettime(CLOCK_MONOTONIC, tp);
+            errno = EIO;
+            return -1;
         }
         int64_t epoch_days = date_to_epoch_days(
             (int)rtc.year, (int)rtc.month, (int)rtc.day);
@@ -166,9 +166,10 @@ int posix_gettimeofday(struct timeval *tv, struct timezone *tz)
         os_errno = 0;
         return 0;
     }
-    uint64_t ms = get_uptime_ms();
-    tv->tv_sec  = (time_t)(ms / 1000ULL);
-    tv->tv_usec = (suseconds_t)((ms % 1000ULL) * 1000ULL);
+    struct timespec now;
+    if (posix_clock_gettime(CLOCK_REALTIME, &now) < 0) return -1;
+    tv->tv_sec = now.tv_sec;
+    tv->tv_usec = (suseconds_t)(now.tv_nsec / 1000L);
     os_errno = 0;
     return 0;
 }

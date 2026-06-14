@@ -14,8 +14,6 @@
 static const driver_binary_t *g_driver_api = NULL;
 
 #define hal_cpu_pause               g_driver_api->hal.cpu_pause
-#define hal_cpu_save_interrupts     g_driver_api->hal.cpu_save_interrupts
-#define hal_cpu_restore_interrupts  g_driver_api->hal.cpu_restore_interrupts
 #define disk_read                   g_driver_api->hw.disk_read
 #define disk_write                  g_driver_api->hw.disk_write
 #define disk_get_partition_lba      g_driver_api->hw.disk_get_partition_lba
@@ -30,16 +28,6 @@ static inline void spinlock_lock(spinlock_t *l)   {
     }
 }
 static inline void spinlock_unlock(spinlock_t *l) { __sync_lock_release(&l->locked); }
-
-static inline uint64_t irq_save_disable(void)
-{
-    return hal_cpu_save_interrupts();
-}
-
-static inline void irq_restore(uint64_t flags)
-{
-    hal_cpu_restore_interrupts(flags);
-}
 
 void *memcpy(void *dest, const void *src, size_t n)
 {
@@ -100,7 +88,7 @@ static uint8_t g_iso_read_buffer  [ISO9660_SECTOR_BUFFER_SIZE] __attribute__((al
 static uint8_t g_iso_ce_buffer    [ISO9660_SECTOR_BUFFER_SIZE] __attribute__((aligned(4096)));
 
 static spinlock_t g_iso_lock;
-static uint32_t g_iso_partition_lba = 0;
+static uint64_t g_iso_partition_lba = 0;
 
 typedef struct {
     uint8_t  used;
@@ -124,7 +112,8 @@ static inline uint32_t iso9660_read_u32_both(const uint8_t *p) {
 }
 
 static bool iso9660_read_sector(uint32_t lba, uint8_t *buffer) {
-    uint32_t base = g_iso_partition_lba + lba * (ISO9660_SECTOR_SIZE / 512u);
+    uint64_t base = g_iso_partition_lba +
+                    (uint64_t)lba * (ISO9660_SECTOR_SIZE / 512u);
     return disk_read(base, buffer, ISO9660_SECTOR_SIZE / 512u);
 }
 
@@ -294,7 +283,6 @@ static bool iso9660_parse_pvd(const uint8_t *sector, ISO9660_CONTEXT *ctx) {
     ctx->root_size         = iso9660_read_u32_both(&sector[156 + 10]);
     ctx->vol_space_size    = iso9660_read_u32_both(&sector[80]);
     ctx->logical_block_size= iso9660_read_u16_le(&sector[128]);
-
     return ctx->logical_block_size == ISO9660_SECTOR_SIZE;
 }
 
@@ -520,11 +508,9 @@ static bool _iso9660_init(void) {
 }
 
 bool iso9660_init(void) {
-    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     bool ret = _iso9660_init();
     spinlock_unlock(&g_iso_lock);
-    irq_restore(flags);
     return ret;
 }
 
@@ -541,11 +527,9 @@ static bool _iso9660_find_file(const char *path, ISO9660_FILE *file) {
 }
 
 bool iso9660_find_file(const char *path, ISO9660_FILE *file) {
-    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     bool ret = _iso9660_find_file(path, file);
     spinlock_unlock(&g_iso_lock);
-    irq_restore(flags);
     return ret;
 }
 
@@ -560,7 +544,6 @@ static bool _iso9660_read_at(ISO9660_FILE *file, uint32_t offset,
     uint32_t offset_in_sector= offset % ISO9660_SECTOR_SIZE;
 
     while (bytes_done < size) {
-        uint64_t flags = irq_save_disable();
         spinlock_lock(&g_iso_lock);
 
         bool read_ok = iso9660_read_sector(current_extent, g_iso_read_buffer);
@@ -574,7 +557,6 @@ static bool _iso9660_read_at(ISO9660_FILE *file, uint32_t offset,
         }
 
         spinlock_unlock(&g_iso_lock);
-        irq_restore(flags);
 
         if (!read_ok) {
             return false;
@@ -603,7 +585,6 @@ uint32_t iso9660_get_file_size(ISO9660_FILE *file) {
 }
 
 void iso9660_list_root_files(void) {
-    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
 
     bool     joliet = g_iso_context.has_joliet;
@@ -642,7 +623,6 @@ void iso9660_list_root_files(void) {
     }
 
     spinlock_unlock(&g_iso_lock);
-    irq_restore(flags);
 }
 
 static int32_t _iso9660_opendir(const char *path) {
@@ -671,11 +651,9 @@ static int32_t _iso9660_opendir(const char *path) {
 }
 
 int32_t iso9660_opendir(const char *path) {
-    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     int32_t ret = _iso9660_opendir(path);
     spinlock_unlock(&g_iso_lock);
-    irq_restore(flags);
     return ret;
 }
 
@@ -740,11 +718,9 @@ static int32_t _iso9660_readdir(int32_t handle, ISO9660_DIRENT *out) {
 }
 
 int32_t iso9660_readdir(int32_t handle, ISO9660_DIRENT *out) {
-    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     int32_t ret = _iso9660_readdir(handle, out);
     spinlock_unlock(&g_iso_lock);
-    irq_restore(flags);
     return ret;
 }
 
@@ -755,11 +731,9 @@ static int32_t _iso9660_closedir(int32_t handle) {
 }
 
 int32_t iso9660_closedir(int32_t handle) {
-    uint64_t flags = irq_save_disable();
     spinlock_lock(&g_iso_lock);
     int32_t ret = _iso9660_closedir(handle);
     spinlock_unlock(&g_iso_lock);
-    irq_restore(flags);
     return ret;
 }
 
@@ -793,8 +767,6 @@ static const driver_module_descriptor_t g_iso9660_module = {
 };
 
 #undef hal_cpu_pause
-#undef hal_cpu_save_interrupts
-#undef hal_cpu_restore_interrupts
 #undef disk_read
 #undef disk_write
 #undef disk_get_partition_lba

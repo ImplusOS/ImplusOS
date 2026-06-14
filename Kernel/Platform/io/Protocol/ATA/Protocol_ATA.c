@@ -481,15 +481,17 @@ bool ata_init(uint64_t partition_lba) {
     return false;
 }
 
-bool ata_read(uint32_t lba, uint8_t *buffer, uint32_t sectors) {
+bool ata_read(uint64_t lba, uint8_t *buffer, uint32_t sectors) {
     if (sectors == 0 || buffer == 0) return false;
 
     if (g_atapi) {
         for (uint32_t s = 0; s < sectors; ++s) {
-            uint64_t byte_off     = ((uint64_t)(lba + s) * 512ULL);
-            uint32_t block        = (uint32_t)(byte_off / g_atapi_sector_bytes);
+            uint64_t byte_off = (lba + s) * 512ULL;
+            uint64_t block64 = byte_off / g_atapi_sector_bytes;
+            uint32_t block = (uint32_t)block64;
             uint32_t off_in_block = (uint32_t)(byte_off % g_atapi_sector_bytes);
 
+            if (block64 > UINT32_MAX) return false;
             if (atapi_read_block(block, g_atapi_scratch) < 0) return false;
             memcpy(buffer + (s * 512u), g_atapi_scratch + off_in_block, 512u);
         }
@@ -501,7 +503,9 @@ bool ata_read(uint32_t lba, uint8_t *buffer, uint32_t sectors) {
     while (done < sectors) {
         uint8_t chunk_sectors =
             (uint8_t)((sectors - done) > 255u ? 255u : (sectors - done));
-        uint32_t real_lba = lba + done;
+        uint64_t real_lba64 = lba + done;
+        if (real_lba64 > UINT32_MAX) return false;
+        uint32_t real_lba = (uint32_t)real_lba64;
 
         if (!ata_pio_read_chunk(real_lba, buffer, chunk_sectors)) return false;
 
@@ -513,7 +517,7 @@ bool ata_read(uint32_t lba, uint8_t *buffer, uint32_t sectors) {
     return true;
 }
 
-bool ata_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors) {
+bool ata_write(uint64_t lba, const uint8_t *buffer, uint32_t sectors) {
     if (sectors == 0 || buffer == 0) return false;
     if (g_atapi) return false;
 
@@ -521,7 +525,9 @@ bool ata_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors) {
     while (done < sectors) {
         uint8_t chunk_sectors =
             (uint8_t)((sectors - done) > 255u ? 255u : (sectors - done));
-        uint32_t real_lba = lba + done;
+        uint64_t real_lba64 = lba + done;
+        if (real_lba64 > UINT32_MAX) return false;
+        uint32_t real_lba = (uint32_t)real_lba64;
 
         if (!ata_pio_write_chunk(real_lba, buffer, chunk_sectors)) return false;
 

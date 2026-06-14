@@ -15,8 +15,10 @@ void abort(void) {
 #else
 extern void* syscall1(uint64_t num, uint64_t arg1);
 extern void* syscall2(uint64_t num, uint64_t arg1, uint64_t arg2);
+extern uint64_t syscall0(uint64_t num);
 #define SYSCALL_USER_MALLOC  27ULL
 #define SYSCALL_USER_FREE    28ULL
+#define SYSCALL_PROCESS_YIELD 7ULL
 #define SYSCALL_PROCESS_EXIT  8ULL
 #define SYSCALL_USER_MMAP    43ULL
 
@@ -27,14 +29,29 @@ typedef struct malloc_block {
 } malloc_block_t;
 
 static malloc_block_t *free_list = NULL;
+static volatile int malloc_lock_state;
+
+static void malloc_lock(void)
+{
+    while (__sync_lock_test_and_set(&malloc_lock_state, 1)) {
+        (void)syscall0(SYSCALL_PROCESS_YIELD);
+    }
+}
+
+static void malloc_unlock(void)
+{
+    __sync_lock_release(&malloc_lock_state);
+}
 
 void* malloc(size_t size) {
     if (size == 0) return NULL;
     size = (size + 15u) & ~((size_t)15u);
+    malloc_lock();
     malloc_block_t *curr = free_list;
     while (curr) {
         if (curr->free && curr->size >= size) {
             curr->free = 0;
+            malloc_unlock();
             return (void*)(curr + 1);
         }
         curr = curr->next;
@@ -42,11 +59,15 @@ void* malloc(size_t size) {
     size_t alloc_size = size + sizeof(malloc_block_t);
     alloc_size = (alloc_size + 4095u) & ~((size_t)4095u);
     malloc_block_t *block = (malloc_block_t*)syscall2(SYSCALL_USER_MMAP, alloc_size, 0);
-    if (!block) return NULL;
+    if (!block) {
+        malloc_unlock();
+        return NULL;
+    }
     block->size = alloc_size - sizeof(malloc_block_t);
     block->free = 0;
     block->next = free_list;
     free_list = block;
+    malloc_unlock();
     return (void*)(block + 1);
 }
 
@@ -111,8 +132,10 @@ void* realloc(void* ptr, size_t size)
 
 void free(void* p) {
     if (!p) return;
+    malloc_lock();
     malloc_block_t *block = (malloc_block_t*)p - 1;
     block->free = 1;
+    malloc_unlock();
 }
 
 void exit(int status) {

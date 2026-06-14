@@ -480,7 +480,6 @@ static void draw(void)
             "[1-3] Tabs  [R] Refresh  [Q] Quit",
             COLOR_DEAD, 11.0f);
 
-    draw_present();
 }
 
 static void update_hover(void)

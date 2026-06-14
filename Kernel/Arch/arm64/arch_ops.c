@@ -9,17 +9,12 @@ static void arm64_init_cpu_tables(void)
     arm64_exception_init();
 }
 
-static void arm64_enter_user_mode(uint64_t user_entry, uint64_t user_rsp, uint64_t address_space)
+static void arm64_enter_user_mode(uint64_t saved_rsp, uint64_t user_rsp, uint64_t address_space)
 {
+    (void)user_rsp;
     paging_switch_cr3(address_space);
-    __asm__ volatile(
-        "msr sp_el0, %0\n"
-        "msr elr_el1, %1\n"
-        "mov x0, #0\n"
-        "msr spsr_el1, x0\n"
-        "eret\n"
-        :: "r"(user_rsp), "r"(user_entry)
-        : "x0", "memory");
+    arm64_enter_user_from_frame(saved_rsp);
+    __builtin_unreachable();
 }
 
 static int arm64_virtualization_init(void)

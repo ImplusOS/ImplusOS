@@ -1,7 +1,7 @@
 #include "VFS.h"
 #include <string.h>
-#include "Debug/serial/Serial.h"
 #include "Core/sync/Spinlock.h"
+#include "Debug/serial/Serial.h"
 
 static vfs_driver_t g_vfs_drivers[16];
 static int g_vfs_driver_count = 0;
@@ -98,7 +98,11 @@ bool vfs_write_file(vfs_file_t *file, const uint8_t *buffer) {
 
 bool vfs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer, uint32_t size) {
     if (!file || !file->fs_driver) return false;
-    return file->fs_driver->read_at(file, offset, buffer, size);
+    bool (*read_at)(vfs_file_t *, uint32_t, uint8_t *, uint32_t) = file->fs_driver->read_at;
+    if (!read_at) {
+        return false;
+    }
+    return read_at(file, offset, buffer, size);
 }
 
 bool vfs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size) {
@@ -309,6 +313,68 @@ bool vfs_unlink(const char *path) {
         }
     }
     return false;
+}
+
+bool vfs_rename(const char *old_path, const char *new_path)
+{
+    if (!old_path || !new_path || old_path[0] == '\0' ||
+        new_path[0] == '\0') return false;
+    if (strcmp(old_path, new_path) == 0) return true;
+
+    vfs_file_t source;
+    if (!vfs_find_file(old_path, &source)) return false;
+    uint32_t size = vfs_get_file_size(&source);
+
+    vfs_file_t existing;
+    if (vfs_find_file(new_path, &existing)) {
+        if (existing.fs_driver == source.fs_driver &&
+            existing.internal_id == source.internal_id) {
+            (void)vfs_close_file(&existing);
+            (void)vfs_close_file(&source);
+            return true;
+        }
+        (void)vfs_close_file(&existing);
+        if (!vfs_unlink(new_path)) {
+            (void)vfs_close_file(&source);
+            return false;
+        }
+    }
+    if (!vfs_creat(new_path)) {
+        (void)vfs_close_file(&source);
+        return false;
+    }
+
+    vfs_file_t destination;
+    if (!vfs_find_file(new_path, &destination)) {
+        (void)vfs_close_file(&source);
+        (void)vfs_unlink(new_path);
+        return false;
+    }
+
+    uint8_t buffer[4096];
+    bool ok = true;
+    for (uint32_t offset = 0; offset < size;) {
+        uint32_t chunk = size - offset;
+        if (chunk > sizeof(buffer)) chunk = sizeof(buffer);
+        if (!vfs_read_at(&source, offset, buffer, chunk) ||
+            !vfs_write_at(&destination, offset, buffer, chunk)) {
+            ok = false;
+            break;
+        }
+        offset += chunk;
+    }
+    if (ok) ok = vfs_truncate(&destination, size);
+    (void)vfs_close_file(&source);
+    (void)vfs_close_file(&destination);
+    if (!ok) {
+        (void)vfs_unlink(new_path);
+        return false;
+    }
+    if (!vfs_unlink(old_path)) {
+        (void)vfs_unlink(new_path);
+        return false;
+    }
+    return true;
 }
 
 void vfs_list_root(void) {

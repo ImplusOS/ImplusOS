@@ -833,15 +833,6 @@ static void DrawTextGraySmallCenterBottom(const char *Text, void *FontBuffer, ui
     }
 }
 
-
-static void bios_put_hex(uint32_t v) {
-    const char *hex = "0123456789ABCDEF";
-    for (int i = 28; i >= 0; i -= 4) {
-        char c = hex[(v >> i) & 0xF];
-        outb(0x3F8, (uint8_t)c);
-    }
-}
-
 typedef void (*iso_dir_callback)(BIOS_ISO9660 *fs, const char *name, uint32_t lba, uint32_t size, int is_dir);
 
 static int iso_iterate_directory(BIOS_ISO9660 *fs, uint32_t dir_lba, uint32_t dir_size, iso_dir_callback cb) {

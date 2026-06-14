@@ -9,25 +9,25 @@
 .endm
 
 arm64_exception_vector_table:
-    vector_entry arm64_sync_handler
-    vector_entry arm64_irq_handler
-    vector_entry arm64_fiq_handler
-    vector_entry arm64_err_handler
+    vector_entry arm64_handler_0
+    vector_entry arm64_handler_1
+    vector_entry arm64_handler_2
+    vector_entry arm64_handler_3
 
-    vector_entry arm64_sync_handler
-    vector_entry arm64_irq_handler
-    vector_entry arm64_fiq_handler
-    vector_entry arm64_err_handler
+    vector_entry arm64_handler_4
+    vector_entry arm64_handler_5
+    vector_entry arm64_handler_6
+    vector_entry arm64_handler_7
 
-    vector_entry arm64_sync_handler
-    vector_entry arm64_irq_handler
-    vector_entry arm64_fiq_handler
-    vector_entry arm64_err_handler
-    
-    vector_entry arm64_sync_handler
-    vector_entry arm64_irq_handler
-    vector_entry arm64_fiq_handler
-    vector_entry arm64_err_handler
+    vector_entry arm64_handler_8
+    vector_entry arm64_handler_9
+    vector_entry arm64_handler_10
+    vector_entry arm64_handler_11
+
+    vector_entry arm64_handler_12
+    vector_entry arm64_handler_13
+    vector_entry arm64_handler_14
+    vector_entry arm64_handler_15
 
 .macro save_all
     sub sp, sp, #(36 * 8)
@@ -88,30 +88,44 @@ arm64_exception_vector_table:
     eret
 .endm
 
-arm64_sync_handler:
-    save_all
-    mov x0, sp
-    mov x1, #0
-    bl arm64_exception_dispatch
+.global arm64_restore_exception_frame
+.type arm64_restore_exception_frame, %function
+arm64_restore_exception_frame:
     restore_all
 
-arm64_irq_handler:
-    save_all
-    mov x0, sp
-    mov x1, #1
-    bl arm64_exception_dispatch
-    restore_all
+.global arm64_enter_user_from_frame
+.type arm64_enter_user_from_frame, %function
+arm64_enter_user_from_frame:
+    mov sp, x0
+    b arm64_restore_exception_frame
 
-arm64_fiq_handler:
+.macro exception_handler id
+arm64_handler_\id:
     save_all
+    mov x19, sp
     mov x0, sp
-    mov x1, #2
+    mov x1, #\id
     bl arm64_exception_dispatch
-    restore_all
+    cbnz x0, 1f
+    mov x0, x19
+1:
+    mov sp, x0
+    b arm64_restore_exception_frame
+.endm
 
-arm64_err_handler:
-    save_all
-    mov x0, sp
-    mov x1, #3
-    bl arm64_exception_dispatch
-    restore_all
+exception_handler 0
+exception_handler 1
+exception_handler 2
+exception_handler 3
+exception_handler 4
+exception_handler 5
+exception_handler 6
+exception_handler 7
+exception_handler 8
+exception_handler 9
+exception_handler 10
+exception_handler 11
+exception_handler 12
+exception_handler 13
+exception_handler 14
+exception_handler 15
