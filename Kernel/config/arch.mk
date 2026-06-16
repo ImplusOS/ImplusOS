@@ -27,7 +27,7 @@ KERNEL_CFLAGS := \
 	-I$(KERNEL_ROOT)/Platform \
 	-I$(ROOT_DIR)/Thirdparty \
 	-I$(ROOT_DIR)/ThirdParty \
-	-I$(ROOT_DIR)/libc/include \
+	-I$(ROOT_DIR)/libc/I_libc/include \
 	-I$(ROOT_DIR)/ShareLib \
 	-ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-PIE -fno-plt -fno-builtin \
 	-nostdlib -nostartfiles -nodefaultlibs \

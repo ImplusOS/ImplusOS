@@ -17,7 +17,7 @@ OPT_FLAGS ?= -O2 -fomit-frame-pointer -fno-strict-aliasing -DNDEBUG
 CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
           $(ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
           -I. \
-          -I../../../../libc/include -I../../../../libc/include/sys \
+          -I../../../../libc/I_libc/include -I../../../../libc/I_libc/include/sys \
 		  -I../../../../Userland \
 		  -I../../../../Userland/API \
 		  -Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow -MMD -MP \
@@ -34,7 +34,7 @@ all: $(ELF) copy_resources
 test: $(TEST_BIN)
 	$(TEST_BIN)
 
-$(TEST_BIN): Tests/WM_CoreTest.c Compositor/WM_Damage.c Compositor/WM_Raster.c Core/WM_EventQueue.c
+$(TEST_BIN): Tests/WM_CoreTest.c Compositor/WM_Damage.c Compositor/WM_Raster.c Core/WM_EventQueue.c Core/WM_Display.c
 	@mkdir -p $(dir $@)
 	$(HOST_CC) -std=c11 -Wall -Wextra -Werror -I. $^ -o $@
 

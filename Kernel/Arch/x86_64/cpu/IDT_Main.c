@@ -115,6 +115,25 @@ static void panic_exception(const char *name,
     serial_write_string("[OS] [PANIC] RBP: ");
     serial_write_uint64(rbp);
     serial_write_string("\n");
+    // Extract user RSP from exception frame (offset: error_code + RIP + CS + RFLAGS)
+    uint64_t user_rsp = 0;
+    uint64_t cs = 0;
+    if (error_code == 0 || error_code <= 0x12) {
+        // #GP, #PF, #DF, etc. - error code is pushed by CPU
+        // Stack: error_code(0), RIP(8), CS(16), RFLAGS(24), user_RSP(32), SS(40)
+        cs = *(uint64_t *)(uintptr_t)(rsp + 16);
+        if ((cs & 3) == 3) {
+            user_rsp = *(uint64_t *)(uintptr_t)(rsp + 32);
+        }
+    } else if (vector == 14) {
+        // Page fault: CR2 is the faulting address
+    }
+    serial_write_string("[OS] [PANIC] User RSP: ");
+    serial_write_uint64(user_rsp);
+    serial_write_string("\n");
+    serial_write_string("[OS] [PANIC] CS: ");
+    serial_write_uint64(cs);
+    serial_write_string("\n");
     serial_write_string("[OS] [PANIC] CR0: ");
     serial_write_uint64(cr0);
     serial_write_string("\n");

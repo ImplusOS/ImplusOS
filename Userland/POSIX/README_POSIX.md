@@ -211,15 +211,20 @@ posix_close(fd);
 
 ---
 
+## Implementation Notes
+
+- **fork()**: Full process fork with address-space cloning. Parent and child have independent physical memory copies. Child's FPU state is cloned from parent.
+- **execve()**: Full binary replacement. Closes FD_CLOEXEC fds, resets address space and signal handlers. Properly passes `argv`/`envp` to the new program on the standard ELF user stack.
+- **mmap()**: Anonymous and file-backed (MAP_PRIVATE copies bytes, MAP_SHARED flushes to backing fd on munmap/msync). Page-granular prot control via mprotect.
+- **munmap() / mprotect()**: Fully functional kernel calls with capability checks.
+- **select() / poll()**: FD_POLL-based readiness checks with sleep-poll loop when no fds ready.
+- **kill()**: Cross-process signal delivery via TKILL syscall.
+- **Threads**: Full create/join/detach/cancel, mutex (normal/errorcheck/recursive), condition variables, pthread_once, TLS (256 keys × 256 threads).
+- **pthread_cancel()**: Sends SIGTERM via TKILL and sets done flag for cleanup.
+
 ## Limitations
 
-1. **fork()** — spawns a fresh process (no parents/children share memory).
-2. **mmap()** — anonymous only natively; file-backed copies bytes into anonymous region.
-3. **munmap() / mprotect()** — no-ops (kernel has no unmap/mprotect calls yet).
-4. **select() / poll()** — sleep-based stub; all open fds reported ready.
-5. **kill()** — self-signal only; cross-process signals return ENOSYS.
-6. **Threads** — full create/join/mutex/cond support; TLS limited to 64 keys × 128 threads.
-7. **Networking** — AF_INET/IPv4 only; no IPv6, no Unix domain sockets.
+1. **Networking** — AF_INET/IPv4 only; no IPv6, no Unix domain sockets.
 
 ---
 

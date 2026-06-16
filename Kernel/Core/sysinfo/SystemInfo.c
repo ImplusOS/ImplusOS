@@ -1,5 +1,6 @@
 #include "SystemInfo.h"
 #include "Drivers/Client/PCI/PCI_Main.h"
+#include "Drivers/Module/DriverManager.h"
 #include "Platform/io/IO_Main.h"
 #include "kernel/config.h"
 #include "Core/sync/Spinlock.h"
@@ -389,8 +390,8 @@ os_status_t sysinfo_get_graphics_info(system_graphics_info_t *out_info)
     out_info->model[sizeof(out_info->model) - 1] = '\0';
     
     out_info->vram_mb = vram_mb;
-    out_info->display_width = 1024;
-    out_info->display_height = 768;
+    out_info->display_width = driver_manager_display_width();
+    out_info->display_height = driver_manager_display_height();
     out_info->bits_per_pixel = 32;
     
     return OS_STATUS_OK;

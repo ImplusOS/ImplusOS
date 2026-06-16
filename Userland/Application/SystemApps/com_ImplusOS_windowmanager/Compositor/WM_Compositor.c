@@ -36,6 +36,42 @@ bool wm_compositor_init(wm_state_t *state, uint32_t width, uint32_t height)
     return true;
 }
 
+bool wm_compositor_resize(wm_state_t *state, uint32_t width, uint32_t height)
+{
+    if (!state || !width || !height) return false;
+    wm_compositor_t *c = &state->compositor;
+    if (c->framebuffer_width == width &&
+        c->framebuffer_height == height &&
+        c->shadow && c->background) {
+        return true;
+    }
+
+    uint64_t bytes64 = (uint64_t)width * height * sizeof(uint32_t);
+    if (bytes64 > SIZE_MAX || bytes64 > UINT32_MAX) return false;
+
+    uint32_t *shadow = (uint32_t *)malloc((size_t)bytes64);
+    uint32_t *background = (uint32_t *)malloc((size_t)bytes64);
+    if (!shadow || !background) {
+        free(shadow);
+        free(background);
+        return false;
+    }
+
+    free(c->shadow);
+    free(c->background);
+    c->shadow = shadow;
+    c->background = background;
+    c->framebuffer_width = width;
+    c->framebuffer_height = height;
+    c->buffer_bytes = (uint32_t)bytes64;
+    c->previous_cursor_x = 0u;
+    c->previous_cursor_y = 0u;
+    c->previous_cursor_visible = false;
+    c->previous_cursor_style = WM_CURSOR_DEFAULT;
+    wm_region_reset(&c->damage);
+    return true;
+}
+
 void wm_compositor_destroy(wm_compositor_t *compositor)
 {
     if (!compositor) return;

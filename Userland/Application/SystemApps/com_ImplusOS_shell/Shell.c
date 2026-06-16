@@ -4,9 +4,9 @@
 #include "../../../API/Graphics.h"
 #include "../../../API/Window.h"
 #include "../../../API/Input.h"
-#include "../../../../libc/include/string.h"
-#include "../../../../libc/include/stdlib.h"
-#include "../../../../libc/include/ctype.h"
+#include "../../../../libc/I_libc/include/string.h"
+#include "../../../../libc/I_libc/include/stdlib.h"
+#include "../../../../libc/I_libc/include/ctype.h"
 
 #define ISH_MAX_CMD_LEN     512
 #define ISH_MAX_ARGS        64

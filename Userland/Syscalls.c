@@ -854,6 +854,50 @@ void *sys_get_display_framebuffer(void)
     return (void *)(uintptr_t)syscall0(SYSCALL_GET_DISPLAY_FRAMEBUFFER);
 }
 
+int64_t display_get_topology(display_topology_t *out_topology)
+{
+    if (out_topology == NULL) {
+        return -22;
+    }
+    return os_errno_from_i64_status((int64_t)syscall1(
+        SYSCALL_DISPLAY_GET_TOPOLOGY,
+        (uint64_t)(uintptr_t)out_topology));
+}
+
+int64_t display_get_monitor_info(uint32_t monitor_index,
+                                 display_monitor_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return os_errno_from_i64_status((int64_t)syscall2(
+        SYSCALL_DISPLAY_GET_MONITOR_INFO,
+        (uint64_t)monitor_index,
+        (uint64_t)(uintptr_t)out_info));
+}
+
+int64_t display_get_monitor_mode_info(uint32_t monitor_index,
+                                      uint32_t mode_index,
+                                      display_mode_info_t *out_info)
+{
+    if (out_info == NULL) {
+        return -22;
+    }
+    return os_errno_from_i64_status((int64_t)syscall3(
+        SYSCALL_DISPLAY_GET_MONITOR_MODE_INFO,
+        (uint64_t)monitor_index,
+        (uint64_t)mode_index,
+        (uint64_t)(uintptr_t)out_info));
+}
+
+int64_t display_set_monitor_mode(uint32_t monitor_index, uint32_t mode_index)
+{
+    return os_errno_from_i64_status((int64_t)syscall2(
+        SYSCALL_DISPLAY_SET_MONITOR_MODE,
+        (uint64_t)monitor_index,
+        (uint64_t)mode_index));
+}
+
 int32_t window_input_keyboard_poll(input_keyboard_event_t *out)
 {
     if (out == NULL) {

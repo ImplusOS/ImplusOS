@@ -108,6 +108,8 @@ int32_t wm_kernel_get_wm_service_pid(void)
 
 void wm_kernel_get_display_info(uint32_t *width, uint32_t *height)
 {
+    g_wm.display_width  = driver_manager_display_width();
+    g_wm.display_height = driver_manager_display_height();
     if (width)  *width  = g_wm.display_width;
     if (height) *height = g_wm.display_height;
 }

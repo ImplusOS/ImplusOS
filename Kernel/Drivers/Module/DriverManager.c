@@ -307,6 +307,41 @@ void *driver_manager_display_get_framebuffer(void)
     return display_manager_get_framebuffer();
 }
 
+uint32_t driver_manager_display_generation(void)
+{
+    return display_manager_generation();
+}
+
+bool driver_manager_display_poll_config(void)
+{
+    return display_manager_poll_config();
+}
+
+bool driver_manager_display_get_topology(display_topology_t *out_topology)
+{
+    return display_manager_get_topology(out_topology);
+}
+
+bool driver_manager_display_get_monitor_info(uint32_t monitor_index,
+                                             display_monitor_info_t *out_info)
+{
+    return display_manager_get_monitor_info(monitor_index, out_info);
+}
+
+bool driver_manager_display_get_monitor_mode_info(uint32_t monitor_index,
+                                                  uint32_t mode_index,
+                                                  display_mode_info_t *out_info)
+{
+    return display_manager_get_monitor_mode_info(monitor_index, mode_index,
+                                                 out_info);
+}
+
+bool driver_manager_display_set_monitor_mode(uint32_t monitor_index,
+                                             uint32_t mode_index)
+{
+    return display_manager_set_monitor_mode(monitor_index, mode_index);
+}
+
 bool driver_manager_input_ps2_init(void)
 {
     input_manager_init();

@@ -104,15 +104,15 @@ DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
 SHARELIB_C_SRCS := $(shell find ShareLib -name "*.c" 2>/dev/null)
 
 USERLAND_C_SRCS := \
-	libc/src/assert.c \
-	libc/src/math.c \
-	libc/src/stdlib.c \
-	libc/src/string.c \
-	libc/src/stdio.c \
-	libc/src/errno.c \
-	libc/src/posix.c \
-	libc/src/sys/syscalls.c \
-	libc/src/sys/$(ARCH)/hal_syscall.c \
+	libc/I_libc/src/assert.c \
+	libc/I_libc/src/math.c \
+	libc/I_libc/src/stdlib.c \
+	libc/I_libc/src/string.c \
+	libc/I_libc/src/stdio.c \
+	libc/I_libc/src/errno.c \
+	libc/I_libc/src/posix.c \
+	libc/I_libc/src/sys/syscalls.c \
+	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
 	$(SHARELIB_C_SRCS) \
 	Userland/Userland.c \
 	Userland/Syscalls.c \
@@ -130,15 +130,15 @@ USERLAND_C_SRCS := \
 	Userland/POSIX/src/posix_io.c
 
 USERLAND_APP_C_SRCS := \
-	libc/src/assert.c \
-	libc/src/math.c \
-	libc/src/stdlib.c \
-	libc/src/string.c \
-	libc/src/stdio.c \
-	libc/src/errno.c \
-	libc/src/posix.c \
-	libc/src/sys/syscalls.c \
-	libc/src/sys/$(ARCH)/hal_syscall.c \
+	libc/I_libc/src/assert.c \
+	libc/I_libc/src/math.c \
+	libc/I_libc/src/stdlib.c \
+	libc/I_libc/src/string.c \
+	libc/I_libc/src/stdio.c \
+	libc/I_libc/src/errno.c \
+	libc/I_libc/src/posix.c \
+	libc/I_libc/src/sys/syscalls.c \
+	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
 	$(SHARELIB_C_SRCS) \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
@@ -146,12 +146,12 @@ USERLAND_APP_C_SRCS := \
 
 USERLAND_INIT_OBJS := \
 	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_C_SRCS))) \
-	$(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst libc/I_libc/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst ShareLib/%.c,$(BUILD_DIR)/ShareLib/%.o,$(filter ShareLib/%.c,$(USERLAND_C_SRCS)))
 
 USERLAND_APP_OBJS := \
 	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_APP_C_SRCS))) \
-	$(patsubst libc/%.c,$(BUILD_DIR)/Userland/libc/%.o,$(filter libc/%.c,$(USERLAND_APP_C_SRCS))) \
+	$(patsubst libc/I_libc/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst ShareLib/%.c,$(BUILD_DIR)/ShareLib/%.o,$(filter ShareLib/%.c,$(USERLAND_APP_C_SRCS)))
 
 RECOVERY_OBJS := \
@@ -159,7 +159,9 @@ RECOVERY_OBJS := \
 	$(USERLAND_APP_OBJS)
 
 USERLAND_CFLAGS := \
-	-Ilibc/include \
+	-I. \
+	-IKernel/include \
+	-Ilibc/I_libc/include \
 	-IUserland/POSIX/include \
 	-IShareLib \
 	-IThirdparty \
@@ -199,6 +201,7 @@ app_build: $(USERLAND_INIT_OBJS)
 				ARCH=$(ARCH) \
 				CROSS_COMPILE=$(CROSS_COMPILE) \
 				TOP_BUILD_DIR="$(abspath $(BUILD_DIR))" \
+				USERLAND_CFLAGS="$(USERLAND_CFLAGS)" \
 				USERLAND_ARCH_CFLAGS="$(USERLAND_ARCH_CFLAGS)"; \
 		done
 
@@ -222,7 +225,7 @@ $(BUILD_DIR)/Userland/%.o: Userland/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/libc/%.o: libc/%.c
+$(BUILD_DIR)/Userland/libc/I_libc/%.o: libc/I_libc/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
@@ -390,7 +393,9 @@ QEMU_COMMON := \
 	-drive if=none,id=disk1,file=disk2.qcow2,format=qcow2 \
 	-device ide-hd,bus=ahci.1,drive=disk1,serial=disk2 \
 	-serial stdio \
+	-device virtio-gpu-pci,max_outputs=2 \
 	-nic user,model=virtio-net-pci \
+	-display cocoa \
 	$(QEMU_EXTRA)
 	
 QEMU_USB := \

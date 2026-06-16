@@ -6,8 +6,8 @@
 #include "../../../API/Window.h"
 #include "../../../API/Input.h"
 #include "networkTest.h"
-#include "../../../../libc/include/string.h"
-#include "../../../../libc/include/stdio.h"
+#include "../../../../libc/I_libc/include/string.h"
+#include "../../../../libc/I_libc/include/stdio.h"
 
 #define NETTEST_LOG_LINES 12
 #define NETTEST_LINE_LEN  96

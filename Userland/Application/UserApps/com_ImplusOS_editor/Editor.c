@@ -3,9 +3,9 @@
 #include "../../../API/Input.h"
 #include "../../../API/Process.h"
 #include "../../../API/Window.h"
-#include "../../../../libc/include/stdio.h"
-#include "../../../../libc/include/stdlib.h"
-#include "../../../../libc/include/string.h"
+#include "../../../../libc/I_libc/include/stdio.h"
+#include "../../../../libc/I_libc/include/stdlib.h"
+#include "../../../../libc/I_libc/include/string.h"
 
 #define IED_MAX_PATH 512
 #define IED_INITIAL_LINE_CAPACITY 32u

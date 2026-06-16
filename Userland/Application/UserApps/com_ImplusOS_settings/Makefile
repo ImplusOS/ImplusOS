@@ -13,7 +13,7 @@ OBJS := $(APP_OBJS) $(COMMON_OBJS)
 
 CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
           $(ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
-          -I../../../../libc/include -I../../../../libc/include/sys \
+          -I../../../../libc/I_libc/include -I../../../../libc/I_libc/include/sys \
 		  -I../../../../Userland \
 		  -I../../../../Userland/API \
 		  -Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow -MMD -MP

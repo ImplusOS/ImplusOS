@@ -69,7 +69,7 @@ ImplusOS/
 │   ├── Syscalls.c/h      # Unified syscall wrappers
 │   ├── Userland.c        # Init process
 │   └── Userland.ld       # Linker script
-├── libc/                 # Minimal C library
+├── libc/I_libc/                 # Minimal C library
 ├── Thirdparty/           # stb_truetype.h, stb_image.h
 ├── Makefile              # Top-level build
 └── Doxyfile              # Doxygen config
@@ -153,7 +153,7 @@ Full POSIX layer in `Userland/POSIX/` providing:
 - **Language**: C (C11) + NASM assembly
 - **Naming**: PascalCase types, snake_case functions, UPPER_CASE macros
 - **Headers**: `#pragma once`
-- **No stdlib**: Freestanding environment. Use bundled `libc/`.
+- **No stdlib**: Freestanding environment. Use bundled `libc/I_libc/`.
 - **Warnings**: `-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow`
 
 ## Key Files

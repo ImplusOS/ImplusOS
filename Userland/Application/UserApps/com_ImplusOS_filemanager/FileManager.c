@@ -4,9 +4,9 @@
 #include "../../../API/Graphics.h"
 #include "../../../API/Window.h"
 #include "../../../API/Input.h"
-#include "../../../../libc/include/string.h"
-#include "../../../../libc/include/stdlib.h"
-#include "../../../../libc/include/stdio.h"
+#include "../../../../libc/I_libc/include/string.h"
+#include "../../../../libc/I_libc/include/stdlib.h"
+#include "../../../../libc/I_libc/include/stdio.h"
 
 #define FM_MAX_ENTRIES   128
 #define FM_MAX_NAME_LEN  64

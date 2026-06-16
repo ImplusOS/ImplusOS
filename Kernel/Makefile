@@ -22,14 +22,14 @@ include IPC/Makefile
 include Debug/Makefile
 
 LIBC_SRCS := \
-	$(ROOT_DIR)/libc/src/assert.c \
-	$(ROOT_DIR)/libc/src/math.c \
-	$(ROOT_DIR)/libc/src/stdlib.c \
-	$(ROOT_DIR)/libc/src/string.c \
-	$(ROOT_DIR)/libc/src/stdio.c \
-	$(ROOT_DIR)/libc/src/errno.c
+	$(ROOT_DIR)/libc/I_libc/src/assert.c \
+	$(ROOT_DIR)/libc/I_libc/src/math.c \
+	$(ROOT_DIR)/libc/I_libc/src/stdlib.c \
+	$(ROOT_DIR)/libc/I_libc/src/string.c \
+	$(ROOT_DIR)/libc/I_libc/src/stdio.c \
+	$(ROOT_DIR)/libc/I_libc/src/errno.c
 
-OBJS += $(patsubst $(ROOT_DIR)/libc/%.c,$(KERNEL_BUILD)/libc/%.o,$(LIBC_SRCS))
+OBJS += $(patsubst $(ROOT_DIR)/libc/I_libc/%.c,$(KERNEL_BUILD)/libc/I_libc/%.o,$(LIBC_SRCS))
 
 SHARELIB_SRCS := $(shell find $(ROOT_DIR)/ShareLib -name "*.c" 2>/dev/null)
 
@@ -53,7 +53,7 @@ $(KERNEL_BUILD)/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-$(KERNEL_BUILD)/libc/%.o: $(ROOT_DIR)/libc/%.c
+$(KERNEL_BUILD)/libc/I_libc/%.o: $(ROOT_DIR)/libc/I_libc/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 

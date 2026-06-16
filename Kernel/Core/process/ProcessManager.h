@@ -33,9 +33,10 @@ typedef uint64_t process_capability_mask_t;
 #define PROCESS_CAP_SIGNAL  (1ULL << 5)
 #define PROCESS_CAP_IPC     (1ULL << 6)
 #define PROCESS_CAP_NETWORK (1ULL << 7)
+#define PROCESS_CAP_DISPLAY (1ULL << 8)
 
 #define PROCESS_CAP_DEFAULT_MASK \
-    (PROCESS_CAP_SERIAL | PROCESS_CAP_PROCESS | PROCESS_CAP_FILE | PROCESS_CAP_MEMORY | PROCESS_CAP_INPUT | PROCESS_CAP_SIGNAL | PROCESS_CAP_IPC | PROCESS_CAP_NETWORK)
+    (PROCESS_CAP_SERIAL | PROCESS_CAP_PROCESS | PROCESS_CAP_FILE | PROCESS_CAP_MEMORY | PROCESS_CAP_INPUT | PROCESS_CAP_SIGNAL | PROCESS_CAP_IPC | PROCESS_CAP_NETWORK | PROCESS_CAP_DISPLAY)
 
 void process_manager_init(void);
 int32_t process_register_boot_process(const char *path, uint64_t *entry_out);
@@ -53,6 +54,9 @@ int32_t process_create_thread(uint64_t entry,
 int32_t process_spawn_user_elf(const char *path);
 int32_t process_spawn_user_elf_with_arg(const char *path,
                                         const char *launch_argument);
+int32_t process_fork(void);
+int32_t process_execve(const char *path, const char *const *argv,
+                       const char *const *envp);
 int32_t process_copy_launch_argument(char *out, uint32_t capacity);
 void process_exit_current_with_status(int32_t exit_status);
 void process_exit_current(void);

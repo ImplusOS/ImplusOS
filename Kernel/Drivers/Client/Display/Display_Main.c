@@ -17,6 +17,7 @@ static uint32_t *g_framebuffer = NULL;
 static uint32_t  g_fb_width    = 0;
 static uint32_t  g_fb_height   = 0;
 static uint64_t  g_framebuffer_pixels = 0;
+static uint32_t  g_display_generation = 1u;
 
 static bool display_ensure_shadow_buffer(void)
 {
@@ -47,16 +48,41 @@ static bool display_ensure_shadow_buffer(void)
     return true;
 }
 
+static bool display_sync_geometry(void)
+{
+    if (g_active_display_driver == NULL) {
+        return false;
+    }
+
+    uint32_t width = 0;
+    uint32_t height = 0;
+    if (g_active_display_driver->width != NULL) {
+        width = g_active_display_driver->width();
+    }
+    if (g_active_display_driver->height != NULL) {
+        height = g_active_display_driver->height();
+    }
+
+    if (width == 0 || height == 0) {
+        return false;
+    }
+
+    if (width != g_fb_width || height != g_fb_height) {
+        g_fb_width = width;
+        g_fb_height = height;
+        ++g_display_generation;
+    }
+
+    return display_ensure_shadow_buffer();
+}
+
 static bool display_refresh_driver(void)
 {
-    if (g_active_display_driver != NULL && g_active_display_module_name != NULL) {
-        return true;
-    }
     if (g_active_display_driver != NULL && g_active_display_module_name != NULL) {
         const driver_display_t *current =
             driver_manager_get_display_driver(g_active_display_module_name);
         if (current == g_active_display_driver) {
-            return true;
+            return display_sync_geometry();
         }
     }
 
@@ -80,15 +106,7 @@ static bool display_refresh_driver(void)
         }
     }
 
-    g_fb_width = 0;
-    g_fb_height = 0;
-    if (g_active_display_driver->width != NULL) {
-        g_fb_width = g_active_display_driver->width();
-    }
-    if (g_active_display_driver->height != NULL) {
-        g_fb_height = g_active_display_driver->height();
-    }
-    return display_ensure_shadow_buffer();
+    return display_sync_geometry();
 }
 
 bool display_init(void) {
@@ -209,6 +227,133 @@ void *display_get_framebuffer(void) {
     }
 
     return g_active_display_driver->get_framebuffer();
+}
+
+uint32_t display_generation(void)
+{
+    if (!display_is_ready()) {
+        return 0;
+    }
+    if (g_active_display_driver->get_generation != NULL) {
+        uint32_t generation = g_active_display_driver->get_generation();
+        return generation != 0u ? generation : g_display_generation;
+    }
+    return g_display_generation;
+}
+
+bool display_poll_config(void)
+{
+    if (!display_refresh_driver()) {
+        return false;
+    }
+
+    bool changed = false;
+    if (g_active_display_driver->poll_config != NULL) {
+        changed = g_active_display_driver->poll_config();
+    }
+    if (display_sync_geometry() && changed) {
+        ++g_display_generation;
+    }
+    return changed;
+}
+
+bool display_get_topology(display_topology_t *out_topology)
+{
+    if (out_topology == NULL || !display_is_ready()) {
+        return false;
+    }
+    (void)display_poll_config();
+    if (g_active_display_driver->get_topology != NULL &&
+        g_active_display_driver->get_topology(out_topology)) {
+        return true;
+    }
+
+    memset(out_topology, 0, sizeof(*out_topology));
+    out_topology->generation = display_generation();
+    out_topology->monitor_count = 1u;
+    out_topology->primary_monitor = 0u;
+    out_topology->origin_x = 0;
+    out_topology->origin_y = 0;
+    out_topology->width = display_width();
+    out_topology->height = display_height();
+    return out_topology->width != 0u && out_topology->height != 0u;
+}
+
+bool display_get_monitor_info(uint32_t monitor_index,
+                              display_monitor_info_t *out_info)
+{
+    if (out_info == NULL || !display_is_ready()) {
+        return false;
+    }
+    (void)display_poll_config();
+    if (g_active_display_driver->get_monitor_info != NULL &&
+        g_active_display_driver->get_monitor_info(monitor_index, out_info)) {
+        return true;
+    }
+    if (monitor_index != 0u) {
+        return false;
+    }
+
+    memset(out_info, 0, sizeof(*out_info));
+    out_info->index = 0u;
+    out_info->id = 0u;
+    out_info->flags = DISPLAY_MONITOR_FLAG_CONNECTED |
+                      DISPLAY_MONITOR_FLAG_PRIMARY |
+                      DISPLAY_MONITOR_FLAG_SYNTHETIC_MODE;
+    out_info->output_type = DISPLAY_OUTPUT_UNKNOWN;
+    out_info->width = display_width();
+    out_info->height = display_height();
+    out_info->refresh_millihz = 60000u;
+    out_info->mode_count = 1u;
+    out_info->generation = display_generation();
+    strcpy(out_info->name, "Display 0");
+    strcpy(out_info->output_name, "display0");
+    return out_info->width != 0u && out_info->height != 0u;
+}
+
+bool display_get_monitor_mode_info(uint32_t monitor_index,
+                                   uint32_t mode_index,
+                                   display_mode_info_t *out_info)
+{
+    if (out_info == NULL || !display_is_ready()) {
+        return false;
+    }
+    (void)display_poll_config();
+    if (g_active_display_driver->get_mode_info != NULL &&
+        g_active_display_driver->get_mode_info(monitor_index, mode_index,
+                                               out_info)) {
+        return true;
+    }
+    if (monitor_index != 0u || mode_index != 0u) {
+        return false;
+    }
+
+    memset(out_info, 0, sizeof(*out_info));
+    out_info->monitor_index = 0u;
+    out_info->mode_index = 0u;
+    out_info->flags = DISPLAY_MODE_FLAG_CURRENT |
+                      DISPLAY_MODE_FLAG_PREFERRED |
+                      DISPLAY_MODE_FLAG_SYNTHETIC;
+    out_info->width = display_width();
+    out_info->height = display_height();
+    out_info->stride = out_info->width;
+    out_info->bits_per_pixel = 32u;
+    out_info->refresh_millihz = 60000u;
+    strcpy(out_info->name, "Current");
+    return out_info->width != 0u && out_info->height != 0u;
+}
+
+bool display_set_monitor_mode(uint32_t monitor_index, uint32_t mode_index)
+{
+    if (!display_is_ready() || g_active_display_driver->set_mode == NULL) {
+        return false;
+    }
+    if (!g_active_display_driver->set_mode(monitor_index, mode_index)) {
+        return false;
+    }
+    ++g_display_generation;
+    (void)display_poll_config();
+    return display_sync_geometry();
 }
 
 void display_driver_detached(const char *module_name)

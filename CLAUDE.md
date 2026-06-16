@@ -35,7 +35,7 @@ ImplusOS/
 │   ├── Syscalls.c/h      Unified syscall wrapper
 │   ├── Userland.c        Init process (_start entry point)
 │   └── Userland.ld       Linker script for userland ELFs
-├── libc/                 Minimal C library (string, stdlib, stdio, math, errno, POSIX shims)
+├── libc/I_libc/                 Minimal C library (string, stdlib, stdio, math, errno, POSIX shims)
 ├── Thirdparty/           stb_truetype.h, stb_image.h
 ├── Docs/                 Documentation and images
 ├── Makefile              Top-level build orchestrator
@@ -122,7 +122,7 @@ sudo apt install -y build-essential nasm binutils \
 - **Naming**: PascalCase for types/structs, snake_case for functions, UPPER_CASE for macros/constants.
 - **Headers**: Use `#pragma once`. Include guards only in legacy headers.
 - **Warnings**: `-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow`
-- **No stdlib**: Kernel and userland are freestanding. Use the bundled `libc/`.
+- **No stdlib**: Kernel and userland are freestanding. Use the bundled `libc/I_libc/`.
 - **Driver modules**: Must be position-independent (`-fPIC`). Export `driver_module_init()` symbol.
 
 ## Testing

@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stdlib.h>
 
- 
+  
 
 extern int32_t  process_get_current_pid(void);
 extern int32_t  process_getppid(void);
@@ -17,6 +17,12 @@ extern void     process_exit(int32_t status)  __attribute__((noreturn));
 extern int32_t  process_spawn(const char *path);
 extern int32_t  process_waitpid(int32_t pid, int32_t *status_out,
                                 int32_t options);
+extern uint64_t syscall0(uint64_t num);
+extern uint64_t syscall1(uint64_t num, uint64_t arg1);
+extern uint64_t syscall3(uint64_t num, uint64_t arg1, uint64_t arg2,
+                         uint64_t arg3);
+#define SYSCALL_FORK    190ULL
+#define SYSCALL_EXECVE  191ULL
 
  
 
@@ -63,13 +69,9 @@ void posix_exit(int status)
 
 pid_t posix_fork(void)
 {
-    if (g_argv0[0] == '\0') {
-        errno = ENOSYS;
-        return -1;
-    }
-    int32_t child_pid = process_spawn(g_argv0);
+    int64_t child_pid = (int64_t)syscall0(SYSCALL_FORK);
     if (child_pid < 0) {
-        posix_set_errno_from_status((int64_t)child_pid);
+        posix_set_errno_from_status(child_pid);
         return -1;
     }
     os_errno = 0;
@@ -96,9 +98,6 @@ static void close_cloexec_fds(void)
 
 int posix_execve(const char *path, char *const argv[], char *const envp[])
 {
-    (void)argv;
-    (void)envp;
-
     if (!path) {
         errno = EINVAL;
         return -1;
@@ -106,15 +105,16 @@ int posix_execve(const char *path, char *const argv[], char *const envp[])
 
     close_cloexec_fds();
 
-    int32_t child_pid = process_spawn(path);
-    if (child_pid < 0) {
-        posix_set_errno_from_status((int64_t)child_pid);
+    int64_t r = (int64_t)syscall3(SYSCALL_EXECVE,
+                                   (uint64_t)(uintptr_t)path,
+                                   (uint64_t)(uintptr_t)argv,
+                                   (uint64_t)(uintptr_t)envp);
+    if (r < 0) {
+        posix_set_errno_from_status(r);
         return -1;
     }
-
      
     process_exit(0);
-     
     return -1;
 }
 

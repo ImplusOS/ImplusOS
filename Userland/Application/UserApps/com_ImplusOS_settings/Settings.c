@@ -8,9 +8,9 @@
 #include "../../../API/SystemInfo.h"
 #include "../../../API/IPC.h"
 #include "../../../API/WM_Protocol.h"
-#include "../../../../libc/include/string.h"
-#include "../../../../libc/include/stdlib.h"
-#include "../../../../libc/include/stdio.h"
+#include "../../../../libc/I_libc/include/string.h"
+#include "../../../../libc/I_libc/include/stdlib.h"
+#include "../../../../libc/I_libc/include/stdio.h"
 #include <stdint.h>
 
 #define WIN_X 100

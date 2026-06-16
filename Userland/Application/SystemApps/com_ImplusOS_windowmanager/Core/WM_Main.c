@@ -1,6 +1,7 @@
 #include "../WindowManager.h"
 
 #include "WM_Assets.h"
+#include "WM_Display.h"
 #include "WM_EventQueue.h"
 #include "../Animation/WM_Animation.h"
 #include "../Compositor/WM_Compositor.h"
@@ -44,8 +45,14 @@ void wm_service_init(wm_state_t *state)
         "/Userland/SystemApps/com_ImplusOS_windowmanager"
         "/Resource/Fonts/NotoSansJP-Regular.ttf");
 
-    uint32_t width  = get_display_width();
-    uint32_t height = get_display_height();
+    (void)wm_display_update_from_system(state);
+    uint32_t width  = state->display_topology.width;
+    uint32_t height = state->display_topology.height;
+    if (width == 0u || height == 0u) {
+        width = get_display_width();
+        height = get_display_height();
+        wm_display_set_fallback(state, width, height);
+    }
     if (!wm_compositor_init(state, width, height)) {
         state->running = false;
         return;
@@ -73,6 +80,7 @@ void wm_service_main_loop(void)
     }
 
     uint64_t last_clock_ms = 0u;
+    uint64_t last_display_poll_ms = 0u;
 
     while (g_wm_state.running) {
         ipc_message_t incoming;
@@ -90,6 +98,10 @@ void wm_service_main_loop(void)
             wm_ipc_handle_message(&g_wm_state, &event);
 
         uint64_t now_ms = get_uptime_ms();
+        if (now_ms - last_display_poll_ms >= 250u) {
+            last_display_poll_ms = now_ms;
+            (void)wm_display_reconfigure_if_needed(&g_wm_state);
+        }
         if (now_ms - last_clock_ms >= CLOCK_UPDATE_INTERVAL_MS) {
             last_clock_ms = now_ms;
             if (wm_taskbar_update_clock(&g_wm_state)) {

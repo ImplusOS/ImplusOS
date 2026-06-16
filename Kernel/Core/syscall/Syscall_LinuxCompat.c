@@ -6,7 +6,7 @@
 #include "Core/syscall/Syscall_Socket.h"
 #include "Core/timer/Timer.h"
 #include "Core/usercopy/Usercopy.h"
-#include "Crypto/SHA256.h"
+#include "Crypto/Crypto.h"
 #include "Debug/serial/Serial.h"
 #include "kernel/status.h"
 

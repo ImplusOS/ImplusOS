@@ -319,6 +319,7 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     {
         const arch_ops_t *ops = arch_ops_get();
         if (ops) {
+            serial_write_string("Entering user mode...\n");
             ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
         }
     }

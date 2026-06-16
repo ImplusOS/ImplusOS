@@ -60,6 +60,21 @@ static double_buffer_t g_double_buffer = {
     .buffer_size = 0u,
 };
 static int g_ready = 0;
+static uint32_t g_generation = 1u;
+
+static void generic_copy_string(char *dst, uint32_t dst_size, const char *src) {
+    if (dst == NULL || dst_size == 0u) {
+        return;
+    }
+    uint32_t i = 0u;
+    if (src != NULL) {
+        while (i + 1u < dst_size && src[i] != '\0') {
+            dst[i] = src[i];
+            ++i;
+        }
+    }
+    dst[i] = '\0';
+}
 
 static bool map_framebuffer_chunks(uint64_t phys_addr, uint64_t size_bytes) {
     if (size_bytes == 0) {
@@ -109,15 +124,20 @@ static inline volatile uint8_t *resolve_pixel_addr(uint64_t pixel_index) {
 bool generic_fb_set(const driver_boot_framebuffer_t *framebuffer) {
     g_ready = 0;
     g_fb.mapped_chunks = 0;
+    ++g_generation;
 
     if (g_double_buffer.buffer != NULL) {
         free(g_double_buffer.buffer);
         g_double_buffer.buffer = NULL;
+        g_double_buffer.buffer_size = 0u;
     }
 
     if (!framebuffer || !framebuffer->addr ||
         framebuffer->width == 0 || framebuffer->height == 0 ||
         framebuffer->pixels_per_scan_line < framebuffer->width) {
+        if (framebuffer == NULL) {
+            memset(&g_fb, 0, sizeof(g_fb));
+        }
         return false;
     }
 
@@ -188,6 +208,86 @@ uint32_t fb_width(void) {
 
 uint32_t fb_height(void) {
     return g_fb.height;
+}
+
+uint32_t fb_generation(void) {
+    return g_generation;
+}
+
+bool fb_poll_config(void) {
+    return false;
+}
+
+uint32_t fb_monitor_count(void) {
+    return g_ready ? 1u : 0u;
+}
+
+bool fb_get_topology(display_topology_t *out_topology) {
+    if (!g_ready || out_topology == NULL) {
+        return false;
+    }
+    memset(out_topology, 0, sizeof(*out_topology));
+    out_topology->generation = g_generation;
+    out_topology->monitor_count = 1u;
+    out_topology->primary_monitor = 0u;
+    out_topology->origin_x = 0;
+    out_topology->origin_y = 0;
+    out_topology->width = g_fb.width;
+    out_topology->height = g_fb.height;
+    return true;
+}
+
+bool fb_get_monitor_info(uint32_t monitor_index, display_monitor_info_t *out_info) {
+    if (!g_ready || out_info == NULL || monitor_index != 0u) {
+        return false;
+    }
+    memset(out_info, 0, sizeof(*out_info));
+    out_info->index = 0u;
+    out_info->id = 0u;
+    out_info->flags = DISPLAY_MONITOR_FLAG_CONNECTED |
+                      DISPLAY_MONITOR_FLAG_PRIMARY |
+                      DISPLAY_MONITOR_FLAG_SYNTHETIC_MODE;
+    out_info->output_type = DISPLAY_OUTPUT_FRAMEBUFFER;
+    out_info->x = 0;
+    out_info->y = 0;
+    out_info->width = g_fb.width;
+    out_info->height = g_fb.height;
+    out_info->refresh_millihz = 60000u;
+    out_info->current_mode = 0u;
+    out_info->mode_count = 1u;
+    out_info->generation = g_generation;
+    generic_copy_string(out_info->name, sizeof(out_info->name),
+                        "ImplusOS Generic Display");
+    generic_copy_string(out_info->output_name, sizeof(out_info->output_name),
+                        "framebuffer0");
+    return true;
+}
+
+bool fb_get_mode_info(uint32_t monitor_index, uint32_t mode_index,
+                      display_mode_info_t *out_info) {
+    if (!g_ready || out_info == NULL ||
+        monitor_index != 0u || mode_index != 0u) {
+        return false;
+    }
+    memset(out_info, 0, sizeof(*out_info));
+    out_info->monitor_index = 0u;
+    out_info->mode_index = 0u;
+    out_info->flags = DISPLAY_MODE_FLAG_CURRENT |
+                      DISPLAY_MODE_FLAG_PREFERRED |
+                      DISPLAY_MODE_FLAG_SYNTHETIC;
+    out_info->width = g_fb.width;
+    out_info->height = g_fb.height;
+    out_info->stride = g_fb.pixels_per_scan_line;
+    out_info->bits_per_pixel = 32u;
+    out_info->refresh_millihz = 60000u;
+    generic_copy_string(out_info->name, sizeof(out_info->name), "Current");
+    return true;
+}
+
+bool fb_set_mode(uint32_t monitor_index, uint32_t mode_index) {
+    (void)monitor_index;
+    (void)mode_index;
+    return false;
 }
 
 void fb_draw_pixel(uint32_t x, uint32_t y, uint32_t color) {
@@ -294,6 +394,13 @@ static const driver_display_t g_generic_fb_driver = {
     .present = fb_present,
     .set_framebuffer = generic_fb_set,
     .get_framebuffer = generic_fb_get_framebuffer,
+    .get_generation = fb_generation,
+    .poll_config = fb_poll_config,
+    .get_monitor_count = fb_monitor_count,
+    .get_topology = fb_get_topology,
+    .get_monitor_info = fb_get_monitor_info,
+    .get_mode_info = fb_get_mode_info,
+    .set_mode = fb_set_mode,
 };
 
 #ifdef IMPLUS_DRIVER_MODULE

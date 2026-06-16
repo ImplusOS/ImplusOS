@@ -625,9 +625,78 @@ static int initialize_raw_user_stack(process_t *proc)
     return 0;
 }
 
+#define EXECVE_ARG_MAX 256
+#define EXECVE_STRTOTAL_MAX 8192
+
+static int count_user_string_array(const char *const *user_array,
+                                    uint64_t *count_out,
+                                    uint64_t *total_strlen_out)
+{
+    *count_out = 0;
+    *total_strlen_out = 0;
+    if (!user_array) return 0;
+
+    for (uint64_t i = 0; i < EXECVE_ARG_MAX; ++i) {
+        if (!process_user_buffer_is_valid(&user_array[i], sizeof(const char *)))
+            return -1;
+        const char *str_ptr = NULL;
+        if (copy_from_user(&str_ptr, &user_array[i], sizeof(const char *)) != sizeof(const char *))
+            return -1;
+        if (!str_ptr) return 0;
+        uint64_t len = 0;
+        if (process_user_cstring_length(str_ptr, EXECVE_STRTOTAL_MAX, &len) < 0)
+            return -1;
+        *total_strlen_out += len + 1;
+        if (*total_strlen_out > EXECVE_STRTOTAL_MAX) return -1;
+        (*count_out)++;
+    }
+    return -1;
+}
+
+static int copy_user_strings(const char *const *user_array,
+                              uint64_t count,
+                              char *buf, uint64_t buf_size,
+                              uint64_t *offsets)
+{
+    uint64_t pos = 0;
+    for (uint64_t i = 0; i < count; ++i) {
+        const char *str_ptr = NULL;
+        if (copy_from_user(&str_ptr, &user_array[i], sizeof(const char *)) != sizeof(const char *))
+            return -1;
+        if (!str_ptr) return -1;
+        uint64_t len = 0;
+        if (process_user_cstring_length(str_ptr, EXECVE_STRTOTAL_MAX, &len) < 0)
+            return -1;
+        if (pos + len + 1 > buf_size) return -1;
+        if (copy_from_user(buf + pos, str_ptr, len + 1) != len + 1)
+            return -1;
+        offsets[i] = pos;
+        pos += len + 1;
+    }
+    return 0;
+}
+
+static int initialize_elf_user_stack_ex(
+    process_t *proc,
+    const elf_loaded_image_info_t *image_info,
+    const char *exec_path,
+    uint64_t argc, const char *const *argv_kernel,
+    uint64_t envc, const char *const *envp_kernel);
+
 static int initialize_elf_user_stack(process_t *proc,
                                      const elf_loaded_image_info_t *image_info,
                                      const char *exec_path)
+{
+    return initialize_elf_user_stack_ex(proc, image_info, exec_path,
+                                        0, NULL, 0, NULL);
+}
+
+static int initialize_elf_user_stack_ex(
+    process_t *proc,
+    const elf_loaded_image_info_t *image_info,
+    const char *exec_path,
+    uint64_t argc, const char *const *argv_kernel,
+    uint64_t envc, const char *const *envp_kernel)
 {
     if (proc == NULL || image_info == NULL || exec_path == NULL || proc->cr3 == 0) {
         return -1;
@@ -641,10 +710,6 @@ static int initialize_elf_user_stack(process_t *proc,
         ++exec_path_len;
     }
     ++exec_path_len;
-
-    if (exec_path_len > PROCESS_INITIAL_USER_STACK_SIZE / 2ULL) {
-        return -1;
-    }
 
     uint8_t random_bytes[16];
     for (uint32_t i = 0; i < sizeof(random_bytes); ++i) {
@@ -663,6 +728,35 @@ static int initialize_elf_user_stack(process_t *proc,
     memcpy((void *)(uintptr_t)sp, random_bytes, sizeof(random_bytes));
     uint64_t random_addr = sp;
 
+    uint64_t total_argv_strlen = 0;
+    for (uint64_t i = 0; i < argc; ++i) {
+        total_argv_strlen += (argv_kernel ? strlen(argv_kernel[i]) : 0) + 1;
+    }
+    uint64_t total_envp_strlen = 0;
+    for (uint64_t i = 0; i < envc; ++i) {
+        total_envp_strlen += (envp_kernel ? strlen(envp_kernel[i]) : 0) + 1;
+    }
+
+    sp &= ~0xFULL;
+    sp -= total_envp_strlen;
+    uint64_t envp_strings_base = sp;
+    for (uint64_t i = 0; i < envc; ++i) {
+        uint64_t len = strlen(envp_kernel[i]) + 1;
+        memcpy((void *)(uintptr_t)sp, envp_kernel[i], len);
+        sp += len;
+    }
+    sp = envp_strings_base;
+
+    sp &= ~0xFULL;
+    sp -= total_argv_strlen;
+    uint64_t argv_strings_base = sp;
+    for (uint64_t i = 0; i < argc; ++i) {
+        uint64_t len = strlen(argv_kernel[i]) + 1;
+        memcpy((void *)(uintptr_t)sp, argv_kernel[i], len);
+        sp += len;
+    }
+    sp = argv_strings_base;
+
     process_auxv_t auxv[] = {
         { PROCESS_AT_PHDR,   image_info->phdr_vaddr },
         { PROCESS_AT_PHENT,  image_info->phent },
@@ -679,21 +773,40 @@ static int initialize_elf_user_stack(process_t *proc,
         { PROCESS_AT_NULL,   0 },
     };
 
-    sp &= ~0xFULL;
-    
-    sp -= (5ULL + ((uint64_t)(sizeof(auxv) / sizeof(auxv[0])) * 2ULL)) * sizeof(uint64_t);
-    
-    uint64_t *stack_words = (uint64_t *)(uintptr_t)sp;
-    stack_words[0] = 1;
-    stack_words[1] = execfn_addr;
-    stack_words[2] = 0;
-    stack_words[3] = 0;
-    for (uint32_t i = 0; i < (uint32_t)(sizeof(auxv) / sizeof(auxv[0])); ++i) {
-        stack_words[4 + (i * 2U)] = auxv[i].a_type;
-        stack_words[5 + (i * 2U)] = auxv[i].a_val;
-    }
+    uint64_t auxv_count = sizeof(auxv) / sizeof(auxv[0]);
+    uint64_t auxv_words = auxv_count * 2U;
 
-    stack_words[4 + (sizeof(auxv) / sizeof(auxv[0])) * 2U] = 0;
+    sp &= ~0xFULL;
+
+    // x86-64 ABI: RSP must be 8 mod 16 at function entry (_start is entered via
+    // IRETQ/SYSRET, not CALL, so we need the extra slot to satisfy (%rsp+8) & 0xF == 0
+    sp -= 8ULL;
+    sp -= (1ULL + argc + 1ULL + envc + 1ULL + auxv_words + 1ULL) * sizeof(uint64_t);
+
+    uint64_t *stack_words = (uint64_t *)(uintptr_t)sp;
+    uint64_t idx = 0;
+
+    stack_words[idx++] = argc;
+
+    uint64_t argv_base = argv_strings_base;
+    for (uint64_t i = 0; i < argc; ++i) {
+        stack_words[idx++] = argv_base;
+        argv_base += strlen(argv_kernel[i]) + 1;
+    }
+    stack_words[idx++] = 0;
+
+    uint64_t envp_base = envp_strings_base;
+    for (uint64_t i = 0; i < envc; ++i) {
+        stack_words[idx++] = envp_base;
+        envp_base += strlen(envp_kernel[i]) + 1;
+    }
+    stack_words[idx++] = 0;
+
+    for (uint64_t i = 0; i < auxv_count; ++i) {
+        stack_words[idx++] = auxv[i].a_type;
+        stack_words[idx++] = auxv[i].a_val;
+    }
+    stack_words[idx] = 0;
 
     paging_switch_cr3(old_cr3);
     proc->saved_user_rsp = sp;
@@ -816,11 +929,8 @@ static int initialize_process_memory(process_t *proc,
 
 void *process_user_mmap(uint64_t length, uint64_t flags)
 {
+    (void)flags;
     if (!is_valid_pid(current_pid_get()) || length == 0) {
-        return NULL;
-    }
-
-    if ((flags & ~1ULL) != 0) {
         return NULL;
     }
 
@@ -1270,6 +1380,387 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
 int32_t process_spawn_user_elf(const char *path)
 {
     return process_spawn_user_elf_with_arg(path, NULL);
+}
+
+static int process_copy_user_page(uint64_t child_cr3, uint64_t vaddr,
+                                   uint64_t parent_phys)
+{
+    void *child_page = pmm_alloc_pages(1);
+    if (!child_page) return -1;
+    memcpy(child_page, (void *)(uintptr_t)parent_phys, PAGE_SIZE);
+    int ret = paging_map_user_page(child_cr3, vaddr,
+                                    (uint64_t)(uintptr_t)child_page,
+                                    PAGE_PRESENT | PAGE_RW | PAGE_USER);
+    if (ret < 0) {
+        pmm_free_pages(child_page, 1);
+    }
+    return ret;
+}
+
+static int process_clone_address_space(process_t *child, process_t *parent)
+{
+    uint64_t parent_cr3 = parent->cr3;
+    uint64_t child_cr3 = child->cr3;
+
+    for (uint64_t vaddr = USER_CODE_BASE; vaddr < USER_CODE_LIMIT;
+         vaddr += PAGE_SIZE) {
+        uint64_t phys = paging_virt_to_phys(parent_cr3, vaddr);
+        if (phys == 0) continue;
+        if (process_copy_user_page(child_cr3, vaddr, phys) < 0) return -1;
+    }
+
+    for (uint64_t vaddr = USER_HEAP_BASE; vaddr < parent->user_heap_cursor;
+         vaddr += PAGE_SIZE) {
+        uint64_t phys = paging_virt_to_phys(parent_cr3, vaddr);
+        if (phys == 0) continue;
+        if (process_copy_user_page(child_cr3, vaddr, phys) < 0) return -1;
+    }
+
+    for (uint64_t vaddr = parent->user_stack_base;
+         vaddr < parent->user_stack_top; vaddr += PAGE_SIZE) {
+        uint64_t phys = paging_virt_to_phys(parent_cr3, vaddr);
+        if (phys == 0) continue;
+        if (process_copy_user_page(child_cr3, vaddr, phys) < 0) return -1;
+    }
+
+    return 0;
+}
+
+int32_t process_fork(void)
+{
+    if (!process_table_ready()) return -1;
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int32_t current_pid = current_pid_get();
+    if (!is_valid_pid(current_pid)) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+
+    process_t *parent = process_memory_owner_locked(&g_processes[current_pid]);
+    if (!parent || parent->state == PROCESS_STATE_UNUSED) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+
+    if (parent->is_thread) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -38;
+    }
+
+    int32_t child_pid = find_free_slot();
+    if (child_pid < 0) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    process_t *child = &g_processes[child_pid];
+    reset_process_slot(child);
+    child->state = PROCESS_STATE_INIT;
+    child->memory_owner_pid = child_pid;
+
+    int32_t parent_pid_saved = (int32_t)(parent - g_processes);
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    child->kernel_stack_base = malloc(PROCESS_KERNEL_STACK_SIZE);
+    if (!child->kernel_stack_base) goto fail_free;
+    child->kernel_stack_top =
+        (((uint64_t)(uintptr_t)(child->kernel_stack_base +
+                                 PROCESS_KERNEL_STACK_SIZE)) & ~0xFULL);
+
+    child->cr3 = paging_create_process_space();
+    if (!child->cr3) goto fail_free_kstack;
+
+    child->user_code_base = parent->user_code_base;
+    child->user_code_limit = parent->user_code_limit;
+    child->user_heap_base = parent->user_heap_base;
+    child->user_heap_cursor = parent->user_heap_cursor;
+    child->user_heap_limit = parent->user_heap_limit;
+    child->user_heap_alloc_limit = parent->user_heap_alloc_limit;
+    child->user_heap_guard_page = parent->user_heap_guard_page;
+    child->user_stack_base = parent->user_stack_base;
+    child->user_stack_top = parent->user_stack_top;
+    child->user_stack_guard_page = parent->user_stack_guard_page;
+
+    if (process_clone_address_space(child, parent) < 0) goto fail_free_space;
+
+    for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
+        child->user_allocs[i] = parent->user_allocs[i];
+    }
+
+    child->capability_mask = parent->capability_mask;
+    child->fs_base = parent->fs_base;
+    memcpy(child->fpu_state, parent->fpu_state, PROCESS_FPU_STATE_SIZE);
+
+    uint64_t *parent_kstack = (uint64_t *)(uintptr_t)parent->saved_rsp;
+    uint64_t *child_kstack = (uint64_t *)(uintptr_t)child->kernel_stack_top;
+    child_kstack -= PROCESS_CONTEXT_QWORDS;
+    for (uint32_t i = 0; i < PROCESS_CONTEXT_QWORDS; ++i) {
+        child_kstack[i] = parent_kstack ? parent_kstack[i] : 0;
+    }
+    child_kstack[SYSCALL_FRAME_RAX] = 0;
+
+    child->saved_rsp = (uint64_t)(uintptr_t)child_kstack;
+    child->saved_user_rsp = parent->saved_user_rsp;
+
+    irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (child->state != PROCESS_STATE_INIT) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        goto fail_free_space;
+    }
+
+    child->entry = parent->entry;
+    child->parent_pid = parent_pid_saved;
+    child->timeslice = g_timeslice_ticks;
+    child->state = PROCESS_STATE_READY;
+
+    memcpy(child->name, parent->name, sizeof(child->name));
+    memcpy(child->launch_argument, parent->launch_argument,
+           sizeof(child->launch_argument));
+
+    for (uint32_t i = 0; i < PROCESS_SIGNAL_MAX; ++i) {
+        child->signal_handlers[i] = parent->signal_handlers[i];
+    }
+    child->signal_mask = parent->signal_mask;
+    child->pending_signals = 0;
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    ipc_init_process_queue(child_pid);
+
+    return child_pid;
+
+fail_free_space:
+    paging_destroy_process_space(child->cr3);
+    child->cr3 = 0;
+fail_free_kstack:
+    free(child->kernel_stack_base);
+    child->kernel_stack_base = NULL;
+fail_free:
+    irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    reset_process_slot(child);
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return -1;
+}
+
+int32_t process_execve(const char *path, const char *const *argv,
+                       const char *const *envp)
+{
+    if (!path || path[0] == '\0') return -22;
+
+    char path_buf[256];
+    uint64_t path_len = 0;
+    if (!process_user_cstring_length(path, sizeof(path_buf) - 1, &path_len))
+        return -14;
+    if (copy_from_user(path_buf, path, path_len + 1) < path_len + 1)
+        return -14;
+
+    uint64_t argc = 0;
+    uint64_t envc = 0;
+    uint64_t argv_strtotal = 0;
+    uint64_t envp_strtotal = 0;
+
+    if (count_user_string_array(argv, &argc, &argv_strtotal) < 0)
+        return -22;
+    if (count_user_string_array(envp, &envc, &envp_strtotal) < 0)
+        return -22;
+
+    (void)argv_strtotal;
+
+    char strings_buf[EXECVE_STRTOTAL_MAX];
+    uint64_t offsets[EXECVE_ARG_MAX];
+    char *argv_ptrs[EXECVE_ARG_MAX];
+    char *envp_ptrs[EXECVE_ARG_MAX];
+
+    memset(strings_buf, 0, sizeof(strings_buf));
+
+    if (argc > 0) {
+        if (copy_user_strings(argv, argc, strings_buf, sizeof(strings_buf), offsets) < 0)
+            return -14;
+        for (uint64_t i = 0; i < argc; ++i)
+            argv_ptrs[i] = strings_buf + offsets[i];
+    }
+
+    if (envc > 0) {
+        uint64_t argv_len = (argc > 0) ? (offsets[argc - 1] + strlen(argv_ptrs[argc - 1]) + 1) : 0;
+        if (argv_len + envp_strtotal > sizeof(strings_buf))
+            return -22;
+        if (copy_user_strings(envp, envc, strings_buf + argv_len, sizeof(strings_buf) - argv_len, offsets) < 0)
+            return -14;
+        for (uint64_t i = 0; i < envc; ++i)
+            envp_ptrs[i] = strings_buf + argv_len + offsets[i];
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int32_t pid = current_pid_get();
+    if (!is_valid_pid(pid)) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+    process_t *proc = process_memory_owner_locked(&g_processes[pid]);
+    if (!proc || proc->state == PROCESS_STATE_UNUSED) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+
+    uint32_t closed_fds = 0;
+    uint32_t closed_dirs = 0;
+    int32_t proc_pid = (int32_t)(proc - g_processes);
+    syscall_file_close_all_for_pid(proc_pid, &closed_fds, &closed_dirs);
+    syscall_socket_close_all_for_pid(proc_pid);
+    shared_memory_cleanup_process(proc_pid);
+
+    uint64_t old_cr3 = proc->cr3;
+    proc->cr3 = 0;
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    paging_destroy_process_space(old_cr3);
+
+    uint64_t new_cr3 = paging_create_process_space();
+    if (!new_cr3) {
+        uint64_t irq2 = irq_save_disable();
+        spinlock_lock(&g_process_table_lock);
+        proc->state = PROCESS_STATE_ZOMBIE;
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq2);
+        return -1;
+    }
+
+    proc->cr3 = new_cr3;
+    proc->user_code_base = USER_CODE_BASE;
+    proc->user_code_limit = USER_CODE_LIMIT;
+    proc->user_heap_base = USER_HEAP_BASE;
+    proc->user_heap_cursor = USER_HEAP_BASE;
+    proc->user_heap_limit = USER_HEAP_LIMIT;
+    proc->user_stack_base = USER_STACK_BASE;
+    proc->user_stack_top = USER_STACK_TOP;
+
+    proc->user_heap_guard_page = proc->user_heap_limit - PROCESS_GUARD_PAGE_SIZE;
+    proc->user_heap_limit -= PROCESS_GUARD_PAGE_SIZE;
+    uint64_t thread_reserve =
+        (uint64_t)g_process_capacity * PROCESS_THREAD_STACK_REGION_SIZE;
+    if (thread_reserve >= (proc->user_heap_limit - proc->user_heap_base)) {
+        paging_destroy_process_space(new_cr3);
+        proc->cr3 = 0;
+        uint64_t irq2 = irq_save_disable();
+        spinlock_lock(&g_process_table_lock);
+        proc->state = PROCESS_STATE_ZOMBIE;
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq2);
+        return -1;
+    }
+    proc->user_heap_alloc_limit = proc->user_heap_limit - thread_reserve;
+    proc->user_stack_guard_page = proc->user_stack_base;
+    proc->user_stack_base += PROCESS_GUARD_PAGE_SIZE;
+
+    uint64_t initial_stack_base =
+        proc->user_stack_top - PROCESS_INITIAL_USER_STACK_SIZE;
+    if (initial_stack_base < proc->user_stack_base ||
+        paging_map_user_range_alloc(proc->cr3, initial_stack_base,
+                                     PROCESS_INITIAL_USER_STACK_SIZE,
+                                     PAGE_RW | PAGE_USER) < 0) {
+        paging_destroy_process_space(new_cr3);
+        proc->cr3 = 0;
+        uint64_t irq2 = irq_save_disable();
+        spinlock_lock(&g_process_table_lock);
+        proc->state = PROCESS_STATE_ZOMBIE;
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq2);
+        return -1;
+    }
+
+    const char *name_ptr = path_buf;
+    for (const char *p = path_buf; *p; ++p) {
+        if (*p == '/' && *(p+1) != '\0') name_ptr = p + 1;
+    }
+    strncpy(proc->name, name_ptr, sizeof(proc->name) - 1);
+    proc->name[sizeof(proc->name) - 1] = '\0';
+
+    for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
+        proc->user_allocs[i].used = 0;
+        proc->user_allocs[i].addr = 0;
+        proc->user_allocs[i].size = 0;
+    }
+
+    elf_load_policy_t elf_policy = {
+        .max_file_size = PROCESS_ELF_MAX_SIZE,
+        .min_vaddr = USER_CODE_BASE,
+        .max_vaddr = USER_CODE_LIMIT,
+    };
+    elf_loaded_image_info_t image_info = {0};
+    if (!elf_loader_load_from_path(proc->cr3, path_buf,
+                                    &elf_policy, &image_info)) {
+        paging_destroy_process_space(new_cr3);
+        proc->cr3 = 0;
+        uint64_t irq2 = irq_save_disable();
+        spinlock_lock(&g_process_table_lock);
+        proc->state = PROCESS_STATE_ZOMBIE;
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq2);
+        return -1;
+    }
+
+    if (initialize_elf_user_stack_ex(proc, &image_info, path_buf,
+                                      argc, (const char *const *)argv_ptrs,
+                                      envc, (const char *const *)envp_ptrs) < 0) {
+        paging_destroy_process_space(new_cr3);
+        proc->cr3 = 0;
+        uint64_t irq2 = irq_save_disable();
+        spinlock_lock(&g_process_table_lock);
+        proc->state = PROCESS_STATE_ZOMBIE;
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq2);
+        return -1;
+    }
+
+    uint64_t kstack_saved = proc->saved_rsp;
+    if (kstack_saved != 0) {
+        uint64_t *kstack = (uint64_t *)(uintptr_t)kstack_saved;
+        kstack[SYSCALL_FRAME_RCX] = image_info.entry;
+    }
+
+    irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (proc->state != PROCESS_STATE_INIT &&
+        proc->state != PROCESS_STATE_READY) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    proc->entry = image_info.entry;
+    proc->timeslice = g_timeslice_ticks;
+    proc->state = PROCESS_STATE_READY;
+    for (uint32_t i = 0; i < PROCESS_SIGNAL_MAX; ++i) {
+        proc->signal_handlers[i] = 0;
+    }
+    proc->signal_mask = 0;
+    proc->pending_signals = 0;
+    proc->fs_base = 0;
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    return 0;
 }
 
 int32_t process_copy_launch_argument(char *out, uint32_t capacity)

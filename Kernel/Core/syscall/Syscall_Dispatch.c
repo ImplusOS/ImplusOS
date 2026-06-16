@@ -293,6 +293,10 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
         case SYSCALL_PROCESS_SPAWN_ELF_ARG:
         case SYSCALL_PROCESS_GET_LAUNCH_ARG:
         case SYSCALL_THREAD_CREATE:
+        case SYSCALL_FORK:
+        case SYSCALL_EXECVE:
+        case SYSCALL_VFORK:
+        case SYSCALL_CLONE:
             return PROCESS_CAP_PROCESS;
             
         case SYSCALL_FILE_OPEN:
@@ -322,13 +326,32 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
         case SYSCALL_USER_MEMCPY:
         case SYSCALL_USER_MEMCMP:
         case SYSCALL_USER_MEMSET:
+        case SYSCALL_MPROTECT:
+        case SYSCALL_MUNMAP:
+        case SYSCALL_MREMAP:
             return PROCESS_CAP_MEMORY;
 
         case SYSCALL_INPUT_READ_KEYBOARD:
         case SYSCALL_INPUT_READ_MOUSE:
             return PROCESS_CAP_INPUT;
 
+        case SYSCALL_GET_DISPLAY_WIDTH:
+        case SYSCALL_GET_DISPLAY_HEIGHT:
+        case SYSCALL_DISPLAY_DRAW_PIXEL:
+        case SYSCALL_DISPLAY_FILL_RECT:
+        case SYSCALL_DISPLAY_PRESENT:
+        case SYSCALL_GET_DISPLAY_FRAMEBUFFER:
+        case SYSCALL_DISPLAY_GET_PIXEL:
+        case SYSCALL_DISPLAY_GET_TOPOLOGY:
+        case SYSCALL_DISPLAY_GET_MONITOR_INFO:
+        case SYSCALL_DISPLAY_GET_MONITOR_MODE_INFO:
+        case SYSCALL_DISPLAY_SET_MONITOR_MODE:
+            return PROCESS_CAP_DISPLAY;
+
         case SYSCALL_PROCESS_SIGNAL:
+        case SYSCALL_TKILL:
+        case SYSCALL_RT_SIGACTION:
+        case SYSCALL_RT_SIGPROCMASK:
             return PROCESS_CAP_SIGNAL;
 
         case SYSCALL_UDP_SEND:
@@ -1168,6 +1191,9 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 uint64_t aligned_end = (end + 4095ULL) & ~4095ULL;
 
                 int res = paging_set_user_access(cr3, aligned_start, aligned_end - aligned_start, 1);
+                if (res < 0) {
+                    ptr = NULL;
+                }
             }
             set_syscall_result(saved_rsp, (uint64_t)(uintptr_t)ptr);
             break;
@@ -1178,6 +1204,81 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             set_syscall_result(saved_rsp, (uint64_t)color);
             break;
         }
+
+        case SYSCALL_DISPLAY_GET_TOPOLOGY: {
+            display_topology_t *topology_out =
+                (display_topology_t *)(uintptr_t)arg1;
+            if (!user_buffer_ok(topology_out, sizeof(display_topology_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_display_topology_buffer");
+                break;
+            }
+            display_topology_t topology = {0};
+            if (!driver_manager_display_get_topology(&topology) ||
+                copy_to_user(topology_out, &topology, sizeof(topology)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_IO_ERROR,
+                             "display_topology_unavailable");
+                break;
+            }
+            set_syscall_status(saved_rsp, OS_STATUS_OK);
+            break;
+        }
+
+        case SYSCALL_DISPLAY_GET_MONITOR_INFO: {
+            display_monitor_info_t *info_out =
+                (display_monitor_info_t *)(uintptr_t)arg2;
+            if (!user_buffer_ok(info_out, sizeof(display_monitor_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_monitor_info_buffer");
+                break;
+            }
+            display_monitor_info_t info = {0};
+            if (!driver_manager_display_get_monitor_info((uint32_t)arg1,
+                                                         &info)) {
+                syscall_fail(saved_rsp, num, OS_STATUS_NOT_FOUND,
+                             "monitor_not_found");
+                break;
+            }
+            if (copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_monitor_info_buffer");
+                break;
+            }
+            set_syscall_status(saved_rsp, OS_STATUS_OK);
+            break;
+        }
+
+        case SYSCALL_DISPLAY_GET_MONITOR_MODE_INFO: {
+            display_mode_info_t *info_out =
+                (display_mode_info_t *)(uintptr_t)arg3;
+            if (!user_buffer_ok(info_out, sizeof(display_mode_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_monitor_mode_info_buffer");
+                break;
+            }
+            display_mode_info_t info = {0};
+            if (!driver_manager_display_get_monitor_mode_info((uint32_t)arg1,
+                                                              (uint32_t)arg2,
+                                                              &info)) {
+                syscall_fail(saved_rsp, num, OS_STATUS_NOT_FOUND,
+                             "monitor_mode_not_found");
+                break;
+            }
+            if (copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_monitor_mode_info_buffer");
+                break;
+            }
+            set_syscall_status(saved_rsp, OS_STATUS_OK);
+            break;
+        }
+
+        case SYSCALL_DISPLAY_SET_MONITOR_MODE:
+            set_syscall_status(saved_rsp,
+                driver_manager_display_set_monitor_mode((uint32_t)arg1,
+                                                        (uint32_t)arg2) ?
+                OS_STATUS_OK : OS_STATUS_NOT_SUPPORTED);
+            break;
 
         case SYSCALL_SYSTEM_SHUTDOWN: {
             extern void acpi_shutdown(void);
@@ -1719,15 +1820,24 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         
         case SYSCALL_FORK: {
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)-38); 
+            int32_t child_pid = process_fork();
+            set_syscall_i32(saved_rsp, child_pid);
+            if (child_pid > 0) request_switch = 1;
             break;
         }
         case SYSCALL_EXECVE: {
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)-38);
+            int32_t result = process_execve(
+                (const char *)arg1,
+                (const char *const *)(uintptr_t)arg2,
+                (const char *const *)(uintptr_t)arg3);
+            set_syscall_i32(saved_rsp, result);
+            request_switch = 1;
             break;
         }
         case SYSCALL_VFORK: {
-            set_syscall_result(saved_rsp, (uint64_t)(int64_t)-38);
+            int32_t child_pid = process_fork();
+            set_syscall_i32(saved_rsp, child_pid);
+            if (child_pid > 0) request_switch = 1;
             break;
         }
 

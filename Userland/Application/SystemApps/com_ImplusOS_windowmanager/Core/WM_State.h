@@ -6,6 +6,7 @@
 
 #include "../../../../../Userland/API/IPC.h"
 #include "../../../../../Userland/API/Input.h"
+#include "../../../../../Userland/API/Graphics.h"
 #include "../../../../../Userland/API/WM_Protocol.h"
 
 #define WM_MAX_WINDOWS                 256u
@@ -226,6 +227,11 @@ typedef struct {
 } wm_compositor_t;
 
 typedef struct {
+    display_monitor_info_t info;
+    wm_rect_t bounds;
+} wm_monitor_layout_t;
+
+typedef struct {
     uint32_t *pixels;
     uint32_t width;
     uint32_t height;
@@ -305,6 +311,9 @@ typedef struct {
 typedef struct {
     wm_scene_t scene;
     wm_compositor_t compositor;
+    display_topology_t display_topology;
+    wm_monitor_layout_t monitors[DISPLAY_MAX_MONITORS];
+    uint32_t monitor_count;
     wm_theme_t theme;
     wm_font_t font;
     wm_assets_t assets;

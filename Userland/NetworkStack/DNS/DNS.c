@@ -6,7 +6,7 @@
 
 #include "../../API/Network.h"
 #include "../../API/Process.h"
-#include "../../../libc/include/string.h"
+#include "../../../libc/I_libc/include/string.h"
 
 #define DNS_REMOTE_PORT 53u
 #define DNS_EPHEMERAL_PORT_FIRST 49152u

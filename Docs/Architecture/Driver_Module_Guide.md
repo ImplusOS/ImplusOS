@@ -43,18 +43,21 @@ driver's API.
 
 ## 3. Driver Categories
 
-| Category | Kind Enum | Example Drivers | Key Interface |
-|---|---|---|---|
-| PCI Bus | `DRIVER_MANAGER_KIND_PCI` | `PCI_Driver.ELF` | `pci_driver_t` |
-| Filesystem | `DRIVER_MANAGER_KIND_FAT32` | `FAT32_Driver.ELF` | `fat32_driver_t` |
-| Display | `DRIVER_MANAGER_KIND_DISPLAY` | `ImplusOS_Generic_Display_Driver.ELF`, `VirtIO_Driver.ELF` | `driver_display_t` |
-| Input | `DRIVER_MANAGER_KIND_INPUT` | `PS2_Driver.ELF` | `driver_input_t` |
-| USB Host | `DRIVER_MANAGER_KIND_USB` | `USB_Driver.ELF` | `usb_master_vtable_t` |
-| NIC | `DRIVER_MANAGER_KIND_NIC` | `VirtIO_Driver.ELF` | `driver_nic_t` |
+| Category | `device_type_t` | Example Drivers | Key Interface |
+|---|---|---|---|---|
+| PCI Bus | `DEVICE_TYPE_PCI` | `PCI_Driver.ELF` | `pci_driver_t` |
+| Filesystem | `DEVICE_TYPE_FILESYSTEM` | `FAT32_Driver.ELF`, `exFAT_Driver.ELF`, `ISO9660_Driver.ELF` | `fat32_driver_t` / `iso9660_driver_t` |
+| Display | `DEVICE_TYPE_DISPLAY` | `ImplusOS_Generic_Display_Driver.ELF`, `VirtIO_Driver.ELF` | `driver_display_t` |
+| Input | `DEVICE_TYPE_INPUT` | `PS2_Driver.ELF` | `driver_input_t` |
+| USB Host | `DEVICE_TYPE_USB` | `USB_Driver.ELF` | `usb_master_vtable_t` |
+| NIC | `DEVICE_TYPE_NIC` | `VirtIO_Driver.ELF` | `driver_nic_t` |
+| Block | `DEVICE_TYPE_BLOCK` | `AHCI_Driver.ELF`, `NVMe_Driver.ELF`, `VirtIOBlk_Driver.ELF` | `driver_storage_t` |
+| Audio | `DEVICE_TYPE_AUDIO` | `AC97_Driver.ELF`, `HDA_Driver.ELF`, `VirtIOSound_Driver.ELF` | (audio API) |
 
 ## 4. Kernel API (`driver_binary_t`)
 
-The kernel passes this vtable to every driver during initialization:
+The kernel passes this vtable to every driver during initialization. Most functions
+are architecture-neutral; where noted, some are specific to x86_64 or arm64.
 
 ```c
 typedef struct {
@@ -76,7 +79,7 @@ typedef struct {
     void *(*memset)(void *s, int c, size_t n);
     void *(*memcpy)(void *dst, const void *src, size_t n);
 
-    // I/O ports
+    // I/O ports (x86_64 only; arm64 uses MMIO via map_mmio_virt)
     uint8_t (*inb)(uint16_t port);
     void (*outb)(uint16_t port, uint8_t value);
     uint32_t (*inl)(uint16_t port);
@@ -345,16 +348,59 @@ typedef struct {
 - Fallback framebuffer driver using the boot framebuffer from UEFI GOP
 - Double-buffered rendering
 
+### AHCI Driver (`AHCI_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/Block/AHCI/`
+- AHCI SATA controller driver
+- Provides block-level read/write for disk I/O
+
+### NVMe Driver (`NVMe_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/Block/NVMe/`
+- NVMe solid-state storage driver
+- High-performance block I/O
+
+### VirtIO Block Driver (`VirtIOBlk_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/Block/VirtIOBlk/`
+- VirtIO block device driver for QEMU virtual storage
+
+### exFAT Driver (`exFAT_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/FileSystem/exFAT/`
+- exFAT filesystem implementation
+
+### ISO9660 Driver (`ISO9660_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/FileSystem/ISO9660/`
+- ISO9660 (CD-ROM) filesystem implementation
+- Used for booting from CD-ROM images
+
+### AC97 Audio Driver (`AC97_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/Audio/AC97/`
+- Intel AC97 audio controller driver
+
+### HDA Audio Driver (`HDA_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/Audio/HDA/`
+- Intel High Definition Audio driver
+
+### VirtIO Sound Driver (`VirtIOSound_Driver.ELF`)
+
+- Source: `Kernel/Drivers/Server/Audio/VirtIOSound/`
+- VirtIO sound device driver for QEMU virtual audio
+
 ## 9. Hot Reload
 
 Drivers can be unloaded and reloaded at runtime:
 
 ```c
 // Unload a driver
-driver_module_manager_unload_by_name("MyDriver");
+driver_manager_unload_module("MyDriver");
 
 // Reload a driver
-driver_module_manager_reload_by_name("MyDriver");
+driver_manager_reload_module("MyDriver");
 ```
 
 This calls the driver's `shutdown()` callback, unlinks from the Driver Manager,

@@ -1,6 +1,7 @@
 #include "WM_Input.h"
 
 #include "../Compositor/WM_Damage.h"
+#include "../Core/WM_Display.h"
 #include "../SceneGraph/WM_Node.h"
 #include "../UI/WM_StartMenu.h"
 #include "../UI/WM_Taskbar.h"
@@ -54,25 +55,6 @@ static void damage_ui(wm_state_t *state)
     damage_taskbar(state);
     damage_start_menu(state);
     damage_notification_center(state);
-}
-
-static wm_rect_t work_area_rect(const wm_state_t *state)
-{
-    if (!state) return (wm_rect_t){0, 0, 0, 0};
-    wm_rect_t dock = wm_taskbar_rect(state);
-    const int32_t margin = 6;
-    int32_t top = margin;
-    int32_t bottom = (int32_t)state->compositor.framebuffer_height - margin;
-#if WM_TASKBAR_AT_TOP
-    top = dock.y + (int32_t)dock.h + margin;
-#else
-    bottom = dock.y - margin;
-#endif
-    if (bottom < top) bottom = top;
-    uint32_t width = state->compositor.framebuffer_width > (uint32_t)(margin * 2) ?
-        state->compositor.framebuffer_width - (uint32_t)(margin * 2) :
-        state->compositor.framebuffer_width;
-    return (wm_rect_t){margin, top, width, (uint32_t)(bottom - top)};
 }
 
 static void route_keyboard(wm_state_t *state, const ipc_message_t *message)
@@ -222,7 +204,7 @@ static void toggle_maximize(wm_state_t *state, wm_window_t *window)
     }
     window->restore_frame = window->frame;
     window->maximized = true;
-    wm_rect_t area = work_area_rect(state);
+    wm_rect_t area = wm_display_work_area_for_rect(state, window->frame);
     wm_rect_t frame = {
         area.x,
         area.y,
@@ -236,27 +218,27 @@ static void toggle_maximize(wm_state_t *state, wm_window_t *window)
 static void snap_window(wm_state_t *state, wm_window_t *window)
 {
     if (!state || !window || window->maximized) return;
-    wm_rect_t area = work_area_rect(state);
+    wm_rect_t area = wm_display_work_area_for_rect(state, window->frame);
     int32_t x = window->frame.x;
     int32_t y = window->frame.y;
-    int32_t screen_right = (int32_t)state->compositor.framebuffer_width;
+    int32_t screen_right = area.x + (int32_t)area.w;
     if (y <= area.y + 4) {
         toggle_maximize(state, window);
         return;
     }
-    uint32_t half_w = state->compositor.framebuffer_width / 2u;
+    uint32_t half_w = area.w / 2u;
     uint32_t content_h = area.h > state->theme.title_height ?
         area.h - state->theme.title_height : WM_MIN_WINDOW_HEIGHT;
-    if (x <= 4) {
+    if (x <= area.x + 4) {
         window->restore_frame = window->frame;
         wm_scene_set_frame(state, window,
             (wm_rect_t){area.x, area.y, half_w > 10u ? half_w - 10u : half_w, content_h});
     } else if (x + (int32_t)window->frame.w >= screen_right - 4) {
         window->restore_frame = window->frame;
         wm_scene_set_frame(state, window,
-            (wm_rect_t){(int32_t)half_w + 4, area.y,
-                        state->compositor.framebuffer_width > half_w + 10u ?
-                            state->compositor.framebuffer_width - half_w - 10u : half_w,
+            (wm_rect_t){area.x + (int32_t)half_w + 4, area.y,
+                        area.w > half_w + 10u ?
+                            area.w - half_w - 10u : half_w,
                         content_h});
     }
 }
@@ -345,17 +327,19 @@ static void update_drag(wm_state_t *state)
     wm_rect_t frame = state->input.frame_start;
     frame.x += dx;
     frame.y += dy;
-    wm_rect_t area = work_area_rect(state);
-    int32_t min_y = area.y - (int32_t)state->theme.title_height + 4;
+    wm_rect_t bounds = wm_display_virtual_bounds(state);
+    int32_t min_y = bounds.y + 4;
     if (min_y < 4) min_y = 4;
     if (frame.y < min_y) frame.y = min_y;
 #if !WM_TASKBAR_AT_TOP
-    int32_t max_y = area.y + (int32_t)area.h - (int32_t)state->theme.title_height - 4;
+    int32_t max_y = bounds.y + (int32_t)bounds.h -
+        (int32_t)state->theme.title_height - 4;
     if (frame.y > max_y) frame.y = max_y;
 #endif
-    int32_t right_limit = (int32_t)state->compositor.framebuffer_width - 48;
+    int32_t right_limit = bounds.x + (int32_t)bounds.w - 48;
     if (frame.x > right_limit) frame.x = right_limit;
-    if (frame.x + (int32_t)frame.w < 48) frame.x = 48 - (int32_t)frame.w;
+    if (frame.x + (int32_t)frame.w < bounds.x + 48)
+        frame.x = bounds.x + 48 - (int32_t)frame.w;
     wm_scene_set_frame(state, window, frame);
 }
 

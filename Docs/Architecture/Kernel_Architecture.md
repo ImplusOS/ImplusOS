@@ -2,10 +2,10 @@
 
 ## 1. Overview
 
-ImplusOS runs a **monolithic kernel** with loadable driver modules on x86-64 hardware.
-The kernel is a single ELF64 binary (`Kernel_Main.ELF`) that is loaded by the UEFI
-bootloader into physical memory and entered directly in Long Mode with paging already
-enabled by the UEFI firmware.
+ImplusOS runs a **monolithic kernel** with loadable driver modules on **x86-64 (Long
+Mode)** and **arm64 (AArch64)** hardware. The kernel is a single ELF64 binary
+(`Kernel_Main.ELF`) that is loaded by the UEFI bootloader into physical memory and
+entered in a flat virtual-memory mode with paging already enabled by the firmware.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -48,7 +48,7 @@ The bootloader is a UEFI application built with `EDK2`:
 5. **ACPI RSDP Discovery** — Locates ACPI RSDP v1/v2 from UEFI Configuration Table
 6. **Kernel Loading** — Loads `Kernel/Kernel_Main.ELF` from the boot filesystem
    - Parses ELF64 headers, loads PT_LOAD segments
-   - Supports ET_DYN (PIE) with R_X86_64_RELATIVE relocations
+   - Supports ET_DYN (PIE) with arch-specific relocations (x86_64: `R_X86_64_RELATIVE`; arm64: `R_AARCH64_RELATIVE`)
 7. **Driver Preloading** — Loads all `*.ELF` files from `Kernel/Driver/` directory
 8. **Userland Preloading** — Loads `Userland/Userland.ELF` and application ELFs
 9. **Partition BPB Capture** — Reads FAT32 BPB from boot partition for filesystem init
@@ -59,38 +59,64 @@ The bootloader is a UEFI application built with `EDK2`:
 
 ```c
 void kernel_main(BOOT_INFO *boot_info) {
-    // Phase 1: Core hardware
-    serial_init();            // COM1 serial output (115200 baud)
-    init_gdt();               // Global Descriptor Table (kernel/user code/data segments + TSS)
-    init_idt();               // Interrupt Descriptor Table (256 entries)
+    // Phase 1: Early hardware
+    arch_ops_get()->disable_interrupts();
+    arch_ops_get()->early_init();
+    serial_init();                    // COM1 serial output (115200 baud)
+    kernel_panic_init(boot_info);     // Panic handler with boot info
+    switch to kernel stack
+    → kernel_main_after_stack_switch(boot_info);
+}
 
-    // Phase 2: Memory
-    init_physical_memory();   // Bitmap-based physical page allocator
-    init_paging();            // 4-level page tables (identity map kernel)
-    memory_init();            // Kernel heap (malloc/free/calloc/realloc)
+static void kernel_main_after_stack_switch(BOOT_INFO *boot_info) {
+    // Phase 1b: Boot progress
+    load_bar_init(boot_info);         // Boot progress bar/spinner
+    timer_set_callback(load_spinner_timer);
 
-    // Phase 3: Platform
-    acpi_init();              // ACPI table parsing (MADT, etc.)
-    platform_interrupts_configure();  // IOAPIC + LAPIC setup
-    syscall_init();           // MSR setup for SYSCALL/SYSRET
-    smp_init();               // Multi-processor initialization
-    vmx_init();               // Intel VT-x (optional VMX support)
-    timer_init(60);           // LAPIC timer at 60 Hz
+    // Phase 2: CPU tables (via arch_ops or direct)
+    init_gdt();                       // Global Descriptor Table (x86_64)
+    init_idt();                       // Interrupt Descriptor Table (x86_64)
 
-    // Phase 4: Drivers & Subsystems
-    driver_module_manager_init();     // Load driver modules from BOOT_INFO
+    // Phase 3: Memory
+    init_physical_memory();           // Bitmap-based physical page allocator
+    physical_memory_reserve_region(); // Reserve framebuffer physical pages
+    init_paging();                    // 4-level page tables
+    memory_init();                    // Kernel heap (malloc/free/calloc/realloc)
+
+    // Phase 4: Platform
+    acpi_init(boot_info);             // ACPI table parsing (MADT, etc.)
+    platform_interrupts_configure();  // IOAPIC/LAPIC (x86_64) or GIC (arm64)
+    timer_init(timer_hal);            // LAPIC timer or ARM Generic Timer
+    syscall_init();                   // MSR setup for SYSCALL/SYSRET (or SVC)
+    smp_init();                       // Multi-processor initialization (IPI/PSCI)
+    ops->virtualization_init();       // Intel VT-x (x86_64) / no-op on arm64
+    ops->enable_interrupts();
+    timer_switch_lapic();
+    timer_start_clock();
+
+    // Phase 5: Drivers & Subsystems
+    driver_module_manager_init(boot_info);
     driver_module_init_all();         // Initialize all loaded drivers
+    audio_manager_init();             // Audio subsystem init
+    driver_select_set_boot_framebuffer();
+    debugger_init(boot_info);         // Debugger init
+    input_manager_init();             // Input system init
+    block_manager_set_boot_identity(boot_info);
     disk_io_init();                   // Disk I/O backend selection
-    all_fs_initialize();              // FAT32 + VFS mount
+    all_fs_initialize();              // VFS + FAT32 + ISO9660 mount
     driver_manager_display_init();    // Display driver selection
     wm_kernel_init();                 // Window manager kernel side
     process_manager_init();           // Process table initialization
     ipc_init();                       // IPC message queues
     syscall_file_init();              // File descriptor tables
     network_stack_init();             // Network stack (Ethernet/ARP/IPv4/UDP/TCP)
+    fb_snapshot_create(boot_info);
+    load_bar_finish();
 
-    // Phase 5: Enter userland
+    // Phase 6: Fade animation + enter userland
+    fade-to-black animation
     process_register_boot_process("/Userland/Userland.ELF");
+    timer_start_services();
     ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
 }
 ```
@@ -107,10 +133,16 @@ void kernel_main(BOOT_INFO *boot_info) {
 
 ### 3.2 Virtual Memory (4-Level Paging)
 
-- **Page table levels**: PML4 → PDPT → PD → PT
-- **Kernel mapping**: Identity-mapped (virtual == physical)
-- **User mapping**: Per-process CR3, separate address spaces
-- **Page flags**: PRESENT, RW, USER, PWT, PCD, PS (2MiB), NX (No-Execute), EXTERNAL
+Both architectures use 4-level page tables:
+
+| Architecture | Levels | Base register |
+|---|---|---|
+| **x86_64** | PML4 → PDPT → PD → PT | CR3 |
+| **arm64** | TTBR0/1 → L0 → L1 → L2 → L3 | Translation Table Base Register |
+
+- **Kernel mapping**: Identity-mapped (virtual == physical) on x86_64; kernel-space high mapping on arm64
+- **User mapping**: Per-process address space (x86_64: per-process CR3; arm64: TTBR0_EL1)
+- **Page flags**: PRESENT, RW, USER, NX (No-Execute), accessed/dirty bits
 - **API**: `paging_create_process_space()`, `paging_destroy_process_space()`, `paging_map_user_page()`, `paging_set_user_access()`, `paging_virt_to_phys()`
 
 ### 3.3 Kernel Heap
@@ -119,13 +151,16 @@ void kernel_main(BOOT_INFO *boot_info) {
 - Sensitive memory variants: `malloc_sensitive()`, `free_sensitive()` (zeroed on free)
 - DMA allocator: `dma_alloc()`, `dma_free()` (physically contiguous, low memory)
 
-### 3.4 User-Space Memory Map
+### 3.4 User-Space Memory Map (x86_64)
 
 | Region | Start Address | End Address | Size |
 |---|---|---|---|
 | Code | `0x4000000000` | `0x4080000000` | 2 GiB |
 | Heap | `0x4100000000` | `0x47E0000000` | ~30 GiB |
 | Stack | `0x47E0000000` | `0x4800000000` | 32 MiB |
+
+> **Note**: The arm64 user-space memory map uses different base addresses
+> (defined in `Kernel/Arch/arm64/linker/linker.ld`).
 
 ## 4. Process Management
 
@@ -164,31 +199,43 @@ Default: All capabilities granted (`PROCESS_CAP_DEFAULT_MASK`).
 
 ### 5.1 ABI Convention
 
-- Instruction: AMD64 `SYSCALL` / `SYSRET`
+| Architecture | Instruction | Entry point |
+|---|---|---|
+| **x86_64** | `SYSCALL` / `SYSRET` | `Kernel/Arch/x86_64/cpu/Syscall_Entry.asm` |
+| **arm64** | `SVC` | `Kernel/Arch/arm64/cpu/ExceptionVectors.S` |
+
+x86_64 convention:
 - Syscall number: `RAX`
 - Arguments: `RDI` (arg1), `RSI` (arg2), `RDX` (arg3), `R10` (arg4), `R8` (arg5)
 - Return value: `RAX`
-- Entry point: `Kernel/Arch/x86_64/cpu/Syscall_Entry.asm`
+
+arm64 convention:
+- Syscall number: `X8`
+- Arguments: `X0`–`X5`
+- Return value: `X0`
 
 ### 5.2 Syscall Categories
 
 | Range | Category | Examples |
-|---|---|---|
+|---|---|---|---|
 | 1–5 | Serial I/O | putchar, puts, write_u64/u32/u16 |
-| 6–9 | Process | create, yield, exit, thread_create |
+| 6–12 | Process | create, yield, exit, thread_create/exit/join/detach |
 | 23–42 | File I/O | open, read, write, close, seek, mkdir, opendir, readdir, unlink |
-| 43–55 | Memory & Graphics | mmap, malloc, free, memcpy, display draw/present |
-| 100–109 | Network (TCP/UDP) | connect, listen, accept, send, recv, close |
-| 110–122 | Process Ext. | waitpid, getppid, sleep, getcwd, proc info |
-| 130–138 | Socket API | socket, connect, bind, listen, accept, send, recv |
+| 43–60 | Memory, Graphics, IPC | mmap, malloc, free, memcpy, display draw/present, IPC, display topology |
+| 100–109 | Network (TCP/UDP) | connect, listen, accept, send, recv, close, get_state |
+| 110–124 | Process Ext. | waitpid, getppid, sleep, getcwd, proc info, spawn with args, launch args |
+| 130–145 | Socket API | socket, connect, bind, listen, accept, send, recv, get_info, set/get option, shutdown |
 | 140 | RTC | get_rtc_time |
-| 150–159 | Memory Ext. | mprotect, munmap, getuid/gid/tid |
-| 160–177 | Epoll/Clock/Linux | epoll, clock_gettime, readv, writev, ioctl, fcntl |
-| 180–193 | Futex/Clone/Signal | futex, clone, rt_sigaction, fork, execve |
-| 200–203 | DRM | open, ioctl, close, mmap |
-| 210–213 | Evdev | open, read, ioctl, close |
-| 220–229 | Unix Socket | socket, bind, listen, accept, connect, send, recv, close |
+| 150–159 | Memory Ext. | mprotect, munmap, mremap, getuid/gid/tid |
+| 160–179 | Epoll/Clock/Linux | epoll, clock_gettime, readv, writev, ioctl, fcntl, access, poll |
+| 180–195 | Futex/Clone/Signal/SHM | futex, clone, rt_sigaction, fork, execve, shm_create/grant/map/unmap/close |
+| 200–207 | Sys Info | cpu, memory, vmem, disk, device, graphics, arch, system info |
+| 208–211 | DRM | open, ioctl, close, mmap |
+| 212–219 | Evdev + Block | evdev open/read/ioctl/close, disk count, raw block read/write, boot font |
+| 220–229 | Unix Socket | socket, bind, listen, accept, connect, send, recv, sendmsg, recvmsg, close |
+| 230–234 | Audio | audio open, get_info, write, drain, close |
 | 240–243 | KVM | open, ioctl, close, mmap |
+| 250–254 | System | shutdown, reboot, shutdown broadcast, get total/used memory |
 
 ### 5.3 Error Handling
 
@@ -317,40 +364,57 @@ The kernel provides drivers with a vtable of kernel services:
 
 ### 9.3 Driver Types
 
-| Type | Kind | Module Names |
-|---|---|---|
-| PCI Bus | `DRIVER_MANAGER_KIND_PCI` | `PCI_Driver` |
-| Filesystem | `DRIVER_MANAGER_KIND_FAT32` | `FAT32_Driver` |
-| Display | `DRIVER_MANAGER_KIND_DISPLAY` | `ImplusOS_Generic_Display_Driver`, `VirtIO_Driver` |
-| Input | `DRIVER_MANAGER_KIND_INPUT` | `PS2_Driver` |
-| USB Host | `DRIVER_MANAGER_KIND_USB` | `USB_Driver` (OHCI, UHCI, EHCI, XHCI + HID + Mass Storage) |
-| NIC | `DRIVER_MANAGER_KIND_NIC` | `VirtIO_Driver` (VirtIO-Net) |
+| Type | `device_type_t` | Module Names |
+|---|---|---|---|
+| PCI Bus | `DEVICE_TYPE_PCI` | `PCI_Driver` |
+| Filesystem | `DEVICE_TYPE_FILESYSTEM` | `FAT32_Driver`, `exFAT_Driver`, `ISO9660_Driver` |
+| Display | `DEVICE_TYPE_DISPLAY` | `ImplusOS_Generic_Display_Driver`, `VirtIO_Driver` (VirtIO-GPU) |
+| Input | `DEVICE_TYPE_INPUT` | `PS2_Driver` |
+| USB Host | `DEVICE_TYPE_USB` | `USB_Driver` (OHCI, UHCI, EHCI, XHCI + HID + Mass Storage) |
+| NIC | `DEVICE_TYPE_NIC` | `VirtIO_Driver` (VirtIO-Net) |
+| Block | `DEVICE_TYPE_BLOCK` | `AHCI_Driver`, `NVMe_Driver`, `VirtIOBlk_Driver` |
+| Audio | `DEVICE_TYPE_AUDIO` | `AC97_Driver`, `HDA_Driver`, `VirtIOSound_Driver` |
 
 ### 9.4 Hot Reload
 
 Drivers support runtime unload/reload:
-- `driver_module_manager_unload_by_name(name)`
-- `driver_module_manager_reload_by_name(name)`
+- `driver_manager_unload_module(name)`
+- `driver_manager_reload_module(name)`
 
 ## 10. Platform Support
 
-### 10.1 CPU (x86-64)
+### 10.1 x86_64
 
-- **GDT**: Kernel code/data (Ring 0), User code/data (Ring 3), TSS
+- **GDT**: Kernel code/data (Ring 0), User code/data (Ring 3), TSS (see §13)
 - **IDT**: 256 interrupt vectors
 - **SMP**: Multi-processor startup via AP trampoline, per-CPU GDT/IDT/TSS
-- **VMX**: Intel VT-x support (EPT, VM entry/exit), KVM-style interface
+- **VMX**: Intel VT-x support (EPT, VM entry/exit), KVM-style interface — initialized via `ops->virtualization_init()`
+- **AHCI**: AHCI SATA controller driver for disk I/O
+- **NVMe**: NVMe solid-state storage driver
+- **VirtIO-Blk**: VirtIO block device driver
 
-### 10.2 Interrupts
+### 10.2 arm64 (AArch64)
 
-- **LAPIC**: Local APIC timer (preemption), IPI for TLB shootdown
-- **IOAPIC**: External interrupt routing (keyboard, disk, NIC)
-- **Interrupt flow**: Hardware → IOAPIC → LAPIC → IDT handler → kernel handler
+- **Exception levels**: EL2 (boot manager trampoline) → EL1 (kernel) → EL0 (userland)
+- **Exception vectors**: `Kernel/Arch/arm64/cpu/ExceptionVectors.S` — 16-entry vector table
+- **SMP**: PSCI interface for CPU bringup (`Kernel/Arch/arm64/smp/PSCI.c`)
+- **GIC**: Generic Interrupt Controller v3 driver (`Kernel/Arch/arm64/interrupt/GIC.c`)
+- **Timer**: ARM Generic Timer (`Kernel/Arch/arm64/timer/GenericTimer.c`)
+- **UART**: PL011 serial driver (`Kernel/Arch/arm64/hal/uart_hal.c`)
+- **Block**: AHCI/NVMe/VirtIO-Block storage drivers (shared with x86_64)
+- **Audio**: AC97/HDA/VirtIO-Sound drivers (shared with x86_64)
 
-### 10.3 ACPI
+### 10.3 Interrupts
 
-- RSDP v1/v2 discovery
-- MADT parsing (LAPIC, IOAPIC enumeration)
+| Architecture | Controller | Timer | IPI |
+|---|---|---|---|
+| **x86_64** | IOAPIC + LAPIC | LAPIC timer | LAPIC IPI (TLB shootdown) |
+| **arm64** | GICv3 | Generic Timer | SGI via GIC |
+
+### 10.4 ACPI
+
+- RSDP v1/v2 discovery (used on both architectures)
+- MADT parsing (x86_64: LAPIC, IOAPIC enumeration; arm64: GIC structures)
 - Used for SMP initialization and interrupt routing
 
 ## 11. Debug Infrastructure
@@ -367,7 +431,14 @@ Drivers support runtime unload/reload:
 - Custom `printf()` implementation (no floating point)
 - Output routed to serial
 
-### 11.3 Panic Handler
+### 11.3 Boot Progress Bar
+
+- Source: `Kernel/Boot/LoadBar.c` / `LoadBar.h`
+- Displays a graphical spinner during kernel initialization phases
+- Driven by `timer_set_callback()` with a timer-driven update
+- Finished before the fade-to-black transition to userland
+
+### 11.4 Panic Handler
 
 - `kernel_panic()` — Prints message to serial, halts all CPUs
 - Stack trace output (when available)
@@ -390,7 +461,9 @@ All compile-time configuration in `Kernel/include/kernel/config.h`:
 | `OS_CONFIG_NET_IPV4_MASK` | 255.255.255.0 | — | IPv4 netmask |
 | `OS_CONFIG_NET_IPV4_GATEWAY` | 10.0.2.2 | — | IPv4 gateway |
 
-## 13. GDT Segment Layout
+## 13. GDT Segment Layout (x86_64 only)
+
+> arm64 does not use a GDT; privilege separation is handled via exception levels (EL0/EL1).
 
 | Selector | Offset | Description |
 |---|---|---|

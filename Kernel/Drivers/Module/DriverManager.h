@@ -66,6 +66,16 @@ uint32_t driver_manager_display_get_pixel(uint32_t x, uint32_t y);
 void driver_manager_display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 void driver_manager_display_present(void);
 void *driver_manager_display_get_framebuffer(void);
+uint32_t driver_manager_display_generation(void);
+bool driver_manager_display_poll_config(void);
+bool driver_manager_display_get_topology(display_topology_t *out_topology);
+bool driver_manager_display_get_monitor_info(uint32_t monitor_index,
+                                             display_monitor_info_t *out_info);
+bool driver_manager_display_get_monitor_mode_info(uint32_t monitor_index,
+                                                  uint32_t mode_index,
+                                                  display_mode_info_t *out_info);
+bool driver_manager_display_set_monitor_mode(uint32_t monitor_index,
+                                             uint32_t mode_index);
 
 bool driver_manager_input_ps2_init(void);
 void driver_manager_input_ps2_poll(void);

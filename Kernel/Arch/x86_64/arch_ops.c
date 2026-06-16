@@ -31,15 +31,18 @@ static void x86_64_enter_user_mode(uint64_t saved_rsp, uint64_t user_rsp, uint64
 {
     register uint64_t rdi __asm__("rdi") = saved_rsp;
     register uint64_t rsi __asm__("rsi") = user_rsp;
-    register uint64_t rax __asm__("rax") = address_space;
 
     __asm__ volatile(
-        "mov %%rax, %%cr3 \n\t"
-        "mov %%rdi, %%rsp \n\t"
+        "mov %[cr3], %%cr3 \n\t"
+        "mov %[frame], %%rsp \n\t"
         "jmp syscall_enter_user_from_frame"
-        :: "r"(rdi), "r"(rsi), "r"(rax)
+        :
+        : [frame] "r"(rdi),
+          [usrsp] "S"(user_rsp),
+          [cr3] "a"(address_space)
         : "memory"
     );
+    __builtin_unreachable();
 }
 
 static int x86_64_virtualization_init(void)

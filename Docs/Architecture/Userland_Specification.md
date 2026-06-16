@@ -2,8 +2,9 @@
 
 ## 1. Overview
 
-The ImplusOS userland runs in Ring 3 with a separate address space per process.
-All kernel services are accessed via the `SYSCALL` instruction. The init process
+The ImplusOS userland runs in Ring 3 (x86_64) / EL0 (arm64) with a separate
+address space per process. All kernel services are accessed via architecture-specific
+trap instructions (x86_64: `SYSCALL`; arm64: `SVC`). The init process
 (`Userland.ELF`) spawns system and user applications.
 
 ## 2. Init Process (`Userland/Userland.c`)
@@ -44,15 +45,19 @@ The userland exposes typed C wrapper functions for each syscall category:
 | `IPC.h` | IPC | `ipc_send()`, `ipc_receive()` |
 | `Window.h` | Window Mgr | `window_register_service()`, `window_get_wm_pid()` |
 | `Network.h` | Networking | `udp_send()`, `tcp_connect()`, `tcp_send()`, `tcp_recv()`, `tcp_close()` |
-| `Socket.h` | Sockets | `socket_create()`, `socket_connect()`, `socket_bind()`, `socket_listen()`, `socket_send()`, `socket_recv()` |
+| `Socket.h` | Sockets | `socket_create()`, `socket_connect()`, `socket_bind()`, `socket_listen()`, `socket_accept()`, `socket_send()`, `socket_recv()`, `socket_get_info()`, `socket_set_option()`, `socket_get_option()`, `socket_shutdown()` |
 | `Time.h` | Time | `get_rtc_time()`, `get_uptime_ms()`, `nanosleep()` |
+| `Audio.h` | Audio | `audio_open()`, `audio_get_info()`, `audio_write()`, `audio_drain()`, `audio_close()` |
+| `SystemInfo.h` | System Info | `get_cpu_info()`, `get_memory_info()`, `get_disk_info()`, `get_device_info()`, `get_graphics_info()`, `get_arch_info()`, `get_system_info()` |
 | `KVM.h` | Virtualization | `kvm_open()`, `kvm_ioctl()`, `kvm_close()`, `kvm_mmap()` |
 | `Error.h` | Errors | `os_errno` definitions |
 | `WM_Protocol.h` | WM Protocol | Window manager message definitions |
 
-### Syscall Mechanism
+### Syscall Mechanism (x86_64)
 
-All wrappers call through `Userland/Syscalls.c` which performs inline `syscall` instructions:
+All wrappers call through `Userland/Syscalls.c` which dispatches to the
+architecture-specific implementation in `libc/I_libc/src/sys/$(ARCH)/hal_syscall.c`
+(x86_64: `syscall` instruction; arm64: `SVC #0`). The x86_64 implementation:
 
 ```c
 static inline uint64_t syscall6(uint64_t num, uint64_t a1, uint64_t a2,
@@ -70,6 +75,10 @@ static inline uint64_t syscall6(uint64_t num, uint64_t a1, uint64_t a2,
     return ret;
 }
 ```
+
+The arm64 variant uses `SVC #0` with the syscall number in register `X8` and
+arguments in `X0`–`X5`. The arch-specific implementation lives in
+`libc/I_libc/src/sys/$(ARCH)/hal_syscall.c`.
 
 ## 4. POSIX Compatibility Layer (`Userland/POSIX/`)
 
@@ -131,12 +140,13 @@ Userland/Application/
 │       ├── WindowManager.c
 │       └── WindowManager.h
 └── UserApps/
-    ├── com_ImplusOS_clock/
     ├── com_ImplusOS_editor/
     ├── com_ImplusOS_exampleApp/
     ├── com_ImplusOS_filemanager/
-    ├── com_ImplusOS_NetworkTest/
     ├── com_ImplusOS_ImplusStore/
+    ├── com_ImplusOS_NetworkTest/
+    ├── com_ImplusOS_procman/
+    ├── com_ImplusOS_settings/
     └── com_ImplusOS_vm/
 ```
 
@@ -183,12 +193,14 @@ include ../../AppCommon.mk
 ## 7. User Applications
 
 | Application | Description |
-|---|---|
+|---|---|---|
 | `com_ImplusOS_editor` | Text editor |
 | `com_ImplusOS_exampleApp` | Demo app (XML layout, resource loading) |
 | `com_ImplusOS_filemanager` | File manager (directory listing, file ops) |
-| `com_ImplusOS_NetworkTest` | Network testing tool |
 | `com_ImplusOS_ImplusStore` | App store prototype |
+| `com_ImplusOS_NetworkTest` | Network testing tool |
+| `com_ImplusOS_procman` | Process manager / system monitor |
+| `com_ImplusOS_settings` | System settings application |
 | `com_ImplusOS_vm` | Virtual machine application (uses KVM syscalls) |
 
 ## 8. Utility Libraries
@@ -205,7 +217,7 @@ Userland DNS resolver that performs DNS queries over UDP.
 
 Userland interface for the driver module framework.
 
-## 9. libc (`libc/`)
+## 9. libc (`libc/I_libc/`)
 
 Minimal freestanding C library providing:
 
@@ -226,7 +238,7 @@ Additional POSIX-compatible headers:
 
 ## 10. Linker Script (`Userland/Userland.ld`)
 
-The userland linker script sets:
+The userland linker script is shared across architectures and sets:
 - Entry point: `_start`
 - Code base: `0x4000000000`
 - Text, rodata, data, bss sections

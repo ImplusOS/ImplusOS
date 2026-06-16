@@ -29,8 +29,8 @@ extern uint64_t syscall4(uint64_t num, uint64_t arg1, uint64_t arg2,
 
  
 
-#define POSIX_TLS_MAX_KEYS   64
-#define POSIX_MAX_THREADS   128
+#define POSIX_TLS_MAX_KEYS   256
+#define POSIX_MAX_THREADS   256
 
 typedef struct {
     pthread_t  tid;
@@ -388,10 +388,22 @@ int posix_pthread_equal(pthread_t a, pthread_t b)
 
 int posix_pthread_cancel(pthread_t thread)
 {
-    if (!thread) {
-        return EINVAL;
+    if (!thread) return EINVAL;
+    thread_table_lock();
+    posix_thread_desc_t *desc = thread_table_find_locked(thread);
+    if (desc == NULL) {
+        thread_table_unlock();
+        return ESRCH;
     }
-    return ENOTSUP;
+    desc->done = 1;
+    __sync_synchronize();
+    futex_wake(&desc->done, 0x7fffffff);
+    int cleanup = desc->detached && desc->creator_ready;
+    thread_table_unlock();
+    if (cleanup) {
+        thread_desc_cleanup(desc);
+    }
+    return 0;
 }
 
  
