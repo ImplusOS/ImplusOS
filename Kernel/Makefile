@@ -31,9 +31,9 @@ LIBC_SRCS := \
 
 OBJS += $(patsubst $(ROOT_DIR)/libc/I_libc/%.c,$(KERNEL_BUILD)/libc/I_libc/%.o,$(LIBC_SRCS))
 
-SHARELIB_SRCS := $(shell find $(ROOT_DIR)/ShareLib -name "*.c" 2>/dev/null)
+LIBRARY_SRCS := $(shell find $(ROOT_DIR)/Library -name "*.c" 2>/dev/null)
 
-OBJS += $(patsubst $(ROOT_DIR)/ShareLib/%.c,$(KERNEL_BUILD)/ShareLib/%.o,$(SHARELIB_SRCS))
+OBJS += $(patsubst $(ROOT_DIR)/Library/%.c,$(KERNEL_BUILD)/Library/%.o,$(LIBRARY_SRCS))
 
 all: $(KERNEL_ELF)
 
@@ -57,7 +57,7 @@ $(KERNEL_BUILD)/libc/I_libc/%.o: $(ROOT_DIR)/libc/I_libc/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-$(KERNEL_BUILD)/ShareLib/%.o: $(ROOT_DIR)/ShareLib/%.c
+$(KERNEL_BUILD)/Library/%.o: $(ROOT_DIR)/Library/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 

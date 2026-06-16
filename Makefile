@@ -101,7 +101,7 @@ DRIVER_DIRS      := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
 DRIVER_BUILD_ROOT := $(BUILD_ROOT)/Modules
 DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
 
-SHARELIB_C_SRCS := $(shell find ShareLib -name "*.c" 2>/dev/null)
+LIBRARY_C_SRCS := $(shell find Library -name "*.c" 2>/dev/null)
 
 USERLAND_C_SRCS := \
 	libc/I_libc/src/assert.c \
@@ -113,7 +113,7 @@ USERLAND_C_SRCS := \
 	libc/I_libc/src/posix.c \
 	libc/I_libc/src/sys/syscalls.c \
 	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
-	$(SHARELIB_C_SRCS) \
+	$(LIBRARY_C_SRCS) \
 	Userland/Userland.c \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
@@ -139,7 +139,7 @@ USERLAND_APP_C_SRCS := \
 	libc/I_libc/src/posix.c \
 	libc/I_libc/src/sys/syscalls.c \
 	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
-	$(SHARELIB_C_SRCS) \
+	$(LIBRARY_C_SRCS) \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
 	Userland/NetworkStack/DNS/DNS.c
@@ -147,12 +147,12 @@ USERLAND_APP_C_SRCS := \
 USERLAND_INIT_OBJS := \
 	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst libc/I_libc/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/%.c,$(USERLAND_C_SRCS))) \
-	$(patsubst ShareLib/%.c,$(BUILD_DIR)/ShareLib/%.o,$(filter ShareLib/%.c,$(USERLAND_C_SRCS)))
+	$(patsubst Library/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/%.c,$(USERLAND_C_SRCS)))
 
 USERLAND_APP_OBJS := \
 	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst libc/I_libc/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/%.c,$(USERLAND_APP_C_SRCS))) \
-	$(patsubst ShareLib/%.c,$(BUILD_DIR)/ShareLib/%.o,$(filter ShareLib/%.c,$(USERLAND_APP_C_SRCS)))
+	$(patsubst Library/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/%.c,$(USERLAND_APP_C_SRCS)))
 
 RECOVERY_OBJS := \
 	$(BUILD_DIR)/RecoveryEnviroment/Recovery.o \
@@ -163,7 +163,7 @@ USERLAND_CFLAGS := \
 	-IKernel/include \
 	-Ilibc/I_libc/include \
 	-IUserland/POSIX/include \
-	-IShareLib \
+	-ILibrary \
 	-IThirdparty \
 	-fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
 	$(USERLAND_ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
@@ -229,7 +229,7 @@ $(BUILD_DIR)/Userland/libc/I_libc/%.o: libc/I_libc/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/ShareLib/%.o: ShareLib/%.c
+$(BUILD_DIR)/Library/%.o: Library/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 

@@ -21,8 +21,8 @@ ARCH_CFLAGS := $(USERLAND_ARCH_CFLAGS)
 TOP_BUILD_DIR ?= ../../../../Build/$(ARCH)
 COMMON_LIBS_DIR := $(TOP_BUILD_DIR)/Userland
 
-SHARELIB_SRCS := $(shell find ../../../../ShareLib -name "*.c" 2>/dev/null)
-COMMON_SHARELIB_OBJS := $(patsubst ../../../../ShareLib/%.c,$(TOP_BUILD_DIR)/ShareLib/%.o,$(SHARELIB_SRCS))
+LIBRARY_SRCS := $(shell find ../../../../Library -name "*.c" 2>/dev/null)
+COMMON_LIBRARY_OBJS := $(patsubst ../../../../Library/%.c,$(TOP_BUILD_DIR)/Library/%.o,$(LIBRARY_SRCS))
 
 COMMON_OBJS := $(COMMON_LIBS_DIR)/Syscalls.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/string.o \
@@ -36,6 +36,6 @@ COMMON_OBJS := $(COMMON_LIBS_DIR)/Syscalls.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/math.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/stdio.o \
                $(COMMON_LIBS_DIR)/NetworkStack/DNS/DNS.o \
-               $(COMMON_SHARELIB_OBJS)
+               $(COMMON_LIBRARY_OBJS)
 
 COMMON_DEPS := $(COMMON_OBJS:.o=.d)
