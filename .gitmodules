@@ -1,6 +1,6 @@
-[submodule "libpng"]
-	path = libpng
+[submodule "Vendor/Library/libpng"]
+	path = Vendor/Library/libpng
 	url = https://github.com/pnggroup/libpng
-[submodule "zlib"]
-	path = zlib
+[submodule "Vendor/Library/zlib"]
+	path = Vendor/Library/zlib
 	url = https://github.com/madler/zlib
