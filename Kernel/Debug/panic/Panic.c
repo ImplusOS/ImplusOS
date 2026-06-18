@@ -35,7 +35,7 @@ static uint8_t g_char_bitmap[256 * 256];
 static BOOT_INFO g_boot_info;
 static BOOT_INFO* bi = NULL;
 
-#include "../../../Thirdparty/stb_truetype.h"
+#include "../../../Vendor/Header/stb_truetype.h"
 
 static stbtt_fontinfo g_font;
 static int g_font_valid = 0;

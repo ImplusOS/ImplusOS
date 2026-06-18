@@ -21,8 +21,9 @@ static uint32_t g_current_window_id = 0;
 static uint32_t g_wm_request_id = 0;
 static int32_t g_cached_wm_pid = -1;
 
-#define MAX_INPUT_QUEUE             32
-#define MAX_DEFERRED_IPC_QUEUE      32
+#define MAX_INPUT_QUEUE             64
+#define MAX_DEFERRED_IPC_QUEUE      64
+#define IPC_DRAIN_MAX               64
 #define WM_RPC_TIMEOUT_MS         5000ULL
 #define WM_SEND_RETRY_TIMEOUT_MS  1000ULL
 
@@ -905,8 +906,10 @@ int32_t window_input_keyboard_poll(input_keyboard_event_t *out)
         return -1;
     }
     ipc_message_t msg;
-    while (ipc_receive_raw(&msg) == 0) {
+    uint32_t drain_count = 0;
+    while (drain_count < IPC_DRAIN_MAX && ipc_receive_raw(&msg) == 0) {
         preserve_unhandled_message(&msg);
+        ++drain_count;
     }
     
     if (g_kbd_count > 0) {
@@ -925,8 +928,10 @@ int32_t window_input_mouse_poll(input_mouse_event_t *out)
         return -1;
     }
     ipc_message_t msg;
-    while (ipc_receive_raw(&msg) == 0) {
+    uint32_t drain_count = 0;
+    while (drain_count < IPC_DRAIN_MAX && ipc_receive_raw(&msg) == 0) {
         preserve_unhandled_message(&msg);
+        ++drain_count;
     }
 
     if (g_mouse_count > 0) {
@@ -957,8 +962,10 @@ int32_t window_input_mouse_wait(input_mouse_event_t *out)
 int32_t window_input_keyboard_pending(void)
 {
     ipc_message_t msg;
-    while (ipc_receive_raw(&msg) == 0) {
+    uint32_t drain_count = 0;
+    while (drain_count < IPC_DRAIN_MAX && ipc_receive_raw(&msg) == 0) {
         preserve_unhandled_message(&msg);
+        ++drain_count;
     }
     return (int32_t)g_kbd_count;
 }
@@ -966,8 +973,10 @@ int32_t window_input_keyboard_pending(void)
 int32_t window_input_mouse_pending(void)
 {
     ipc_message_t msg;
-    while (ipc_receive_raw(&msg) == 0) {
+    uint32_t drain_count = 0;
+    while (drain_count < IPC_DRAIN_MAX && ipc_receive_raw(&msg) == 0) {
         preserve_unhandled_message(&msg);
+        ++drain_count;
     }
     return (int32_t)g_mouse_count;
 }

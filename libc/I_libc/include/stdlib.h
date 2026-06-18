@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 void* malloc(size_t size);
 void* calloc(size_t nmemb, size_t size);
@@ -12,6 +13,13 @@ void free(void* p);
 
 long strtol(const char* nptr, char** endptr, int base);
 unsigned long strtoul(const char* nptr, char** endptr, int base);
+long long strtoll(const char* nptr, char** endptr, int base);
+unsigned long long strtoull(const char* nptr, char** endptr, int base);
+double strtod(const char* nptr, char** endptr);
+float strtof(const char* nptr, char** endptr);
+long double strtold(const char* nptr, char** endptr);
+double atof(const char* nptr);
+
 void exit(int status);
 void abort(void);
 
@@ -19,11 +27,26 @@ int atoi(const char* nptr);
 long atol(const char* nptr);
 int abs(int n);
 long labs(long n);
+long long llabs(long long n);
+
+typedef struct { int quot; int rem; } div_t;
+typedef struct { long quot; long rem; } ldiv_t;
+typedef struct { long long quot; long long rem; } lldiv_t;
+
+div_t div(int num, int denom);
+ldiv_t ldiv(long num, long denom);
+lldiv_t lldiv(long long num, long long denom);
 
 void qsort(void* base, size_t nmemb, size_t size, int (*compar)(const void*, const void*));
 void* bsearch(const void* key, const void* base, size_t nmemb, size_t size,
               int (*compar)(const void*, const void*));
 
 char* getenv(const char* name);
+int setenv(const char *name, const char *value, int overwrite);
+int unsetenv(const char *name);
+int putenv(char *string);
+
 int rand(void);
 void srand(unsigned int seed);
+
+int system(const char *command);

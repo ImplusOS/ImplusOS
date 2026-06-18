@@ -20,6 +20,19 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/syscalls.h>
+#include <semaphore.h>
+#include <locale.h>
+#include <wchar.h>
+#include <sys/resource.h>
+#include <sys/utsname.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <regex.h>
+#include <glob.h>
+#include <fnmatch.h>
+#include <ifaddrs.h>
+#include <netdb.h>
+#include <stdio.h>
 
 typedef struct {
     uint32_t size;
@@ -2109,6 +2122,18 @@ struct tm *localtime_r(const time_t *timep, struct tm *result)
     return gmtime_r(timep, result);
 }
 
+struct tm *gmtime(const time_t *timep)
+{
+    static struct tm result;
+    return gmtime_r(timep, &result);
+}
+
+struct tm *localtime(const time_t *timep)
+{
+    static struct tm result;
+    return localtime_r(timep, &result);
+}
+
 time_t mktime(struct tm *t)
 {
     if (!t) return (time_t)-1;
@@ -2136,4 +2161,1229 @@ time_t mktime(struct tm *t)
 double difftime(time_t t1, time_t t0)
 {
     return (double)(t1 - t0);
+}
+
+static int rmdir(const char *path);
+
+char *getcwd(char *buf, size_t size)
+{
+    int64_t result = (int64_t)syscall2(SYSCALL_GETCWD, (uint64_t)(uintptr_t)buf, (uint64_t)size);
+    if (result < 0) {
+        errno = (int)-result;
+        return NULL;
+    }
+    return buf;
+}
+
+int chdir(const char *path)
+{
+    (void)path;
+    errno = ENOSYS;
+    return -1;
+}
+
+int chroot(const char *path)
+{
+    (void)path;
+    errno = ENOSYS;
+    return -1;
+}
+
+int access(const char *path, int mode)
+{
+    (void)mode;
+    os_file_stat_t info;
+    if (file_stat(path, &info) < 0 || !info.exists) {
+        errno = ENOENT;
+        return -1;
+    }
+    return 0;
+}
+
+int lstat(const char *path, struct stat *st)
+{
+    return stat(path, st);
+}
+
+int symlink(const char *target, const char *linkpath)
+{
+    (void)target;
+    (void)linkpath;
+    errno = ENOSYS;
+    return -1;
+}
+
+ssize_t readlink(const char *path, char *buf, size_t bufsize)
+{
+    (void)path;
+    (void)buf;
+    (void)bufsize;
+    errno = ENOSYS;
+    return -1;
+}
+
+int link(const char *oldpath, const char *newpath)
+{
+    (void)oldpath;
+    (void)newpath;
+    errno = ENOSYS;
+    return -1;
+}
+
+int truncate(const char *path, off_t length)
+{
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    int rc = ftruncate(fd, length);
+    close(fd);
+    return rc;
+}
+
+int ftruncate(int fd, off_t length)
+{
+    off_t current = lseek(fd, 0, SEEK_CUR);
+    if (current < 0) return -1;
+    if (length < current) {
+        (void)lseek(fd, length, SEEK_SET);
+    }
+    (void)lseek(fd, current, SEEK_SET);
+    return 0;
+}
+
+int chmod(const char *path, mode_t mode)
+{
+    (void)path;
+    (void)mode;
+    errno = ENOSYS;
+    return -1;
+}
+
+int fchmod(int fd, mode_t mode)
+{
+    (void)fd;
+    (void)mode;
+    errno = ENOSYS;
+    return -1;
+}
+
+int chown(const char *path, uid_t owner, gid_t group)
+{
+    (void)path;
+    (void)owner;
+    (void)group;
+    errno = ENOSYS;
+    return -1;
+}
+
+int fchown(int fd, uid_t owner, gid_t group)
+{
+    (void)fd;
+    (void)owner;
+    (void)group;
+    errno = ENOSYS;
+    return -1;
+}
+
+uid_t getuid(void) { return 0; }
+uid_t geteuid(void) { return 0; }
+gid_t getgid(void) { return 0; }
+gid_t getegid(void) { return 0; }
+
+int openat(int dirfd, const char *path, int flags, ...)
+{
+    (void)dirfd;
+    va_list ap;
+    va_start(ap, flags);
+    int rc;
+    if (flags & O_CREAT) {
+        (void)va_arg(ap, mode_t);
+        rc = open(path, flags | O_CREAT);
+    } else {
+        rc = open(path, flags);
+    }
+    va_end(ap);
+    return rc;
+}
+
+int unlinkat(int dirfd, const char *path, int flags)
+{
+    (void)dirfd;
+    if (flags & AT_REMOVEDIR) {
+        return rmdir(path);
+    }
+    return unlink(path);
+}
+
+int mkdirat(int dirfd, const char *path, mode_t mode)
+{
+    (void)dirfd;
+    return mkdir(path, mode);
+}
+
+static int rmdir(const char *path)
+{
+    (void)path;
+    errno = ENOSYS;
+    return -1;
+}
+
+ssize_t readv(int fd, const struct iovec *iov, int iovcnt)
+{
+    ssize_t total = 0;
+    for (int i = 0; i < iovcnt; i++) {
+        ssize_t n = read(fd, iov[i].iov_base, iov[i].iov_len);
+        if (n < 0) {
+            if (total > 0) break;
+            return -1;
+        }
+        total += n;
+        if ((size_t)n < iov[i].iov_len) break;
+    }
+    return total;
+}
+
+ssize_t writev(int fd, const struct iovec *iov, int iovcnt)
+{
+    ssize_t total = 0;
+    for (int i = 0; i < iovcnt; i++) {
+        ssize_t n = write(fd, iov[i].iov_base, iov[i].iov_len);
+        if (n < 0) {
+            if (total > 0) break;
+            return -1;
+        }
+        total += n;
+        if ((size_t)n < iov[i].iov_len) break;
+    }
+    return total;
+}
+
+ssize_t pread(int fd, void *buf, size_t count, off_t offset)
+{
+    off_t saved = lseek(fd, 0, SEEK_CUR);
+    if (saved < 0) return -1;
+    if (lseek(fd, offset, SEEK_SET) < 0) return -1;
+    ssize_t n = read(fd, buf, count);
+    off_t rc = lseek(fd, saved, SEEK_SET);
+    (void)rc;
+    return n;
+}
+
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset)
+{
+    off_t saved = lseek(fd, 0, SEEK_CUR);
+    if (saved < 0) return -1;
+    if (lseek(fd, offset, SEEK_SET) < 0) return -1;
+    ssize_t n = write(fd, buf, count);
+    off_t rc = lseek(fd, saved, SEEK_SET);
+    (void)rc;
+    return n;
+}
+
+ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+               const struct sockaddr *dest_addr, socklen_t addrlen)
+{
+    if (dest_addr && addrlen >= sizeof(struct sockaddr_in)) {
+        const struct sockaddr_in *in = (const struct sockaddr_in*)dest_addr;
+        int result = socket_connect(sockfd, ntohl(in->sin_addr.s_addr), ntohs(in->sin_port));
+        if (result < 0) return result;
+    }
+    return send(sockfd, buf, len, flags);
+}
+
+ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+                 struct sockaddr *src_addr, socklen_t *addrlen)
+{
+    ssize_t n = recv(sockfd, buf, len, flags);
+    if (n >= 0 && src_addr && addrlen) {
+        socket_info_t info;
+        if (socket_get_info(sockfd, &info) == 0) {
+            struct sockaddr_in in;
+            memset(&in, 0, sizeof(in));
+            in.sin_family = AF_INET;
+            in.sin_addr.s_addr = htonl(info.remote_ip);
+            in.sin_port = htons(info.remote_port);
+            socklen_t copy = sizeof(in);
+            if (*addrlen < copy) copy = *addrlen;
+            memcpy(src_addr, &in, copy);
+            *addrlen = copy;
+        }
+    }
+    return n;
+}
+
+int socketpair(int domain, int type, int protocol, int sv[2])
+{
+    if (domain != AF_UNIX && domain != AF_INET) {
+        errno = EAFNOSUPPORT;
+        return -1;
+    }
+    if (!sv) {
+        errno = EINVAL;
+        return -1;
+    }
+    return pipe(sv);
+}
+
+char *inet_ntoa(struct in_addr in)
+{
+    static char buf[16];
+    uint32_t addr = ntohl(in.s_addr);
+    snprintf(buf, sizeof(buf), "%u.%u.%u.%u",
+             (unsigned)((addr >> 24) & 0xFF),
+             (unsigned)((addr >> 16) & 0xFF),
+             (unsigned)((addr >> 8) & 0xFF),
+             (unsigned)(addr & 0xFF));
+    return buf;
+}
+
+const char *inet_ntop(int af, const void *src, char *dst, socklen_t size)
+{
+    if (af != AF_INET) {
+        errno = EAFNOSUPPORT;
+        return NULL;
+    }
+    if (!src || !dst || size < 16) {
+        errno = ENOSPC;
+        return NULL;
+    }
+    uint32_t addr = ntohl(*(const uint32_t*)src);
+    snprintf(dst, (size_t)size, "%u.%u.%u.%u",
+             (unsigned)((addr >> 24) & 0xFF),
+             (unsigned)((addr >> 16) & 0xFF),
+             (unsigned)((addr >> 8) & 0xFF),
+             (unsigned)(addr & 0xFF));
+    return dst;
+}
+
+int inet_pton(int af, const char *src, void *dst)
+{
+    if (af != AF_INET) {
+        errno = EAFNOSUPPORT;
+        return -1;
+    }
+    if (!src || !dst) {
+        errno = EINVAL;
+        return 0;
+    }
+    struct in_addr addr;
+    if (!inet_aton(src, &addr)) return 0;
+    *(struct in_addr*)dst = addr;
+    return 1;
+}
+
+int getaddrinfo(const char *node, const char *service,
+                const struct addrinfo *hints, struct addrinfo **res)
+{
+    if (!res) return EAI_BADFLAGS;
+    if (!node && !service) return EAI_NONAME;
+
+    struct addrinfo *ai = (struct addrinfo*)calloc(1, sizeof(struct addrinfo));
+    if (!ai) return EAI_MEMORY;
+
+    struct sockaddr_in *sin = (struct sockaddr_in*)calloc(1, sizeof(struct sockaddr_in));
+    if (!sin) { free(ai); return EAI_MEMORY; }
+
+    ai->ai_flags = hints ? hints->ai_flags : 0;
+    ai->ai_family = AF_INET;
+    ai->ai_socktype = hints ? hints->ai_socktype : SOCK_STREAM;
+    ai->ai_protocol = hints ? hints->ai_protocol : 0;
+    ai->ai_addrlen = sizeof(struct sockaddr_in);
+    ai->ai_addr = (struct sockaddr*)sin;
+
+    sin->sin_family = AF_INET;
+    sin->sin_port = 0;
+    sin->sin_addr.s_addr = INADDR_ANY;
+
+    if (node) {
+        if (inet_pton(AF_INET, node, &sin->sin_addr) <= 0) {
+            free(sin);
+            free(ai);
+            return EAI_NONAME;
+        }
+    } else if (ai->ai_flags & AI_PASSIVE) {
+        sin->sin_addr.s_addr = htonl(INADDR_ANY);
+    } else {
+        sin->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    }
+
+    if (service) {
+        long port = strtol(service, NULL, 10);
+        if (port > 0 && port < 65536) {
+            sin->sin_port = htons((uint16_t)port);
+        }
+    }
+
+    *res = ai;
+    return 0;
+}
+
+void freeaddrinfo(struct addrinfo *res)
+{
+    if (res) {
+        free(res->ai_addr);
+        free(res);
+    }
+}
+
+int getnameinfo(const struct sockaddr *sa, socklen_t salen,
+                char *host, size_t hostlen, char *serv, size_t servlen,
+                int flags)
+{
+    if (!sa || salen < sizeof(struct sockaddr_in)) return EAI_FAMILY;
+    const struct sockaddr_in *sin = (const struct sockaddr_in*)sa;
+
+    if (host && hostlen > 0) {
+        if (flags & NI_NUMERICHOST) {
+            if (!inet_ntop(AF_INET, &sin->sin_addr, host, (socklen_t)hostlen))
+                return EAI_SYSTEM;
+        } else {
+            if (!inet_ntop(AF_INET, &sin->sin_addr, host, (socklen_t)hostlen))
+                return EAI_SYSTEM;
+        }
+    }
+    if (serv && servlen > 0) {
+        snprintf(serv, servlen, "%u", (unsigned)ntohs(sin->sin_port));
+    }
+    return 0;
+}
+
+struct hostent *gethostbyname(const char *name)
+{
+    static struct hostent he;
+    static char *alias_list[2];
+    static char *addr_list[2];
+    static struct in_addr addr;
+    static char hostname_buf[256];
+
+    if (!name) return NULL;
+    strncpy(hostname_buf, name, sizeof(hostname_buf) - 1);
+    hostname_buf[sizeof(hostname_buf) - 1] = '\0';
+
+    if (inet_pton(AF_INET, name, &addr) <= 0) {
+        addr.s_addr = htonl(INADDR_LOOPBACK);
+    }
+
+    he.h_name = hostname_buf;
+    alias_list[0] = NULL;
+    he.h_aliases = alias_list;
+    he.h_addrtype = AF_INET;
+    he.h_length = sizeof(struct in_addr);
+    addr_list[0] = (char*)&addr;
+    addr_list[1] = NULL;
+    he.h_addr_list = addr_list;
+    return &he;
+}
+
+struct hostent *gethostbyaddr(const void *addr, socklen_t len, int type)
+{
+    static struct hostent he;
+    static char *alias_list[2];
+    static char *addr_list[2];
+    static struct in_addr local_addr;
+    static char hostname_buf[64];
+
+    if (type != AF_INET || !addr || len < sizeof(struct in_addr)) return NULL;
+
+    local_addr = *(const struct in_addr*)addr;
+    inet_ntop(AF_INET, &local_addr, hostname_buf, sizeof(hostname_buf));
+
+    he.h_name = hostname_buf;
+    alias_list[0] = NULL;
+    he.h_aliases = alias_list;
+    he.h_addrtype = AF_INET;
+    he.h_length = sizeof(struct in_addr);
+    addr_list[0] = (char*)&local_addr;
+    addr_list[1] = NULL;
+    he.h_addr_list = addr_list;
+    return &he;
+}
+
+struct servent *getservbyname(const char *name, const char *proto)
+{
+    (void)name;
+    (void)proto;
+    errno = ENOSYS;
+    return NULL;
+}
+
+struct protoent *getprotobyname(const char *name)
+{
+    (void)name;
+    errno = ENOSYS;
+    return NULL;
+}
+
+int pthread_rwlock_init(pthread_rwlock_t *rwlock, const pthread_rwlockattr_t *attr)
+{
+    if (!rwlock) return EINVAL;
+    (void)attr;
+    rwlock->locked = 0;
+    rwlock->readers = 0;
+    rwlock->writer = 0;
+    rwlock->waiter_count = 0;
+    return 0;
+}
+
+int pthread_rwlock_destroy(pthread_rwlock_t *rwlock)
+{
+    if (!rwlock) return EINVAL;
+    return 0;
+}
+
+int pthread_rwlock_rdlock(pthread_rwlock_t *rwlock)
+{
+    if (!rwlock) return EINVAL;
+    for (;;) {
+        while (rwlock->locked) {
+            (void)syscall0(SYSCALL_PROCESS_YIELD);
+        }
+        if (__sync_bool_compare_and_swap(&rwlock->readers, 0, 1)) {
+            break;
+        }
+        (void)syscall0(SYSCALL_PROCESS_YIELD);
+    }
+    return 0;
+}
+
+int pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock)
+{
+    if (!rwlock) return EINVAL;
+    if (rwlock->locked) return EBUSY;
+    __sync_fetch_and_add(&rwlock->readers, 1);
+    if (rwlock->locked) {
+        __sync_fetch_and_sub(&rwlock->readers, 1);
+        return EBUSY;
+    }
+    return 0;
+}
+
+int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock)
+{
+    if (!rwlock) return EINVAL;
+    pthread_t self = pthread_self();
+    for (;;) {
+        while (rwlock->locked || rwlock->readers > 0) {
+            (void)syscall0(SYSCALL_PROCESS_YIELD);
+        }
+        if (__sync_bool_compare_and_swap(&rwlock->locked, 0, 1)) {
+            rwlock->writer = self;
+            break;
+        }
+        (void)syscall0(SYSCALL_PROCESS_YIELD);
+    }
+    return 0;
+}
+
+int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock)
+{
+    if (!rwlock) return EINVAL;
+    if (rwlock->locked || rwlock->readers > 0) return EBUSY;
+    if (!__sync_bool_compare_and_swap(&rwlock->locked, 0, 1)) return EBUSY;
+    rwlock->writer = pthread_self();
+    return 0;
+}
+
+int pthread_rwlock_unlock(pthread_rwlock_t *rwlock)
+{
+    if (!rwlock) return EINVAL;
+    if (rwlock->locked) {
+        rwlock->writer = 0;
+        __sync_lock_release(&rwlock->locked);
+    } else if (rwlock->readers > 0) {
+        __sync_fetch_and_sub(&rwlock->readers, 1);
+    }
+    return 0;
+}
+
+int pthread_rwlockattr_init(pthread_rwlockattr_t *attr)
+{
+    if (!attr) return EINVAL;
+    attr->pshared = 0;
+    return 0;
+}
+
+int pthread_rwlockattr_destroy(pthread_rwlockattr_t *attr)
+{
+    if (!attr) return EINVAL;
+    return 0;
+}
+
+int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned count)
+{
+    if (!barrier || count == 0) return EINVAL;
+    (void)attr;
+    barrier->count = 0;
+    barrier->sense = 0;
+    barrier->threshold = (int)count;
+    return 0;
+}
+
+int pthread_barrier_destroy(pthread_barrier_t *barrier)
+{
+    if (!barrier) return EINVAL;
+    return 0;
+}
+
+int pthread_barrier_wait(pthread_barrier_t *barrier)
+{
+    if (!barrier) return EINVAL;
+    int sense = barrier->sense;
+    int arrived = __sync_add_and_fetch(&barrier->count, 1);
+    if (arrived == barrier->threshold) {
+        __sync_synchronize();
+        barrier->count = 0;
+        barrier->sense = !sense;
+        return PTHREAD_BARRIER_SERIAL_THREAD;
+    } else {
+        while (barrier->sense == sense) {
+            (void)syscall0(SYSCALL_PROCESS_YIELD);
+        }
+    }
+    return 0;
+}
+
+int pthread_barrierattr_init(pthread_barrierattr_t *attr)
+{
+    if (!attr) return EINVAL;
+    attr->pshared = 0;
+    return 0;
+}
+
+int pthread_barrierattr_destroy(pthread_barrierattr_t *attr)
+{
+    if (!attr) return EINVAL;
+    return 0;
+}
+
+int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
+{
+    if (!lock) return EINVAL;
+    (void)pshared;
+    *lock = 0;
+    return 0;
+}
+
+int pthread_spin_destroy(pthread_spinlock_t *lock)
+{
+    if (!lock) return EINVAL;
+    return 0;
+}
+
+int pthread_spin_lock(pthread_spinlock_t *lock)
+{
+    if (!lock) return EINVAL;
+    while (__sync_lock_test_and_set(lock, 1)) {
+        while (*lock) {
+            __asm__ __volatile__ ("pause" ::: "memory");
+        }
+    }
+    return 0;
+}
+
+int pthread_spin_trylock(pthread_spinlock_t *lock)
+{
+    if (!lock) return EINVAL;
+    return __sync_lock_test_and_set(lock, 1) ? EBUSY : 0;
+}
+
+int pthread_spin_unlock(pthread_spinlock_t *lock)
+{
+    if (!lock) return EINVAL;
+    __sync_lock_release(lock);
+    return 0;
+}
+
+int pthread_attr_init(pthread_attr_t *attr)
+{
+    if (!attr) return EINVAL;
+    attr->detached = 0;
+    return 0;
+}
+
+int pthread_attr_destroy(pthread_attr_t *attr)
+{
+    if (!attr) return EINVAL;
+    return 0;
+}
+
+int pthread_attr_setdetachstate(pthread_attr_t *attr, int detachstate)
+{
+    if (!attr) return EINVAL;
+    attr->detached = (detachstate == PTHREAD_CREATE_DETACHED) ? 1 : 0;
+    return 0;
+}
+
+int pthread_attr_getdetachstate(const pthread_attr_t *attr, int *detachstate)
+{
+    if (!attr || !detachstate) return EINVAL;
+    *detachstate = attr->detached ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE;
+    return 0;
+}
+
+int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize)
+{
+    if (!attr) return EINVAL;
+    (void)stacksize;
+    return 0;
+}
+
+int pthread_attr_getstacksize(const pthread_attr_t *attr, size_t *stacksize)
+{
+    if (!attr || !stacksize) return EINVAL;
+    *stacksize = 0x100000;
+    return 0;
+}
+
+int pthread_attr_setstackaddr(pthread_attr_t *attr, void *stackaddr)
+{
+    if (!attr) return EINVAL;
+    (void)stackaddr;
+    return 0;
+}
+
+int pthread_attr_getstackaddr(const pthread_attr_t *attr, void **stackaddr)
+{
+    if (!attr || !stackaddr) return EINVAL;
+    *stackaddr = NULL;
+    return 0;
+}
+
+static struct { void (*prepare)(void); void (*parent)(void); void (*child)(void); } g_atfork_handlers;
+
+int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void))
+{
+    g_atfork_handlers.prepare = prepare;
+    g_atfork_handlers.parent = parent;
+    g_atfork_handlers.child = child;
+    return 0;
+}
+
+/* ---- Semaphore ---- */
+
+int sem_init(sem_t *sem, int pshared, unsigned int value)
+{
+    if (!sem) return -1;
+    (void)pshared;
+    sem->count = (int)value;
+    sem->lock = 0;
+    return 0;
+}
+
+int sem_destroy(sem_t *sem)
+{
+    if (!sem) return -1;
+    return 0;
+}
+
+int sem_post(sem_t *sem)
+{
+    if (!sem) return -1;
+    __sync_fetch_and_add(&sem->count, 1);
+    return 0;
+}
+
+int sem_wait(sem_t *sem)
+{
+    if (!sem) return -1;
+    for (;;) {
+        int val = sem->count;
+        if (val > 0) {
+            if (__sync_bool_compare_and_swap(&sem->count, val, val - 1)) {
+                return 0;
+            }
+        }
+        (void)syscall0(SYSCALL_PROCESS_YIELD);
+    }
+}
+
+int sem_trywait(sem_t *sem)
+{
+    if (!sem) return -1;
+    int val = sem->count;
+    if (val <= 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+    if (__sync_bool_compare_and_swap(&sem->count, val, val - 1)) return 0;
+    errno = EAGAIN;
+    return -1;
+}
+
+int sem_timedwait(sem_t *sem, const struct timespec *abs_timeout)
+{
+    if (!sem || !abs_timeout) return -1;
+    uint64_t deadline = (uint64_t)abs_timeout->tv_sec * 1000ULL +
+                        (uint64_t)(abs_timeout->tv_nsec / 1000000L);
+    for (;;) {
+        int val = sem->count;
+        if (val > 0) {
+            if (__sync_bool_compare_and_swap(&sem->count, val, val - 1)) return 0;
+        }
+        if (get_uptime_ms() >= deadline) {
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        (void)syscall0(SYSCALL_PROCESS_YIELD);
+    }
+}
+
+int sem_getvalue(sem_t *sem, int *sval)
+{
+    if (!sem || !sval) return -1;
+    *sval = sem->count;
+    return 0;
+}
+
+
+/* ---- uname ---- */
+
+int uname(struct utsname *buf)
+{
+    if (!buf) { errno = EINVAL; return -1; }
+    strncpy(buf->sysname, "ImplusOS", SYS_NMLN);
+    strncpy(buf->nodename, "localhost", SYS_NMLN);
+    strncpy(buf->release, "0.1.0", SYS_NMLN);
+    strncpy(buf->version, "#1", SYS_NMLN);
+    strncpy(buf->machine, "x86_64", SYS_NMLN);
+    return 0;
+}
+
+/* ---- resource limits ---- */
+
+int getrlimit(int resource, struct rlimit *rlim)
+{
+    if (!rlim) { errno = EINVAL; return -1; }
+    (void)resource;
+    rlim->rlim_cur = RLIM_INFINITY;
+    rlim->rlim_max = RLIM_INFINITY;
+    return 0;
+}
+
+int setrlimit(int resource, const struct rlimit *rlim)
+{
+    if (!rlim) { errno = EINVAL; return -1; }
+    (void)resource;
+    return 0;
+}
+
+int getrusage(int who, struct rusage *usage)
+{
+    if (!usage) { errno = EINVAL; return -1; }
+    (void)who;
+    memset(usage, 0, sizeof(*usage));
+    return 0;
+}
+
+/* ---- locale ---- */
+
+static char g_locale_buf[] = "C";
+static struct lconv g_locale = {0};
+static int g_locale_init_done = 0;
+
+static void locale_init(void)
+{
+    if (g_locale_init_done) return;
+    g_locale.decimal_point = ".";
+    g_locale.thousands_sep = "";
+    g_locale.grouping = "";
+    g_locale.int_curr_symbol = "";
+    g_locale.currency_symbol = "";
+    g_locale.mon_decimal_point = "";
+    g_locale.mon_thousands_sep = "";
+    g_locale.mon_grouping = "";
+    g_locale.positive_sign = "";
+    g_locale.negative_sign = "";
+    g_locale.int_frac_digits = 0;
+    g_locale.frac_digits = 0;
+    g_locale.p_cs_precedes = 0;
+    g_locale.p_sep_by_space = 0;
+    g_locale.n_cs_precedes = 0;
+    g_locale.n_sep_by_space = 0;
+    g_locale.p_sign_posn = 0;
+    g_locale.n_sign_posn = 0;
+    g_locale.int_p_cs_precedes = 0;
+    g_locale.int_p_sep_by_space = 0;
+    g_locale.int_n_cs_precedes = 0;
+    g_locale.int_n_sep_by_space = 0;
+    g_locale.int_p_sign_posn = 0;
+    g_locale.int_n_sign_posn = 0;
+    g_locale_init_done = 1;
+}
+
+char *setlocale(int category, const char *locale)
+{
+    (void)category;
+    if (!locale) return g_locale_buf;
+    if (strcmp(locale, "C") == 0 || strcmp(locale, "POSIX") == 0) return g_locale_buf;
+    if (strcmp(locale, "") == 0) return g_locale_buf;
+    return NULL;
+}
+
+struct lconv *localeconv(void)
+{
+    locale_init();
+    return &g_locale;
+}
+
+/* ---- wchar / multibyte ---- */
+
+size_t mbstowcs(wchar_t *dst, const char *src, size_t len)
+{
+    if (!src) return 0;
+    size_t i = 0;
+    while (*src && i < len) {
+        if (dst) dst[i] = (wchar_t)(unsigned char)*src;
+        src++;
+        i++;
+    }
+    if (dst && i < len) dst[i] = 0;
+    return i;
+}
+
+size_t wcstombs(char *dst, const wchar_t *src, size_t len)
+{
+    if (!src) return 0;
+    size_t i = 0;
+    while (*src && i < len) {
+        wchar_t wc = *src;
+        if (wc > 0x7F) {
+            if (dst) dst[i] = '?';
+        } else {
+            if (dst) dst[i] = (char)wc;
+        }
+        src++;
+        i++;
+    }
+    if (dst && i < len) dst[i] = '\0';
+    return i;
+}
+
+int mbtowc(wchar_t *pwc, const char *s, size_t n)
+{
+    if (!s) return 0;
+    if (n == 0) return -1;
+    if (pwc) *pwc = (wchar_t)(unsigned char)*s;
+    return (*s != '\0') ? 1 : 0;
+}
+
+int wctomb(char *s, wchar_t wchar)
+{
+    if (!s) return 0;
+    if (wchar > 0x7F) return -1;
+    *s = (char)wchar;
+    return 1;
+}
+
+/* ---- wchar string functions ---- */
+
+size_t wcslen(const wchar_t *s)
+{
+    size_t n = 0;
+    while (s && s[n]) n++;
+    return n;
+}
+
+wchar_t *wcscpy(wchar_t *dst, const wchar_t *src)
+{
+    wchar_t *d = dst;
+    while ((*d++ = *src++));
+    return dst;
+}
+
+int wcscmp(const wchar_t *a, const wchar_t *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return (int)(*a - *b);
+}
+
+int wcsncmp(const wchar_t *a, const wchar_t *b, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (a[i] != b[i]) return (int)(a[i] - b[i]);
+        if (a[i] == 0) return 0;
+    }
+    return 0;
+}
+
+wchar_t *wcschr(const wchar_t *s, wchar_t c)
+{
+    while (*s) {
+        if (*s == c) return (wchar_t*)s;
+        s++;
+    }
+    return (c == 0) ? (wchar_t*)s : NULL;
+}
+
+wchar_t *wcsrchr(const wchar_t *s, wchar_t c)
+{
+    const wchar_t *last = NULL;
+    while (*s) {
+        if (*s == c) last = s;
+        s++;
+    }
+    return (c == 0) ? (wchar_t*)s : (wchar_t*)last;
+}
+
+wchar_t *wcspbrk(const wchar_t *s, const wchar_t *accept)
+{
+    while (*s) {
+        for (const wchar_t *a = accept; *a; a++) {
+            if (*s == *a) return (wchar_t*)s;
+        }
+        s++;
+    }
+    return NULL;
+}
+
+size_t wcsspn(const wchar_t *s, const wchar_t *accept)
+{
+    const wchar_t *p = s;
+    while (*p) {
+        int found = 0;
+        for (const wchar_t *a = accept; *a; a++) {
+            if (*p == *a) { found = 1; break; }
+        }
+        if (!found) break;
+        p++;
+    }
+    return (size_t)(p - s);
+}
+
+size_t wcscspn(const wchar_t *s, const wchar_t *reject)
+{
+    const wchar_t *p = s;
+    while (*p) {
+        for (const wchar_t *r = reject; *r; r++) {
+            if (*p == *r) return (size_t)(p - s);
+        }
+        p++;
+    }
+    return (size_t)(p - s);
+}
+
+wchar_t *wcsstr(const wchar_t *haystack, const wchar_t *needle)
+{
+    if (!*needle) return (wchar_t*)haystack;
+    size_t nlen = wcslen(needle);
+    while (*haystack) {
+        if (*haystack == *needle && wcsncmp(haystack, needle, nlen) == 0)
+            return (wchar_t*)haystack;
+        haystack++;
+    }
+    return NULL;
+}
+
+wchar_t *wcstok(wchar_t *str, const wchar_t *delim, wchar_t **saveptr)
+{
+    if (!saveptr) return NULL;
+    if (str != NULL) *saveptr = str;
+    if (*saveptr == NULL || **saveptr == L'\0') return NULL;
+
+    wchar_t *p = *saveptr;
+    while (*p) {
+        int is_delim = 0;
+        for (const wchar_t *d = delim; *d; d++) {
+            if (*p == *d) { is_delim = 1; break; }
+        }
+        if (!is_delim) break;
+        p++;
+    }
+    if (*p == L'\0') { *saveptr = NULL; return NULL; }
+
+    wchar_t *token = p;
+    while (*p) {
+        int is_delim = 0;
+        for (const wchar_t *d = delim; *d; d++) {
+            if (*p == *d) { is_delim = 1; break; }
+        }
+        if (is_delim) {
+            *p = L'\0';
+            *saveptr = p + 1;
+            return token;
+        }
+        p++;
+    }
+    *saveptr = NULL;
+    return token;
+}
+
+wchar_t *wcsncat(wchar_t *dst, const wchar_t *src, size_t n)
+{
+    wchar_t *d = dst + wcslen(dst);
+    size_t i = 0;
+    while (i < n && *src) {
+        *d++ = *src++;
+        i++;
+    }
+    *d = 0;
+    return dst;
+}
+
+wchar_t *wcscat(wchar_t *dst, const wchar_t *src)
+{
+    wchar_t *d = dst + wcslen(dst);
+    while ((*d++ = *src++));
+    return dst;
+}
+
+wchar_t *wcsncpy(wchar_t *dst, const wchar_t *src, size_t n)
+{
+    size_t i = 0;
+    for (; i < n && src[i]; i++) dst[i] = src[i];
+    for (; i < n; i++) dst[i] = 0;
+    return dst;
+}
+
+int wctob(wint_t c)
+{
+    return (int)c;
+}
+
+wint_t btowc(int c)
+{
+    return (wint_t)c;
+}
+
+/* ---- epoll/eventfd stubs ---- */
+
+int epoll_create(int size)
+{
+    (void)size;
+    errno = ENOSYS;
+    return -1;
+}
+
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
+{
+    (void)epfd;
+    (void)op;
+    (void)fd;
+    (void)event;
+    errno = ENOSYS;
+    return -1;
+}
+
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
+{
+    (void)epfd;
+    (void)events;
+    (void)maxevents;
+    (void)timeout;
+    errno = ENOSYS;
+    return -1;
+}
+
+int epoll_create1(int flags)
+{
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+}
+
+int eventfd(unsigned int initval, int flags)
+{
+    (void)initval;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+}
+
+int eventfd_read(int fd, eventfd_t *value)
+{
+    (void)fd;
+    (void)value;
+    errno = ENOSYS;
+    return -1;
+}
+
+int eventfd_write(int fd, eventfd_t value)
+{
+    (void)fd;
+    (void)value;
+    errno = ENOSYS;
+    return -1;
+}
+
+/* ---- regex stubs ---- */
+
+int regcomp(regex_t *preg, const char *regex, int cflags)
+{
+    (void)preg;
+    (void)regex;
+    (void)cflags;
+    return REG_ENOSYS;
+}
+
+int regexec(const regex_t *preg, const char *string, size_t nmatch,
+            regmatch_t pmatch[], int eflags)
+{
+    (void)preg;
+    (void)string;
+    (void)nmatch;
+    (void)pmatch;
+    (void)eflags;
+    return REG_ENOSYS;
+}
+
+size_t regerror(int errcode, const regex_t *preg, char *errbuf, size_t errbuf_size)
+{
+    static const char msg[] = "regex not implemented";
+    size_t len = strlen(msg) + 1;
+    if (errbuf && errbuf_size > 0) {
+        strncpy(errbuf, msg, errbuf_size - 1);
+        errbuf[errbuf_size - 1] = '\0';
+    }
+    return len;
+}
+
+void regfree(regex_t *preg)
+{
+    (void)preg;
+}
+
+/* ---- glob/fnmatch stubs ---- */
+
+int glob(const char *pattern, int flags, int (*errfunc)(const char *epath, int eerrno), glob_t *pglob)
+{
+    (void)pattern;
+    (void)flags;
+    (void)errfunc;
+    if (!pglob) return GLOB_NOSPACE;
+    pglob->gl_pathc = 0;
+    pglob->gl_pathv = NULL;
+    return GLOB_NOMATCH;
+}
+
+void globfree(glob_t *pglob)
+{
+    if (pglob) {
+        if (pglob->gl_pathv) {
+            for (size_t i = 0; i < pglob->gl_pathc; i++) free(pglob->gl_pathv[i]);
+            free(pglob->gl_pathv);
+        }
+        pglob->gl_pathc = 0;
+        pglob->gl_pathv = NULL;
+    }
+}
+
+int fnmatch(const char *pattern, const char *string, int flags)
+{
+    (void)pattern;
+    (void)string;
+    (void)flags;
+    return FNM_NOMATCH;
+}
+
+/* ---- ifaddrs stubs ---- */
+
+int getifaddrs(struct ifaddrs **ifap)
+{
+    if (!ifap) { errno = EINVAL; return -1; }
+    errno = ENOSYS;
+    return -1;
+}
+
+void freeifaddrs(struct ifaddrs *ifa)
+{
+    (void)ifa;
 }

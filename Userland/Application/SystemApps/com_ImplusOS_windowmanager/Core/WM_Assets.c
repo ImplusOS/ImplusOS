@@ -38,7 +38,7 @@ static void *wm_realloc_sized(void *pointer, size_t old_size, size_t new_size)
 #define STBI_REALLOC_SIZED(pointer, old_size, size) \
     wm_realloc_sized(pointer, old_size, size)
 #define STBI_FREE(pointer) free(pointer)
-#include "../../../../../Thirdparty/stb_image.h"
+#include "../../../../../Vendor/Header/stb_image.h"
 #pragma GCC diagnostic pop
 
 typedef struct {
@@ -57,6 +57,7 @@ static const default_app_t default_apps[] = {
     {"Virtual Machine", "/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF", "VM"},
     {"Example", "/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF", "EX"},
     {"Settings", "/Userland/UserApps/com_ImplusOS_settings/com_ImplusOS_settings.ELF", "SE"},
+    {"PNG Viewer", "/Userland/UserApps/com_ImplusOS_pngTest/com_ImplusOS_pngTest.ELF", "PV"},
     {"System Info", "/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF", "IN"},
 };
 

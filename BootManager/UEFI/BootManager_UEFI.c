@@ -42,7 +42,7 @@
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
-#include "../../Thirdparty/stb_truetype.h"
+#include "../../Vendor/Header/stb_truetype.h"
 #pragma clang diagnostic pop
 
 #ifndef ACPI_TABLE_GUID

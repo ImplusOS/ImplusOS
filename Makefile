@@ -6,7 +6,7 @@ export MTOOLSRC := /dev/null
 
 .PHONY: all kernel app_build driver_build driver_stage recovery_build install_payload \
         image run_uefi_usb run_uefi_cdrom qemu_disks clean \
-        edk2_bootloader edk2_bootmanager
+        edk2_bootloader edk2_bootmanager vendor_libs
 
 ARCH ?= x86_64
 
@@ -113,6 +113,7 @@ USERLAND_C_SRCS := \
 	libc/I_libc/src/posix.c \
 	libc/I_libc/src/sys/syscalls.c \
 	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
+	libc/I_libc/src/sys/$(ARCH)/setjmp.c \
 	$(LIBRARY_C_SRCS) \
 	Userland/Userland.c \
 	Userland/Syscalls.c \
@@ -139,6 +140,7 @@ USERLAND_APP_C_SRCS := \
 	libc/I_libc/src/posix.c \
 	libc/I_libc/src/sys/syscalls.c \
 	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
+	libc/I_libc/src/sys/$(ARCH)/setjmp.c \
 	$(LIBRARY_C_SRCS) \
 	Userland/Syscalls.c \
 	Userland/API/XMLParser.c \
@@ -164,7 +166,7 @@ USERLAND_CFLAGS := \
 	-Ilibc/I_libc/include \
 	-IUserland/POSIX/include \
 	-ILibrary \
-	-IThirdparty \
+	-IVendor \
 	-fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
 	$(USERLAND_ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
@@ -178,12 +180,15 @@ USERLAND_CXXFLAGS := \
 
 USERLAND_LDFLAGS := -T Userland/Userland.ld -nostdlib --build-id=none
 
-all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel app_build driver_stage $(USERLAND_INIT_ELF)
+all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel vendor_libs app_build driver_stage $(USERLAND_INIT_ELF)
+
+vendor_libs:
+	@$(MAKE) -C Vendor/Library ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) TOP_BUILD_DIR="$(abspath $(BUILD_DIR))"
 
 kernel:
 	@$(MAKE) -C Kernel ARCH=$(ARCH) BUILD_DIR=$(abspath $(BUILD_DIR))
 
-app_build: $(USERLAND_INIT_OBJS)
+app_build: vendor_libs $(USERLAND_INIT_OBJS)
 	@set -e; \
 	for dir in \
 		Userland/Application/SystemApps/com_ImplusOS_windowmanager \
@@ -196,7 +201,9 @@ app_build: $(USERLAND_INIT_OBJS)
 		Userland/Application/UserApps/com_ImplusOS_filemanager \
 		Userland/Application/UserApps/com_ImplusOS_procman \
 		Userland/Application/UserApps/com_ImplusOS_settings \
-		Userland/Application/UserApps/com_ImplusOS_vm; do \
+		Userland/Application/UserApps/com_ImplusOS_vm \
+		Userland/Application/UserApps/com_ImplusOS_zlibTest \
+		Userland/Application/UserApps/com_ImplusOS_pngTest; do \
 			$(MAKE) -C $$dir \
 				ARCH=$(ARCH) \
 				CROSS_COMPILE=$(CROSS_COMPILE) \
@@ -426,7 +433,7 @@ run_uefi_cdrom:
 	fi
 
 clean:
-	@rm -rf $(BUILD_DIR) $(IMAGE_DIR)
+	@rm -rf $(BUILD_ROOT) $(IMAGE_DIR)
 
 -include $(USERLAND_INIT_OBJS:.o=.d)
 -include $(USERLAND_APP_OBJS:.o=.d)

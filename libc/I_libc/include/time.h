@@ -40,5 +40,7 @@ int         clock_settime(clockid_t clk_id, const struct timespec* tp);
 int         clock_getres (clockid_t clk_id, struct timespec* res);
 struct tm  *gmtime_r    (const time_t* timep, struct tm* result);
 struct tm  *localtime_r (const time_t* timep, struct tm* result);
+struct tm  *gmtime      (const time_t* timep);
+struct tm  *localtime   (const time_t* timep);
 time_t      mktime      (struct tm* tm);
 double      difftime    (time_t t1, time_t t0);

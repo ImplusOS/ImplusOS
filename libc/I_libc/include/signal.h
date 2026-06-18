@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <sys/types.h>
 
 typedef int      sig_atomic_t;
 typedef void   (*sighandler_t)(int);
@@ -71,3 +72,4 @@ int sigaction(int signum, const struct sigaction *act,
 int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 int sigpending(sigset_t *set);
 int raise(int sig);
+int kill(pid_t pid, int sig);

@@ -21,7 +21,7 @@
 #define STBTT_malloc(x,u)  ((void)(u),malloc(x))
 #define STBTT_free(x,u)    ((void)(u),free(x))
 #define STBTT_fmod(x,y)    fmod(x,y)
-#include "stb_truetype.h"
+#include "Header/stb_truetype.h"
 
 static void* ul_realloc_sized(void* p, size_t oldsz, size_t newsz) {
     if (newsz == 0) { if (p) free(p); return NULL; }
@@ -47,7 +47,7 @@ static void* ul_realloc_sized(void* p, size_t oldsz, size_t newsz) {
 #define STBI_REALLOC(p,newsz)        ul_realloc_sized(p, 0, newsz)
 #define STBI_REALLOC_SIZED(p,os,ns)  ul_realloc_sized(p, os, ns)
 #define STBI_FREE(p)                 free(p)
-#include "stb_image.h"
+#include "Header/stb_image.h"
 #pragma GCC diagnostic pop
 
 static uint32_t *g_fb_snapshot = NULL;

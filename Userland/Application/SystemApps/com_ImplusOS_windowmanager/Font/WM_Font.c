@@ -16,7 +16,7 @@
 #define STBTT_STATIC
 #define STBTT_malloc(size, user) ((void)(user), malloc(size))
 #define STBTT_free(pointer, user) ((void)(user), free(pointer))
-#include "../../../../../Thirdparty/stb_truetype.h"
+#include "../../../../../Vendor/Header/stb_truetype.h"
 #pragma GCC diagnostic pop
 
 #define WM_GLYPH_CACHE_SIZE 4096u

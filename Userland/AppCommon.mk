@@ -31,6 +31,7 @@ COMMON_OBJS := $(COMMON_LIBS_DIR)/Syscalls.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/posix.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/sys/syscalls.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/sys/$(ARCH)/hal_syscall.o \
+               $(COMMON_LIBS_DIR)/libc/I_libc/src/sys/$(ARCH)/setjmp.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/assert.o \
                $(COMMON_LIBS_DIR)/API/XMLParser.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/math.o \

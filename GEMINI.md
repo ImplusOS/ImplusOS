@@ -70,7 +70,7 @@ ImplusOS/
 │   ├── Userland.c        # Init process
 │   └── Userland.ld       # Linker script
 ├── libc/I_libc/                 # Minimal C library
-├── Thirdparty/           # stb_truetype.h, stb_image.h
+├── Vendor/           # Header/stb_truetype.h, Header/stb_image.h
 ├── Makefile              # Top-level build
 └── Doxyfile              # Doxygen config
 ```

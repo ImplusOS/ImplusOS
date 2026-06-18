@@ -33,6 +33,7 @@ int vsnprintf(char* str, size_t size, const char* format, va_list ap);
 
 int putchar(int c);
 int puts(const char* s);
+int getchar(void);
 
 FILE* fopen(const char* path, const char* mode);
 FILE* fdopen(int fd, const char* mode);
@@ -54,3 +55,17 @@ int fileno(FILE* stream);
 int remove(const char* path);
 int rename(const char* old_path, const char* new_path);
 void perror(const char* s);
+
+int vprintf(const char* format, va_list ap);
+int fscanf(FILE* stream, const char* format, ...);
+int scanf(const char* format, ...);
+int sscanf(const char* str, const char* format, ...);
+int vfscanf(FILE* stream, const char* format, va_list ap);
+int vscanf(const char* format, va_list ap);
+int vsscanf(const char* str, const char* format, va_list ap);
+
+ssize_t getline(char **lineptr, size_t *n, FILE *stream);
+ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream);
+
+FILE *tmpfile(void);
+char *tmpnam(char *s);

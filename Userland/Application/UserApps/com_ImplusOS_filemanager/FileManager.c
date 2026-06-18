@@ -15,6 +15,7 @@
 #define FM_ENTRY_HEIGHT  24
 #define FM_ASSOC_FILE    "/Userland/file-associations.conf"
 #define FM_EDITOR_PATH   "/Userland/UserApps/com_ImplusOS_editor/com_ImplusOS_editor.ELF"
+#define FM_PNG_VIEWER_PATH "/Userland/UserApps/com_ImplusOS_pngTest/com_ImplusOS_pngTest.ELF"
 
 typedef struct {
     char    name[FM_MAX_NAME_LEN];
@@ -193,6 +194,10 @@ static int fm_find_association(const char *name, char *path, size_t path_size)
         strcasecmp(extension, "c") == 0 ||
         strcasecmp(extension, "h") == 0) {
         strlcpy(path, FM_EDITOR_PATH, path_size);
+        return 0;
+    }
+    if (strcasecmp(extension, "png") == 0) {
+        strlcpy(path, FM_PNG_VIEWER_PATH, path_size);
         return 0;
     }
     return -1;

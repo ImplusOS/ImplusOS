@@ -115,7 +115,6 @@ static void panic_exception(const char *name,
     serial_write_string("[OS] [PANIC] RBP: ");
     serial_write_uint64(rbp);
     serial_write_string("\n");
-    // Extract user RSP from exception frame (offset: error_code + RIP + CS + RFLAGS)
     uint64_t user_rsp = 0;
     uint64_t cs = 0;
     if (error_code == 0 || error_code <= 0x12) {

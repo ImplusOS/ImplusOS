@@ -36,7 +36,7 @@ ImplusOS/
 │   ├── Userland.c        Init process (_start entry point)
 │   └── Userland.ld       Linker script for userland ELFs
 ├── libc/I_libc/                 Minimal C library (string, stdlib, stdio, math, errno, POSIX shims)
-├── Thirdparty/           stb_truetype.h, stb_image.h
+├── Vendor/           Header/stb_truetype.h, Header/stb_image.h
 ├── Docs/                 Documentation and images
 ├── Makefile              Top-level build orchestrator
 └── Doxyfile              Doxygen configuration

@@ -777,9 +777,7 @@ static int initialize_elf_user_stack_ex(
     uint64_t auxv_words = auxv_count * 2U;
 
     sp &= ~0xFULL;
-
-    // x86-64 ABI: RSP must be 8 mod 16 at function entry (_start is entered via
-    // IRETQ/SYSRET, not CALL, so we need the extra slot to satisfy (%rsp+8) & 0xF == 0
+    
     sp -= 8ULL;
     sp -= (1ULL + argc + 1ULL + envc + 1ULL + auxv_words + 1ULL) * sizeof(uint64_t);
 

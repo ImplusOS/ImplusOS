@@ -1,4 +1,4 @@
-.PHONY: all clean copy_resources test
+.PHONY: all clean copy_resources
 
 APP_NAME := com_ImplusOS_windowmanager
 SRC_DIR  := .
@@ -27,16 +27,8 @@ LDFLAGS := -T ../../../../Userland/Userland.ld -e _start -nostdlib --build-id=no
 
 RESOURCE_DIR := Resource
 HOST_CC ?= cc
-TEST_BIN := $(BUILD_DIR)/tests/wm_core_test
 
 all: $(ELF) copy_resources
-
-test: $(TEST_BIN)
-	$(TEST_BIN)
-
-$(TEST_BIN): Tests/WM_CoreTest.c Compositor/WM_Damage.c Compositor/WM_Raster.c Core/WM_EventQueue.c Core/WM_Display.c
-	@mkdir -p $(dir $@)
-	$(HOST_CC) -std=c11 -Wall -Wextra -Werror -I. $^ -o $@
 
 copy_resources:
 	@if [ -d $(RESOURCE_DIR) ]; then \

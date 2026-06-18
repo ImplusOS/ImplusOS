@@ -121,7 +121,7 @@ void wm_service_main_loop(void)
             wm_compositor_render(&g_wm_state, now_ms);
             g_wm_state.compositor.next_frame_ms = now_ms + 16u;
         } else if (!animating && !notifications && !pending_frame) {
-            process_yield();
+            sleep_ms(5);
             continue;
         }
         process_yield();

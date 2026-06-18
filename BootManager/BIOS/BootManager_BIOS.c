@@ -56,7 +56,7 @@ static void bios_free(void *ptr) { (void)ptr; }
 #define STBTT__NOTUSED(v) (void)sizeof(v)
 #define STB_TRUETYPE_NO_MATH
 
-#include "../../Thirdparty/stb_truetype.h"
+#include "../../Vendor/Header/stb_truetype.h"
 
 #pragma pack(push, 1)
 typedef struct {

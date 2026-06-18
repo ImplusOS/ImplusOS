@@ -22,8 +22,16 @@ char* strchr(const char* s, int c);
 char* strrchr(const char* s, int c);
 char* strstr(const char* haystack, const char* needle);
 char* strtok(char* str, const char* delim);
+char* strtok_r(char* str, const char* delim, char** saveptr);
 char* strdup(const char* s);
 char* strcat(char* dst, const char* src);
 char* strncat(char* dst, const char* src, size_t n);
 const char* strerror(int errnum);
 void* memchr(const void* s, int c, size_t n);
+void* memrchr(const void* s, int c, size_t n);
+
+size_t strspn(const char* s, const char* accept);
+size_t strcspn(const char* s, const char* reject);
+char* strpbrk(const char* s, const char* accept);
+
+const char* strsignal(int signum);

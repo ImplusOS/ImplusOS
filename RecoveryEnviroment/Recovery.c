@@ -15,7 +15,7 @@
 #define STBTT_malloc(x,u)  ((void)(u),malloc(x))
 #define STBTT_free(x,u)    ((void)(u),free(x))
 #define STBTT_fmod(x,y)    fmod(x,y)
-#include "../Thirdparty/stb_truetype.h"
+#include "../Vendor/Header/stb_truetype.h"
 
 #define RECOVERY_PAYLOAD_PATH       "/Recovery/ImplusOS-root.tar.gz"
 #define RECOVERY_INSTALL_IMAGE_PATH "/Recovery/ImplusOS-install.img"

@@ -3,6 +3,24 @@
 #define PATH_MAX   260
 #define NAME_MAX   255
 #define PIPE_BUF   4096
+
+#include <stdint.h>
+
+#define ARG_MAX    131072
+
+#define INT8_MAX   127
+#define INT8_MIN   (-128)
+#define UINT8_MAX  255
+#define INT16_MAX  32767
+#define INT16_MIN  (-32768)
+#define UINT16_MAX 65535
+#define INT32_MAX  2147483647
+#define INT32_MIN  (-2147483647 - 1)
+#define UINT32_MAX 4294967295U
+#define INT64_MAX  9223372036854775807LL
+#define INT64_MIN  (-9223372036854775807LL - 1LL)
+#define UINT64_MAX 18446744073709551615ULL
+
 #define INT_MAX    2147483647
 #define INT_MIN    (-2147483647 - 1)
 #define UINT_MAX   4294967295U
@@ -13,3 +31,12 @@
 #define SHRT_MIN   (-32768)
 #define USHRT_MAX  65535
 #define CHAR_BIT   8
+#define SCHAR_MAX  127
+#define SCHAR_MIN  (-128)
+#define UCHAR_MAX  255
+#define CHAR_MAX   SCHAR_MAX
+#define CHAR_MIN   SCHAR_MIN
+#define SIZE_MAX   ((size_t)-1)
+#define SSIZE_MAX  ((ssize_t)(SIZE_MAX / 2))
+#define PTRDIFF_MAX LONG_MAX
+#define INTPTR_MAX  LONG_MAX
