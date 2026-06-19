@@ -2,6 +2,10 @@
 #include "Memory.h"
 #include <string.h>
 
+typedef struct {
+    uint32_t node_count;
+} xml_parse_context_t;
+
 static void skip_whitespace(const char **s) {
     while (**s == ' ' || **s == '\t' || **s == '\r' || **s == '\n') {
         (*s)++;
@@ -38,15 +42,97 @@ static bool parse_string(const char **s, char *out, uint32_t max_len) {
     return true;
 }
 
-static xml_node_t *parse_node(const char **s) {
+static void skip_element(const char **s)
+{
+    if (!s || **s != '<') return;
+    uint32_t depth = 0u;
+    while (**s) {
+        if (**s != '<') {
+            (*s)++;
+            continue;
+        }
+
+        if (*(*s + 1) == '?' || *(*s + 1) == '!') {
+            while (**s && **s != '>') (*s)++;
+            if (**s == '>') (*s)++;
+            continue;
+        }
+
+        if (*(*s + 1) == '/') {
+            while (**s && **s != '>') (*s)++;
+            if (**s == '>') (*s)++;
+            if (depth == 0u) return;
+            --depth;
+            if (depth == 0u) return;
+            continue;
+        }
+
+        ++depth;
+        (*s)++;
+        char quote = '\0';
+        while (**s) {
+            if (quote != '\0') {
+                if (**s == quote) quote = '\0';
+                (*s)++;
+                continue;
+            }
+            if (**s == '"' || **s == '\'') {
+                quote = **s;
+                (*s)++;
+                continue;
+            }
+            if (**s == '/' && *(*s + 1) == '>') {
+                (*s) += 2;
+                if (depth > 0u) --depth;
+                if (depth == 0u) return;
+                break;
+            }
+            if (**s == '>') {
+                (*s)++;
+                break;
+            }
+            (*s)++;
+        }
+    }
+}
+
+static bool append_child(xml_node_t *node, xml_node_t *child)
+{
+    if (!node || !child || node->child_count >= XML_MAX_CHILDREN) return false;
+    if (node->child_count == node->child_capacity) {
+        uint32_t new_capacity = node->child_capacity == 0u ?
+            8u : node->child_capacity * 2u;
+        if (new_capacity > XML_MAX_CHILDREN) new_capacity = XML_MAX_CHILDREN;
+        xml_node_t **children =
+            (xml_node_t **)malloc((size_t)new_capacity * sizeof(*children));
+        if (!children) return false;
+        if (node->children) {
+            memcpy(children, node->children,
+                   (size_t)node->child_count * sizeof(*children));
+            free(node->children);
+        }
+        node->children = children;
+        node->child_capacity = new_capacity;
+    }
+    node->children[node->child_count++] = child;
+    return true;
+}
+
+static xml_node_t *parse_node(const char **s, xml_parse_context_t *context,
+                              uint32_t depth) {
     skip_whitespace(s);
     if (**s != '<') return NULL;
+    if (!context || context->node_count >= XML_MAX_NODES ||
+        depth >= XML_MAX_DEPTH) {
+        skip_element(s);
+        return NULL;
+    }
     (*s)++;
 
     if (**s == '?' || **s == '!') {
         while (**s && **s != '>') (*s)++;
         if (**s == '>') (*s)++;
-        return parse_node(s);
+        return parse_node(s, context, depth);
     }
     
     if (**s == '/') {
@@ -56,6 +142,7 @@ static xml_node_t *parse_node(const char **s) {
     xml_node_t *node = (xml_node_t *)malloc(sizeof(xml_node_t));
     if (!node) return NULL;
     memset(node, 0, sizeof(xml_node_t));
+    context->node_count++;
 
     if (!parse_name(s, node->tag, sizeof(node->tag))) {
         free(node);
@@ -107,11 +194,9 @@ static xml_node_t *parse_node(const char **s) {
                     if (**s == '>') (*s)++;
                     break;
                 } else {
-                    xml_node_t *child = parse_node(s);
+                    xml_node_t *child = parse_node(s, context, depth + 1u);
                     if (child) {
-                        if (node->child_count < XML_MAX_CHILDREN) {
-                            node->children[node->child_count++] = child;
-                        } else {
+                        if (!append_child(node, child)) {
                             xml_free(child);
                         }
                     }
@@ -140,7 +225,8 @@ static xml_node_t *parse_node(const char **s) {
 xml_node_t *xml_parse(const char *xml_str) {
     if (!xml_str) return NULL;
     const char *s = xml_str;
-    return parse_node(&s);
+    xml_parse_context_t context = {0u};
+    return parse_node(&s, &context, 0u);
 }
 
 void xml_free(xml_node_t *node) {
@@ -148,6 +234,7 @@ void xml_free(xml_node_t *node) {
     for (uint32_t i = 0; i < node->child_count; i++) {
         xml_free(node->children[i]);
     }
+    free(node->children);
     free(node);
 }
 

@@ -45,6 +45,7 @@ int fseek(FILE* stream, long offset, int whence);
 long ftell(FILE* stream);
 void rewind(FILE* stream);
 int fgetc(FILE* stream);
+int ungetc(int c, FILE* stream);
 char* fgets(char* s, int size, FILE* stream);
 int fputc(int c, FILE* stream);
 int fputs(const char* s, FILE* stream);

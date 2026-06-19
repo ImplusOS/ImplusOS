@@ -259,6 +259,11 @@ off_t lseek(int fd, off_t offset, int whence)
     return (off_t)file_seek(fd, offset, whence);
 }
 
+int isatty(int fd)
+{
+    return fd == STDIN_FILENO || fd == STDOUT_FILENO || fd == STDERR_FILENO;
+}
+
 int pipe(int pipefd[2])
 {
     int rc = file_pipe(pipefd);

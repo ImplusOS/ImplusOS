@@ -14,7 +14,7 @@
 #define WM_MAX_NOTIFICATIONS           6u
 #define WM_MAX_NOTIFICATION_HISTORY    16u
 #define WM_MAX_LAUNCHER_APPS           32u
-#define WM_MAX_DAMAGE_RECTS            32u
+#define WM_MAX_DAMAGE_RECTS            96u
 #define WM_EVENT_QUEUE_SIZE            128u
 #define WM_TITLE_MAX                   64u
 #define WM_APP_NAME_MAX                40u

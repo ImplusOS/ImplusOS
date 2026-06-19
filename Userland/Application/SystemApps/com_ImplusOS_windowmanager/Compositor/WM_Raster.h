@@ -17,6 +17,10 @@ void wm_canvas_gradient_vertical(wm_canvas_t *canvas, wm_rect_t rect,
                                  uint32_t top, uint32_t bottom);
 void wm_canvas_line(wm_canvas_t *canvas, int32_t x0, int32_t y0,
                     int32_t x1, int32_t y1, uint32_t color);
+void wm_canvas_blit(wm_canvas_t *canvas, wm_rect_t destination,
+                    const uint32_t *source, uint32_t source_width,
+                    uint32_t source_height, uint32_t source_x,
+                    uint32_t source_y, uint8_t opacity);
 void wm_canvas_blit_scaled(wm_canvas_t *canvas, wm_rect_t destination,
                            const uint32_t *source, uint32_t source_width,
                            uint32_t source_height, uint8_t opacity,

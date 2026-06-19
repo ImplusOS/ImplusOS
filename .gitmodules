@@ -4,3 +4,9 @@
 [submodule "Vendor/Library/zlib"]
 	path = Vendor/Library/zlib
 	url = https://github.com/madler/zlib
+[submodule "Vendor/Library/SDL"]
+	path = Vendor/Library/SDL
+	url = https://github.com/libsdl-org/SDL
+[submodule "Userland/Application/UserApps/doom/doomgeneric"]
+	path = Userland/Application/UserApps/doom/doomgeneric
+	url = https://github.com/ozkl/doomgeneric/

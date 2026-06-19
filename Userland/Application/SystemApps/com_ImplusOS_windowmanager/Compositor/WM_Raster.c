@@ -74,15 +74,24 @@ void wm_canvas_fill(wm_canvas_t *canvas, wm_rect_t rect, uint32_t color)
     rect = wm_rect_intersection(rect, canvas->clip);
     if (rect.w == 0u || rect.h == 0u) return;
     uint32_t alpha = color >> 24u;
+    if (alpha == 0u) return;
+    if (alpha == 255u) {
+        uint32_t *first = &canvas->pixels[
+            (uint32_t)rect.y * canvas->stride + (uint32_t)rect.x];
+        for (uint32_t col = 0; col < rect.w; ++col) first[col] = color;
+        for (uint32_t row = 1u; row < rect.h; ++row) {
+            uint32_t *destination = &canvas->pixels[
+                (uint32_t)(rect.y + (int32_t)row) * canvas->stride +
+                (uint32_t)rect.x];
+            memcpy(destination, first, (size_t)rect.w * sizeof(uint32_t));
+        }
+        return;
+    }
     for (uint32_t row = 0; row < rect.h; ++row) {
         uint32_t *destination = &canvas->pixels[
             (uint32_t)(rect.y + (int32_t)row) * canvas->stride + (uint32_t)rect.x];
-        if (alpha == 255u) {
-            for (uint32_t col = 0; col < rect.w; ++col) destination[col] = color;
-        } else {
-            for (uint32_t col = 0; col < rect.w; ++col)
-                destination[col] = wm_color_blend(destination[col], color);
-        }
+        for (uint32_t col = 0; col < rect.w; ++col)
+            destination[col] = wm_color_blend(destination[col], color);
     }
 }
 
@@ -233,6 +242,56 @@ static uint32_t bilinear_sample(const uint32_t *source, uint32_t source_width,
     uint32_t green = interpolate_channel(g0, g1, fy);
     uint32_t blue = interpolate_channel(b0, b1, fy);
     return (alpha << 24u) | (red << 16u) | (green << 8u) | blue;
+}
+
+void wm_canvas_blit(wm_canvas_t *canvas, wm_rect_t destination,
+                    const uint32_t *source, uint32_t source_width,
+                    uint32_t source_height, uint32_t source_x,
+                    uint32_t source_y, uint8_t opacity)
+{
+    if (!canvas || !canvas->pixels || !source || destination.w == 0u ||
+        destination.h == 0u || source_width == 0u || source_height == 0u ||
+        source_x >= source_width || source_y >= source_height ||
+        opacity == 0u) return;
+
+    uint32_t max_width = source_width - source_x;
+    uint32_t max_height = source_height - source_y;
+    if (destination.w > max_width) destination.w = max_width;
+    if (destination.h > max_height) destination.h = max_height;
+    wm_rect_t visible = wm_rect_intersection(destination, canvas->clip);
+    if (visible.w == 0u || visible.h == 0u) return;
+
+    uint32_t start_x = source_x + (uint32_t)(visible.x - destination.x);
+    uint32_t start_y = source_y + (uint32_t)(visible.y - destination.y);
+    for (uint32_t row = 0u; row < visible.h; ++row) {
+        const uint32_t *src = &source[(start_y + row) * source_width + start_x];
+        uint32_t *dst = &canvas->pixels[
+            (uint32_t)(visible.y + (int32_t)row) * canvas->stride +
+            (uint32_t)visible.x];
+        if (opacity == 255u) {
+            bool opaque = true;
+            for (uint32_t col = 0u; col < visible.w; ++col) {
+                if ((src[col] >> 24u) != 255u) {
+                    opaque = false;
+                    break;
+                }
+            }
+            if (opaque) {
+                memcpy(dst, src, (size_t)visible.w * sizeof(uint32_t));
+                continue;
+            }
+        }
+
+        for (uint32_t col = 0u; col < visible.w; ++col) {
+            uint32_t color = src[col];
+            uint32_t alpha = color >> 24u;
+            if (opacity != 255u)
+                alpha = (alpha * (uint32_t)opacity + 127u) / 255u;
+            if (alpha == 0u) continue;
+            color = (color & 0x00FFFFFFu) | (alpha << 24u);
+            dst[col] = alpha == 255u ? color : wm_color_blend(dst[col], color);
+        }
+    }
 }
 
 void wm_canvas_blit_scaled(wm_canvas_t *canvas, wm_rect_t destination,

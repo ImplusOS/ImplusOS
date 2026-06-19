@@ -62,3 +62,29 @@ Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
 Licensed under the libpng License
 See:
 https://www.libpng.org/pub/png/src/libpng-LICENSE.txt
+
+SDL3
+
+Simple DirectMedia Layer (SDL) 3
+
+Copyright (c) Sam Lantinga slouken@libsdl.org and SDL contributors
+
+Licensed under the zlib License.
+See:
+SDL3 License
+
+License file:
+Docs/OSS_License/LICENSEFILE/SDL3
+
+Doom generic
+
+Doom generic
+
+Copyright (c) ozkl
+
+Licensed under the GPL-2.0 License
+See:
+https://github.com/ozkl/doomgeneric/blob/master/LICENSE
+
+License file:
+Docs/OSS_License/LICENSEFILE/GPL-2.0

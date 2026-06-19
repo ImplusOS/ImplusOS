@@ -3,6 +3,7 @@
 #include "WM_Damage.h"
 #include "WM_Raster.h"
 #include "../Decoration/WM_Decoration.h"
+#include "../SceneGraph/WM_Node.h"
 #include "../UI/WM_Notification.h"
 #include "../UI/WM_StartMenu.h"
 #include "../UI/WM_Taskbar.h"
@@ -126,9 +127,24 @@ static void copy_background(wm_state_t *state, wm_rect_t rect)
 
 static void draw_scene(wm_state_t *state, wm_canvas_t *canvas)
 {
-    for (uint32_t layer = WM_LAYER_NORMAL; layer <= WM_LAYER_OVERLAY; ++layer)
-        for (wm_window_t *w = state->scene.layer_bottom[layer]; w; w = w->z_prev)
+    for (uint32_t layer = WM_LAYER_NORMAL; layer <= WM_LAYER_OVERLAY; ++layer) {
+        for (wm_window_t *w = state->scene.layer_bottom[layer]; w; w = w->z_prev) {
+            if (!w->visible || w->minimized || w->visual_alpha <= 0.0f)
+                continue;
+            if (!wm_rect_intersects(wm_window_visual_bounds(state, w),
+                                    canvas->clip))
+                continue;
             wm_decoration_draw_window(state, canvas, w);
+        }
+    }
+}
+
+static void reset_window_damage(wm_state_t *state)
+{
+    for (uint32_t layer = WM_LAYER_DESKTOP; layer < WM_LAYER_COUNT; ++layer) {
+        for (wm_window_t *w = state->scene.layer_bottom[layer]; w; w = w->z_prev)
+            wm_region_reset(&w->damage);
+    }
 }
 
 static void draw_default_cursor(wm_state_t *state, wm_canvas_t *canvas,
@@ -295,8 +311,5 @@ void wm_compositor_render(wm_state_t *state, uint64_t now_ms)
     state->compositor.previous_cursor_y       = state->scene.cursor_y;
     state->compositor.previous_cursor_visible = state->scene.cursor_visible;
     state->compositor.previous_cursor_style   = state->scene.cursor_style;
-    for (uint32_t id = 1u; id <= WM_MAX_WINDOWS; ++id) {
-        wm_window_t *w = state->scene.id_table[id];
-        if (w) wm_region_reset(&w->damage);
-    }
+    reset_window_damage(state);
 }

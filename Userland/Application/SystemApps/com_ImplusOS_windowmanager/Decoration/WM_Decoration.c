@@ -126,6 +126,11 @@ static void draw_shadow(wm_state_t *state, wm_canvas_t *canvas,
 #define BTN_PAD  3u
 #define BTN_MARGIN 6u
 
+static bool is_unscaled(const wm_window_t *window)
+{
+    return window->visual_scale > 0.999f && window->visual_scale < 1.001f;
+}
+
 static void draw_title_buttons(wm_state_t *state, wm_canvas_t *canvas,
                                 const wm_window_t *window, wm_rect_t frame,
                                 uint8_t opacity)
@@ -219,9 +224,14 @@ void wm_decoration_draw_window(wm_state_t *state, wm_canvas_t *canvas,
     if (!wm_rect_intersects(visual, canvas->clip)) return;
 
     if (window->is_system) {
-        wm_canvas_blit_scaled(canvas, frame, window->surface,
-                              window->frame.w, window->frame.h,
-                              opacity, state->theme.corner_radius);
+        if (is_unscaled(window) && state->theme.corner_radius == 0u) {
+            wm_canvas_blit(canvas, frame, window->surface,
+                           window->frame.w, window->frame.h, 0u, 0u, opacity);
+        } else {
+            wm_canvas_blit_scaled(canvas, frame, window->surface,
+                                  window->frame.w, window->frame.h,
+                                  opacity, state->theme.corner_radius);
+        }
         return;
     }
 
@@ -269,11 +279,17 @@ void wm_decoration_draw_window(wm_state_t *state, wm_canvas_t *canvas,
         frame.w>2u?frame.w-2u:frame.w,
         frame.h>title_h+2u?frame.h-title_h-2u:0u
     };
-    if (content.h)
-        wm_canvas_blit_scaled(canvas, content, window->surface,
-                              window->frame.w, window->frame.h, opacity,
-                              state->theme.corner_radius>2u?
-                                  state->theme.corner_radius-2u:0u);
+    if (content.h) {
+        if (is_unscaled(window)) {
+            wm_canvas_blit(canvas, content, window->surface,
+                           window->frame.w, window->frame.h, 0u, 0u, opacity);
+        } else {
+            wm_canvas_blit_scaled(canvas, content, window->surface,
+                                  window->frame.w, window->frame.h, opacity,
+                                  state->theme.corner_radius>2u?
+                                      state->theme.corner_radius-2u:0u);
+        }
+    }
 
     draw_window_icon(state, canvas, window, frame, opacity);
 

@@ -6,7 +6,9 @@
 #define XML_MAX_TAG_LEN        64
 #define XML_MAX_ATTR_NAME      32
 #define XML_MAX_ATTR_VALUE     128
-#define XML_MAX_CHILDREN       32
+#define XML_MAX_CHILDREN       256
+#define XML_MAX_NODES          2048
+#define XML_MAX_DEPTH          64
 #define XML_MAX_ATTRIBUTES     8
 
 typedef struct xml_attribute {
@@ -19,8 +21,9 @@ typedef struct xml_node {
     xml_attribute_t attributes[XML_MAX_ATTRIBUTES];
     uint32_t attr_count;
     char text[XML_MAX_ATTR_VALUE];
-    struct xml_node *children[XML_MAX_CHILDREN];
+    struct xml_node **children;
     uint32_t child_count;
+    uint32_t child_capacity;
 } xml_node_t;
 
 xml_node_t *xml_parse(const char *xml_str);

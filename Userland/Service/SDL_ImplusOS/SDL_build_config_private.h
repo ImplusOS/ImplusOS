@@ -1,0 +1,113 @@
+#pragma once
+
+#include <SDL3/SDL_platform_defines.h>
+
+#define SDL_PLATFORM_PRIVATE 1
+#define SDL_PLATFORM_PRIVATE_NAME "ImplusOS"
+#define SDL_STATIC_LIB 1
+#define SDL_LEAN_AND_MEAN 1
+#define HAVE_LIBC 1
+
+#define HAVE_STDARG_H 1
+#define HAVE_STDDEF_H 1
+#define HAVE_STDINT_H 1
+#define HAVE_STDBOOL_H 1
+#define HAVE_INTTYPES_H 1
+#define HAVE_FLOAT_H 1
+#define HAVE_LIMITS_H 1
+#define HAVE_MATH_H 1
+#define HAVE_STDIO_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define HAVE_WCHAR_H 1
+#define HAVE_CTYPE_H 1
+#define HAVE_ERRNO_H 1
+#define HAVE_SIGNAL_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_SYS_TIME_H 1
+#define HAVE_TIME_H 1
+#define HAVE_UNISTD_H 1
+
+#define HAVE_MALLOC 1
+#define HAVE_CALLOC 1
+#define HAVE_REALLOC 1
+#define HAVE_FREE 1
+#define HAVE_MEMCPY 1
+#define HAVE_MEMMOVE 1
+#define HAVE_MEMSET 1
+#define HAVE_MEMCMP 1
+#define HAVE_STRLEN 1
+#define HAVE_STRNLEN 1
+#define HAVE_STRLCPY 1
+#define HAVE_STRLCAT 1
+#define HAVE_STRDUP 1
+#define HAVE_STRCHR 1
+#define HAVE_STRRCHR 1
+#define HAVE_STRSTR 1
+#define HAVE_STRTOL 1
+#define HAVE_STRTOUL 1
+#define HAVE_STRTOLL 1
+#define HAVE_STRTOULL 1
+#define HAVE_STRTOD 1
+#define HAVE_ATOF 1
+#define HAVE_QSORT 1
+#define HAVE_ABS 1
+#define HAVE_BSEARCH 1
+#define HAVE_SNPRINTF 1
+#define HAVE_VSNPRINTF 1
+
+#define HAVE_ATAN 1
+#define HAVE_ATAN2 1
+#define HAVE_CEIL 1
+#define HAVE_COPYSIGN 1
+#define HAVE_COS 1
+#define HAVE_EXP 1
+#define HAVE_FABS 1
+#define HAVE_FLOOR 1
+#define HAVE_FMOD 1
+#define HAVE_LOG 1
+#define HAVE_LOG10 1
+#define HAVE_POW 1
+#define HAVE_SIN 1
+#define HAVE_SQRT 1
+#define HAVE_TAN 1
+#define HAVE_ATANF 1
+#define HAVE_ATAN2F 1
+#define HAVE_CEILF 1
+#define HAVE_COSF 1
+#define HAVE_EXPF 1
+#define HAVE_FABSF 1
+#define HAVE_FLOORF 1
+#define HAVE_FMODF 1
+#define HAVE_LOGF 1
+#define HAVE_LOG10F 1
+#define HAVE_POWF 1
+#define HAVE_SINF 1
+#define HAVE_SQRTF 1
+#define HAVE_TANF 1
+
+#ifdef __GNUC__
+#define HAVE_GCC_SYNC_LOCK_TEST_AND_SET 1
+#define HAVE_GCC_ATOMICS 1
+#endif
+
+#define SDL_GPU_DISABLED 1
+#define SDL_CAMERA_DISABLED 1
+#define SDL_JOYSTICK_DISABLED 1
+#define SDL_HAPTIC_DISABLED 1
+#define SDL_HIDAPI_DISABLED 1
+#define SDL_POWER_DISABLED 1
+#define SDL_SENSOR_DISABLED 1
+
+#define SDL_PROCESS_DUMMY 1
+#define SDL_LOADSO_DUMMY 1
+#define SDL_FILESYSTEM_DUMMY 1
+#define SDL_FSOPS_DUMMY 1
+#define SDL_DIALOG_DUMMY 1
+#define SDL_TRAY_DUMMY 1
+
+#define SDL_VIDEO_DRIVER_PRIVATE 1
+#define SDL_AUDIO_DRIVER_PRIVATE 1
+#define SDL_THREAD_PTHREAD 1
+#define SDL_VIDEO_RENDER_SW 1

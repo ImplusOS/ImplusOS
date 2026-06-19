@@ -81,9 +81,10 @@ static void surface_clear(wm_window_t *window)
 }
 
 static void render_xml_node(wm_state_t *state, wm_window_t *window,
-                            const xml_node_t *node, int32_t parent_x, int32_t parent_y)
+                            wm_canvas_t *canvas, const xml_node_t *node,
+                            int32_t parent_x, int32_t parent_y)
 {
-    if (!state || !window || !node) return;
+    if (!state || !window || !canvas || !node) return;
     const char *x_text = xml_get_attr(node, "x");
     const char *y_text = xml_get_attr(node, "y");
     const char *w_text = xml_get_attr(node, "width");
@@ -99,34 +100,34 @@ static void render_xml_node(wm_state_t *state, wm_window_t *window,
     uint32_t color = wm_theme_parse_color(color_text, state->theme.text);
     uint32_t background = wm_theme_parse_color(background_text, 0x00000000u);
     float font_size = parse_float_value(font_text, state->theme.font_normal);
+    bool is_panel = strcmp(node->tag, "Panel") == 0;
+    bool is_button = strcmp(node->tag, "Button") == 0;
+    bool is_rect = strcmp(node->tag, "Rect") == 0;
+    bool is_label = strcmp(node->tag, "Label") == 0;
 
-    wm_canvas_t canvas;
-    wm_canvas_init(&canvas, window->surface, window->frame.w,
-                   window->frame.h, window->frame.w);
     wm_rect_t rect = {x, y, width, height};
-    if (strcmp(node->tag, "Panel") == 0)
-        wm_canvas_fill_rounded(&canvas, rect, 8u, background);
-    else if (strcmp(node->tag, "Button") == 0)
-        wm_canvas_fill_rounded(&canvas, rect, 7u,
+    if (is_panel)
+        wm_canvas_fill_rounded(canvas, rect, 8u, background);
+    else if (is_button)
+        wm_canvas_fill_rounded(canvas, rect, 7u,
             background ? background : state->theme.accent_soft);
-    else if (strcmp(node->tag, "Rect") == 0)
-        wm_canvas_fill(&canvas, rect, background);
+    else if (is_rect)
+        wm_canvas_fill(canvas, rect, background);
 
-    if ((strcmp(node->tag, "Label") == 0 || strcmp(node->tag, "Button") == 0) &&
-        node->text[0]) {
+    if ((is_label || is_button) && node->text[0]) {
         int32_t text_x = x;
         int32_t text_y = y;
-        if (strcmp(node->tag, "Button") == 0) {
+        if (is_button) {
             uint32_t text_width = wm_font_measure(&state->font, node->text, font_size);
             if (text_width < width) text_x += (int32_t)(width - text_width) / 2;
             if ((uint32_t)font_size < height)
                 text_y += (int32_t)(height - (uint32_t)font_size) / 2;
         }
-        wm_font_draw(&state->font, &canvas, text_x, text_y,
+        wm_font_draw(&state->font, canvas, text_x, text_y,
                      node->text, color, font_size, width);
     }
     for (uint32_t i = 0; i < node->child_count; ++i)
-        render_xml_node(state, window, node->children[i], x, y);
+        render_xml_node(state, window, canvas, node->children[i], x, y);
 }
 
 static void handle_create(wm_state_t *state, const ipc_message_t *message,
@@ -255,12 +256,16 @@ static void handle_xml(wm_state_t *state, const ipc_message_t *message,
         if (window->xml_buffer) {
             xml_node_t *root = xml_parse(window->xml_buffer);
             if (root) {
+                wm_canvas_t canvas;
+                wm_canvas_init(&canvas, window->surface, window->frame.w,
+                               window->frame.h, window->frame.w);
                 surface_clear(window);
                 if (root->child_count != 0u) {
                     for (uint32_t i = 0; i < root->child_count; ++i)
-                        render_xml_node(state, window, root->children[i], 0, 0);
+                        render_xml_node(state, window, &canvas,
+                                        root->children[i], 0, 0);
                 } else {
-                    render_xml_node(state, window, root, 0, 0);
+                    render_xml_node(state, window, &canvas, root, 0, 0);
                 }
                 xml_free(root);
                 wm_window_damage_content(state, window,

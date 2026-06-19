@@ -5,7 +5,7 @@ SHELL := /bin/bash
 export MTOOLSRC := /dev/null
 
 .PHONY: all kernel app_build driver_build driver_stage recovery_build install_payload \
-        image run_uefi_usb run_uefi_cdrom qemu_disks clean \
+        image image_livecd run_uefi_usb run_uefi_cdrom qemu_disks clean \
         edk2_bootloader edk2_bootmanager vendor_libs
 
 ARCH ?= x86_64
@@ -60,6 +60,8 @@ INSTALL_MANIFEST     := $(INSTALL_PAYLOAD_DIR)/MANIFEST.txt
 
 IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
 ESP_IMAGE       := $(IMAGE_DIR)/esp-$(ARCH).img
+
+LIVECD_IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH)-LiveCD.iso
 
 BOOT_RESOURCE_DIR := $(firstword $(wildcard BootManager/Resource))
 ifeq ($(BOOT_RESOURCE_DIR),)
@@ -203,7 +205,9 @@ app_build: vendor_libs $(USERLAND_INIT_OBJS)
 		Userland/Application/UserApps/com_ImplusOS_settings \
 		Userland/Application/UserApps/com_ImplusOS_vm \
 		Userland/Application/UserApps/com_ImplusOS_zlibTest \
-		Userland/Application/UserApps/com_ImplusOS_pngTest; do \
+		Userland/Application/UserApps/com_ImplusOS_pngTest \
+		Userland/Application/UserApps/com_ImplusOS_sdlTest \
+		Userland/Application/UserApps/doom; do \
 			$(MAKE) -C $$dir \
 				ARCH=$(ARCH) \
 				CROSS_COMPILE=$(CROSS_COMPILE) \
@@ -374,6 +378,54 @@ image: install_payload recovery_build
 		-o $(IMAGE) \
 		$(IMAGE_STAGE_DIR)
 
+image_livecd: all
+	@mkdir -p $(IMAGE_DIR)
+	@rm -f $(LIVECD_IMAGE) $(ESP_IMAGE)
+	@dd if=/dev/zero of=$(ESP_IMAGE) bs=1M count=64 status=none
+	@mformat -i $(ESP_IMAGE) -F -v "IMPLUSOS" ::
+	@mmd -i $(ESP_IMAGE) ::/EFI
+	@mmd -i $(ESP_IMAGE) ::/EFI/BOOT
+	@mmd -i $(ESP_IMAGE) ::/BootManager
+	@mmd -i $(ESP_IMAGE) ::/BootManager/Resource
+	@if [ "$(ARCH)" = "x86_64" ]; then \
+		mcopy -o -i $(ESP_IMAGE) $(BOOTLOADER_EFI) ::/EFI/BOOT/BOOTX64.EFI; \
+	else \
+		mcopy -o -i $(ESP_IMAGE) $(BOOTLOADER_EFI) ::/EFI/BOOT/BOOTAA64.EFI; \
+	fi
+	@mcopy -o -i $(ESP_IMAGE) $(BOOTMANAGER_EFI) ::/EFI/BOOT/BOOTMANAGER.EFI
+	@mcopy -s -i $(ESP_IMAGE) $(BOOT_RESOURCE_DIR) ::/BootManager
+	@rm -rf $(IMAGE_STAGE_DIR)
+	@mkdir -p \
+		$(IMAGE_STAGE_DIR)/EFI/BOOT \
+		$(IMAGE_STAGE_DIR)/Kernel/Driver \
+		$(IMAGE_STAGE_DIR)/Userland \
+		$(IMAGE_STAGE_DIR)/BootManager/Resource
+	@cp $(ESP_IMAGE) $(IMAGE_STAGE_DIR)/esp.img
+	@cp $(KERNEL_ELF) $(IMAGE_STAGE_DIR)/Kernel/Kernel_Main.ELF
+	@cp $(USERLAND_INIT_ELF) $(IMAGE_STAGE_DIR)/Userland/Userland.ELF
+	@cp -a $(BUILD_DIR)/Userland/SystemApps $(IMAGE_STAGE_DIR)/Userland/
+	@cp -a $(BUILD_DIR)/Userland/UserApps $(IMAGE_STAGE_DIR)/Userland/
+	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
+	@if [ "$(ARCH)" = "x86_64" ]; then \
+		cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTX64.EFI; \
+	else \
+		cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTAA64.EFI; \
+	fi
+	@cp $(BOOTMANAGER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTMANAGER.EFI
+	@for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
+		[ -e "$$f" ] || continue; \
+		cp "$$f" $(IMAGE_STAGE_DIR)/Kernel/Driver/; \
+	done
+	@xorriso -as mkisofs \
+		-R \
+		-J \
+		-iso-level 3 \
+		-V IMPLUSOS \
+		-e esp.img \
+		-no-emul-boot \
+		-o $(LIVECD_IMAGE) \
+		$(IMAGE_STAGE_DIR)
+
 ifeq ($(ARCH),arm64)
 QEMU_MACHINE := virt
 else
@@ -407,12 +459,12 @@ QEMU_COMMON := \
 	
 QEMU_USB := \
 	-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
-	-device usb-storage,bus=xhci.0,drive=usbstick
+	-device usb-storage,bus=xhci.0,drive=usbstick,bootindex=0
 
 QEMU_DISK := \
 	-drive file=$(IMAGE),media=cdrom,format=raw,index=0,readonly=on \
 	-drive if=none,id=cdrom0,file=$(IMAGE),media=cdrom,format=raw \
-	-device ide-cd,drive=cdrom0,bus=ahci.2
+	-device ide-cd,drive=cdrom0,bus=ahci.2,bootindex=0
 
 qemu_disks:
 	@[ -f disk1.qcow2 ] || qemu-img create -f qcow2 disk1.qcow2 $(QEMU_DISK_SIZE)

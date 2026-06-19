@@ -233,6 +233,18 @@ int fgetc(FILE* stream)
     return (int)c;
 }
 
+int ungetc(int c, FILE* stream)
+{
+    if (!stream || c == EOF || stream->has_unget) {
+        return EOF;
+    }
+
+    stream->has_unget = 1;
+    stream->unget_char = (unsigned char)c;
+    stream->eof = 0;
+    return (unsigned char)c;
+}
+
 char* fgets(char* s, int size, FILE* stream)
 {
     int i = 0;
