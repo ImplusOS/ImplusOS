@@ -22,10 +22,10 @@
 #define RECOVERY_MANIFEST_PATH      "/Recovery/MANIFEST.txt"
 #define RECOVERY_FONT_PATH          "/BootManager/Resource/Fonts/NotoSansJP-Regular.ttf"
 
-#define INSTALL_CHUNK_SECTORS   512u
+#define INSTALL_CHUNK_SECTORS 65536u
 #define INSTALL_SECTOR_SIZE     512u
 
-#define PROGRESS_UPDATE_SECTORS 1024u
+#define PROGRESS_UPDATE_SECTORS 65536u
 
 #define FONT_SIZE            14
 #define FONT_SIZE_LARGE      20

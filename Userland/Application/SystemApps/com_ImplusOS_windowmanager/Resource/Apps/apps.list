@@ -12,4 +12,4 @@ System Info|/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF|I
 Zlib Test|/Userland/UserApps/com_ImplusOS_zlibTest/com_ImplusOS_zlibTest.ELF|ZT
 PNG Viewer|/Userland/UserApps/com_ImplusOS_pngTest/com_ImplusOS_pngTest.ELF|PV
 SDL 2D Test|/Userland/UserApps/com_ImplusOS_sdlTest/com_ImplusOS_sdlTest.ELF|SD
-DOOM|/Userland/UserApps/org.chocolate-doom.doom/org.chocolate-doom.doom.ELF|DM
+DOOM|/Userland/UserApps/doom/doom.ELF|DM

@@ -57,6 +57,7 @@ INSTALL_PAYLOAD_ROOT := $(INSTALL_PAYLOAD_DIR)/root
 INSTALL_PAYLOAD_TGZ  := $(INSTALL_PAYLOAD_DIR)/ImplusOS-root.tar.gz
 INSTALL_DISK_IMAGE   := $(INSTALL_PAYLOAD_DIR)/ImplusOS-install.img
 INSTALL_MANIFEST     := $(INSTALL_PAYLOAD_DIR)/MANIFEST.txt
+INSTALL_DISK_IMAGE_SIZE_MB ?= 256
 
 IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
 ESP_IMAGE       := $(IMAGE_DIR)/esp-$(ARCH).img
@@ -102,6 +103,25 @@ DRIVER_MAKEFILES := $(shell find Kernel/Drivers/Server -name Makefile -print 2>/
 DRIVER_DIRS      := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
 DRIVER_BUILD_ROOT := $(BUILD_ROOT)/Modules
 DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
+
+SYSTEM_APP_DIRS := \
+	Userland/Application/SystemApps/com_ImplusOS_windowmanager \
+	Userland/Application/SystemApps/com_ImplusOS_shell \
+	Userland/Application/SystemApps/com_ImplusOS_version
+
+USER_APP_DIRS := \
+	Userland/Application/UserApps/com_ImplusOS_exampleApp \
+	Userland/Application/UserApps/com_ImplusOS_ImplusStore \
+	Userland/Application/UserApps/com_ImplusOS_NetworkTest \
+	Userland/Application/UserApps/com_ImplusOS_editor \
+	Userland/Application/UserApps/com_ImplusOS_filemanager \
+	Userland/Application/UserApps/com_ImplusOS_procman \
+	Userland/Application/UserApps/com_ImplusOS_settings \
+	Userland/Application/UserApps/com_ImplusOS_vm \
+	Userland/Application/UserApps/com_ImplusOS_zlibTest \
+	Userland/Application/UserApps/com_ImplusOS_pngTest \
+	Userland/Application/UserApps/com_ImplusOS_sdlTest \
+	Userland/Application/UserApps/doom
 
 LIBRARY_C_SRCS := $(shell find Library -name "*.c" 2>/dev/null)
 
@@ -192,22 +212,7 @@ kernel:
 
 app_build: vendor_libs $(USERLAND_INIT_OBJS)
 	@set -e; \
-	for dir in \
-		Userland/Application/SystemApps/com_ImplusOS_windowmanager \
-		Userland/Application/SystemApps/com_ImplusOS_shell \
-		Userland/Application/SystemApps/com_ImplusOS_version \
-		Userland/Application/UserApps/com_ImplusOS_exampleApp \
-		Userland/Application/UserApps/com_ImplusOS_ImplusStore \
-		Userland/Application/UserApps/com_ImplusOS_NetworkTest \
-		Userland/Application/UserApps/com_ImplusOS_editor \
-		Userland/Application/UserApps/com_ImplusOS_filemanager \
-		Userland/Application/UserApps/com_ImplusOS_procman \
-		Userland/Application/UserApps/com_ImplusOS_settings \
-		Userland/Application/UserApps/com_ImplusOS_vm \
-		Userland/Application/UserApps/com_ImplusOS_zlibTest \
-		Userland/Application/UserApps/com_ImplusOS_pngTest \
-		Userland/Application/UserApps/com_ImplusOS_sdlTest \
-		Userland/Application/UserApps/doom; do \
+	for dir in $(SYSTEM_APP_DIRS) $(USER_APP_DIRS); do \
 			$(MAKE) -C $$dir \
 				ARCH=$(ARCH) \
 				CROSS_COMPILE=$(CROSS_COMPILE) \
@@ -280,14 +285,21 @@ install_payload: all
 	@mkdir -p \
 		$(INSTALL_PAYLOAD_ROOT)/EFI/BOOT \
 		$(INSTALL_PAYLOAD_ROOT)/Kernel/Driver \
-		$(INSTALL_PAYLOAD_ROOT)/Userland \
+		$(INSTALL_PAYLOAD_ROOT)/Userland/SystemApps \
+		$(INSTALL_PAYLOAD_ROOT)/Userland/UserApps \
 		$(INSTALL_PAYLOAD_ROOT)/BootManager
 	@cp $(BOOTLOADER_EFI)       $(INSTALL_PAYLOAD_ROOT)/EFI/BOOT/$(notdir $(BOOTLOADER_EFI))
 	@cp $(BOOTMANAGER_EFI)      $(INSTALL_PAYLOAD_ROOT)/EFI/BOOT/BOOTMANAGER.EFI
 	@cp $(KERNEL_ELF)           $(INSTALL_PAYLOAD_ROOT)/Kernel/Kernel_Main.ELF
 	@cp $(USERLAND_INIT_ELF)    $(INSTALL_PAYLOAD_ROOT)/Userland/Userland.ELF
-	@cp -a $(BUILD_DIR)/Userland/SystemApps $(INSTALL_PAYLOAD_ROOT)/Userland/
-	@cp -a $(BUILD_DIR)/Userland/UserApps $(INSTALL_PAYLOAD_ROOT)/Userland/
+	@for dir in $(SYSTEM_APP_DIRS); do \
+		name=$$(basename "$$dir"); \
+		cp -a "$(BUILD_DIR)/Userland/SystemApps/$$name" "$(INSTALL_PAYLOAD_ROOT)/Userland/SystemApps/"; \
+	done
+	@for dir in $(USER_APP_DIRS); do \
+		name=$$(basename "$$dir"); \
+		cp -a "$(BUILD_DIR)/Userland/UserApps/$$name" "$(INSTALL_PAYLOAD_ROOT)/Userland/UserApps/"; \
+	done
 	@cp -a $(BOOT_RESOURCE_DIR) $(INSTALL_PAYLOAD_ROOT)/BootManager/
 	@for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
 		[ -e "$$f" ] || continue; \
@@ -304,7 +316,7 @@ install_payload: all
 	} > $(INSTALL_MANIFEST)
 	@tar -C $(INSTALL_PAYLOAD_ROOT) -czf $(INSTALL_PAYLOAD_TGZ) .
 	@rm -f $(INSTALL_DISK_IMAGE)
-	@dd if=/dev/zero of=$(INSTALL_DISK_IMAGE) bs=1M count=64 status=none
+	@dd if=/dev/zero of=$(INSTALL_DISK_IMAGE) bs=1M count=$(INSTALL_DISK_IMAGE_SIZE_MB) status=none
 	@mformat -i $(INSTALL_DISK_IMAGE) -F -v "IMPLUSOS" ::
 	@PART_IMG=$(INSTALL_DISK_IMAGE); \
 	mmd -i $$PART_IMG ::/EFI; \
@@ -320,12 +332,12 @@ install_payload: all
 	mcopy -s -i $$PART_IMG $(BOOT_RESOURCE_DIR) ::/BootManager; \
 	mcopy -o -i $$PART_IMG $(KERNEL_ELF) ::/Kernel/Kernel_Main.ELF; \
 	mcopy -o -i $$PART_IMG $(USERLAND_INIT_ELF) ::/Userland/Userland.ELF; \
-	mcopy -s -i $$PART_IMG $(BUILD_DIR)/Userland/SystemApps ::/Userland; \
-	mcopy -s -i $$PART_IMG $(BUILD_DIR)/Userland/UserApps ::/Userland; \
+	mcopy -s -i $$PART_IMG $(INSTALL_PAYLOAD_ROOT)/Userland/SystemApps ::/Userland; \
+	mcopy -s -i $$PART_IMG $(INSTALL_PAYLOAD_ROOT)/Userland/UserApps ::/Userland; \
 	for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
 		[ -e "$$f" ] || continue; \
 		mcopy -o -i $$PART_IMG "$$f" ::/Kernel/Driver/; \
-	done
+	done; \
 
 image: install_payload recovery_build
 	@mkdir -p $(IMAGE_DIR)
@@ -398,13 +410,20 @@ image_livecd: all
 	@mkdir -p \
 		$(IMAGE_STAGE_DIR)/EFI/BOOT \
 		$(IMAGE_STAGE_DIR)/Kernel/Driver \
-		$(IMAGE_STAGE_DIR)/Userland \
+		$(IMAGE_STAGE_DIR)/Userland/SystemApps \
+		$(IMAGE_STAGE_DIR)/Userland/UserApps \
 		$(IMAGE_STAGE_DIR)/BootManager/Resource
 	@cp $(ESP_IMAGE) $(IMAGE_STAGE_DIR)/esp.img
 	@cp $(KERNEL_ELF) $(IMAGE_STAGE_DIR)/Kernel/Kernel_Main.ELF
 	@cp $(USERLAND_INIT_ELF) $(IMAGE_STAGE_DIR)/Userland/Userland.ELF
-	@cp -a $(BUILD_DIR)/Userland/SystemApps $(IMAGE_STAGE_DIR)/Userland/
-	@cp -a $(BUILD_DIR)/Userland/UserApps $(IMAGE_STAGE_DIR)/Userland/
+	@for dir in $(SYSTEM_APP_DIRS); do \
+		name=$$(basename "$$dir"); \
+		cp -a "$(BUILD_DIR)/Userland/SystemApps/$$name" "$(IMAGE_STAGE_DIR)/Userland/SystemApps/"; \
+	done
+	@for dir in $(USER_APP_DIRS); do \
+		name=$$(basename "$$dir"); \
+		cp -a "$(BUILD_DIR)/Userland/UserApps/$$name" "$(IMAGE_STAGE_DIR)/Userland/UserApps/"; \
+	done
 	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTX64.EFI; \

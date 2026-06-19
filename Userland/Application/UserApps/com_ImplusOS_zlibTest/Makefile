@@ -1,6 +1,6 @@
 .PHONY: all clean
 
-APP_NAME := doom
+APP_NAME := com_ImplusOS_zlibTest
 SRC_DIR  := .
 TOP_BUILD_DIR ?= ../../../../Build/$(ARCH)
 BUILD_DIR := $(TOP_BUILD_DIR)/Userland/UserApps/$(APP_NAME)
