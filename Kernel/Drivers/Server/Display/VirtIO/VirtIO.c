@@ -803,6 +803,42 @@ static void virtio_gpu_copy_string(char *dst, uint32_t dst_size, const char *src
     dst[i] = '\0';
 }
 
+static void virtio_gpu_publish_monitor_event(const virtio_gpu_monitor_t *monitor,
+                                             uint32_t monitor_index,
+                                             uint16_t action) {
+#ifdef IMPLUS_DRIVER_MODULE
+    if (monitor == NULL || g_driver_api == NULL ||
+        g_driver_api->pnp_notify == NULL) {
+        return;
+    }
+
+    pnp_event_t event;
+    const char *detail = "monitor configured";
+    if (action == PNP_EVENT_DEVICE_REMOVED) {
+        detail = "monitor disconnected";
+    } else if (action == PNP_EVENT_DEVICE_CHANGED) {
+        detail = "monitor configuration changed";
+    }
+
+    pnp_event_init(&event,
+                   action,
+                   PNP_BUS_DISPLAY,
+                   PNP_CLASS_MONITOR,
+                   "VirtIO_Driver.ELF",
+                   "VirtIO GPU Scanout",
+                   detail);
+    event.location0 = ((monitor->scanout_id & 0xFFFFu) << 16u) |
+                      (monitor_index & 0xFFFFu);
+    event.location1 = ((monitor->width & 0xFFFFu) << 16u) |
+                      (monitor->height & 0xFFFFu);
+    g_driver_api->pnp_notify(&event);
+#else
+    (void)monitor;
+    (void)monitor_index;
+    (void)action;
+#endif
+}
+
 static uint32_t virtio_gpu_next_resource_id(void) {
     uint32_t id = g_gpu_next_resource_id++;
     if (g_gpu_next_resource_id == 0u) {
@@ -1003,6 +1039,20 @@ static void virtio_gpu_release_resources(void) {
     g_gpu_height = 0u;
 }
 
+static int32_t virtio_gpu_find_scanout(const virtio_gpu_monitor_t *monitors,
+                                       uint32_t monitor_count,
+                                       uint32_t scanout_id) {
+    if (monitors == NULL) {
+        return -1;
+    }
+    for (uint32_t i = 0u; i < monitor_count; ++i) {
+        if (monitors[i].scanout_id == scanout_id) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}
+
 static bool virtio_gpu_apply_layout(virtio_gpu_monitor_t *monitors,
                                     uint32_t monitor_count,
                                     int32_t origin_x,
@@ -1028,6 +1078,17 @@ static bool virtio_gpu_apply_layout(virtio_gpu_monitor_t *monitors,
     }
     memset(virtual_fb, 0, virtual_bytes);
 
+    uint16_t pnp_actions[VIRTIO_GPU_MAX_SCANOUTS];
+    for (uint32_t i = 0u; i < monitor_count; ++i) {
+        pnp_actions[i] =
+            (g_gpu_monitor_count == 0u ||
+             virtio_gpu_find_scanout(g_gpu_monitors,
+                                     g_gpu_monitor_count,
+                                     monitors[i].scanout_id) < 0) ?
+            PNP_EVENT_DEVICE_ADDED :
+            PNP_EVENT_DEVICE_CHANGED;
+    }
+
     for (uint32_t i = 0u; i < monitor_count; ++i) {
         monitors[i].resource_id = 0u;
         monitors[i].fb = NULL;
@@ -1044,6 +1105,16 @@ static bool virtio_gpu_apply_layout(virtio_gpu_monitor_t *monitors,
         }
     }
 
+    for (uint32_t i = 0u; i < g_gpu_monitor_count; ++i) {
+        if (virtio_gpu_find_scanout(monitors,
+                                    monitor_count,
+                                    g_gpu_monitors[i].scanout_id) < 0) {
+            virtio_gpu_publish_monitor_event(&g_gpu_monitors[i],
+                                             i,
+                                             PNP_EVENT_DEVICE_REMOVED);
+        }
+    }
+
     virtio_gpu_release_resources();
     g_gpu_fb = virtual_fb;
     g_gpu_fb_bytes = virtual_bytes;
@@ -1054,6 +1125,7 @@ static bool virtio_gpu_apply_layout(virtio_gpu_monitor_t *monitors,
     g_gpu_monitor_count = monitor_count;
     for (uint32_t i = 0u; i < monitor_count; ++i) {
         g_gpu_monitors[i] = monitors[i];
+        virtio_gpu_publish_monitor_event(&g_gpu_monitors[i], i, pnp_actions[i]);
     }
     ++g_gpu_generation;
     return true;

@@ -5,6 +5,7 @@
 #include "Drivers/Client/FileSystem/FAT32/FAT32_Main.h"
 #include "Drivers/Server/Display/Display_Driver.h"
 #include "Core/elf/ELF_Loader.h"
+#include "IPC/PnP_Notifications.h"
 #include "Platform/io/IO_Main.h"
 #include "MemoryManagement/DMA_Memory.h"
 #include "MemoryManagement/Memory_Main.h"
@@ -28,6 +29,11 @@
 static void timer_msleep(uint32_t ms)
 {
     timer_apic_sleep_ms(ms);
+}
+
+static void driver_module_pnp_notify(const pnp_event_t *event)
+{
+    pnp_notifications_publish(event);
 }
 
 typedef struct {
@@ -415,6 +421,7 @@ static const driver_binary_t g_driver_api = {
     .serial_write_char = serial_write_char,
     .serial_write_string = serial_write_string,
     .serial_write_uint32 = serial_write_uint32,
+    .pnp_notify = driver_module_pnp_notify,
 };
 
 static module_state_t *driver_module_find_state(const char *name)

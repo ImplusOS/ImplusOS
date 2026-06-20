@@ -2,6 +2,7 @@
 #include "Core/process/ProcessManager.h"
 #include "MemoryManagement/Memory_Main.h"
 #include "Core/sync/Spinlock.h"
+#include "IPC/PnP_Notifications.h"
 #include <string.h>
 
 extern int driver_framework_api_is_endpoint_pid(int32_t pid);
@@ -104,6 +105,10 @@ os_status_t ipc_send_message(int32_t target_pid, const void *message, uint32_t s
 {
     if (driver_framework_api_is_endpoint_pid(target_pid) != 0) {
         return driver_framework_api_handle_ipc(process_get_current_pid(), message, size);
+    }
+
+    if (pnp_notifications_is_endpoint_pid(target_pid) != 0) {
+        return pnp_notifications_handle_ipc(process_get_current_pid(), message, size);
     }
 
     return ipc_send_message_from_pid(process_get_current_pid(), target_pid, message, size);

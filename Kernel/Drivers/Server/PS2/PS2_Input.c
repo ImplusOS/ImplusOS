@@ -61,6 +61,7 @@ static const driver_binary_t *g_driver_api = NULL;
 #include "Drivers/Client/Display/Display_Main.h"
 
 static uint8_t g_input_initialized = 0;
+static uint8_t g_keyboard_available = 0;
 static uint8_t g_mouse_available = 0;
 
 static uint8_t g_keyboard_e0_pending = 0;
@@ -274,6 +275,26 @@ static int mouse_queue_pop(driver_mouse_event_t *event_out)
     return 1;
 }
 
+static void ps2_publish_device_event(uint32_t device_class,
+                                     const char *device_name,
+                                     uint32_t port)
+{
+    if (g_driver_api == NULL || g_driver_api->pnp_notify == NULL) {
+        return;
+    }
+
+    pnp_event_t event;
+    pnp_event_init(&event,
+                   PNP_EVENT_DEVICE_ADDED,
+                   PNP_BUS_PS2,
+                   device_class,
+                   "PS2_Driver.ELF",
+                   device_name,
+                   "PS/2 device ready");
+    event.location0 = port;
+    g_driver_api->pnp_notify(&event);
+}
+
 static void keyboard_update_modifiers(uint16_t keycode, int pressed)
 {
     uint8_t base = (uint8_t)(keycode & 0x00FFu);
@@ -393,6 +414,7 @@ bool ps2_input_init(void)
     int port2_ok = 0;
 
     g_input_initialized = 0;
+    g_keyboard_available = 0;
     g_mouse_available = 0;
     g_keyboard_e0_pending = 0;
     g_keyboard_modifiers = 0;
@@ -428,6 +450,7 @@ bool ps2_input_init(void)
 
     if (port1_ok) {
         (void)controller_write_command(PS2_CMD_ENABLE_PORT1);
+        g_keyboard_available = 1;
     }
     if (port2_ok) {
         (void)controller_write_command(PS2_CMD_ENABLE_PORT2);
@@ -452,7 +475,85 @@ bool ps2_input_init(void)
     }
 
     g_input_initialized = 1;
+    if (port1_ok) {
+        ps2_publish_device_event(PNP_CLASS_KEYBOARD,
+                                 "PS/2 keyboard",
+                                 1u);
+    }
+    if (g_mouse_available) {
+        ps2_publish_device_event(PNP_CLASS_MOUSE,
+                                 "PS/2 mouse",
+                                 2u);
+    }
     return true;
+}
+
+static bool ps2_try_enable_keyboard_hotplug(void)
+{
+    if (g_keyboard_available != 0u) {
+        return false;
+    }
+
+    controller_flush_output();
+    if (controller_test_port(PS2_CMD_TEST_PORT1) != 0) {
+        return false;
+    }
+    if (controller_write_command(PS2_CMD_ENABLE_PORT1) < 0 ||
+        send_keyboard_command(PS2_KBD_CMD_ENABLE_SCANNING) < 0) {
+        return false;
+    }
+
+    g_keyboard_available = 1u;
+    g_input_initialized = 1u;
+    ps2_publish_device_event(PNP_CLASS_KEYBOARD,
+                             "PS/2 keyboard",
+                             1u);
+    return true;
+}
+
+static bool ps2_try_enable_mouse_hotplug(void)
+{
+    if (g_mouse_available != 0u) {
+        return false;
+    }
+
+    controller_flush_output();
+    if (controller_test_port(PS2_CMD_TEST_PORT2) != 0) {
+        return false;
+    }
+    if (controller_write_command(PS2_CMD_ENABLE_PORT2) < 0 ||
+        send_mouse_command(PS2_MOUSE_CMD_SET_DEFAULTS) < 0 ||
+        send_mouse_command(PS2_MOUSE_CMD_ENABLE_REPORTING) < 0) {
+        return false;
+    }
+
+    g_mouse_available = 1u;
+    g_input_initialized = 1u;
+    g_mouse_packet_index = 0u;
+    ps2_publish_device_event(PNP_CLASS_MOUSE,
+                             "PS/2 mouse",
+                             2u);
+    return true;
+}
+
+bool ps2_input_poll_hotplug(void)
+{
+    if (!ps2_platform_supported()) {
+        return false;
+    }
+
+    if (!g_input_initialized) {
+        return ps2_input_init();
+    }
+
+    bool changed = false;
+    if (ps2_try_enable_keyboard_hotplug()) {
+        changed = true;
+    }
+    if (ps2_try_enable_mouse_hotplug()) {
+        changed = true;
+    }
+    return changed;
 }
 
 void ps2_input_poll(void)
@@ -586,11 +687,13 @@ static const driver_input_t g_ps2_input_driver = {
     .poll = ps2_input_poll,
     .read_keyboard = ps2_input_read_keyboard,
     .read_mouse = ps2_input_read_mouse,
+    .poll_hotplug = ps2_input_poll_hotplug,
 };
 
 static void ps2_driver_shutdown(void)
 {
     g_input_initialized = 0;
+    g_keyboard_available = 0;
     g_mouse_available = 0;
     g_keyboard_e0_pending = 0;
     g_keyboard_modifiers = 0;

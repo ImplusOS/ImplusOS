@@ -554,6 +554,7 @@ void wm_ipc_handle_message(wm_state_t *state, const ipc_message_t *message)
         break;
     }
     case WM_RELOAD_BACKGROUND:
+        (void)wm_assets_reload_wallpaper(&state->assets);
         wm_compositor_generate_background(state);
         wm_compositor_damage_all(state);
         break;

@@ -433,6 +433,10 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         irq_restore(poll_flags);
     }
 
+    if (driver_manager_check_hotplug_poll()) {
+        driver_manager_hotplug_poll();
+    }
+
     if (num == SYSCALL_INPUT_READ_KEYBOARD || num == SYSCALL_INPUT_READ_MOUSE) {
         uint64_t poll_flags = irq_save_disable();
         input_manager_poll();

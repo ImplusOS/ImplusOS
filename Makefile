@@ -106,6 +106,7 @@ DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
 
 SYSTEM_APP_DIRS := \
 	Userland/Application/SystemApps/com_ImplusOS_windowmanager \
+	Userland/Application/SystemApps/com_ImplusOS_sysnotif \
 	Userland/Application/SystemApps/com_ImplusOS_shell \
 	Userland/Application/SystemApps/com_ImplusOS_version
 
@@ -121,7 +122,8 @@ USER_APP_DIRS := \
 	Userland/Application/UserApps/com_ImplusOS_zlibTest \
 	Userland/Application/UserApps/com_ImplusOS_pngTest \
 	Userland/Application/UserApps/com_ImplusOS_sdlTest \
-	Userland/Application/UserApps/doom
+	Userland/Application/UserApps/doom \
+	Userland/Application/UserApps/com_ImplusOS_watermark
 
 LIBRARY_C_SRCS := $(shell find Library -name "*.c" 2>/dev/null)
 
@@ -477,12 +479,12 @@ QEMU_COMMON := \
 	$(QEMU_EXTRA)
 	
 QEMU_USB := \
-	-drive if=none,id=usbstick,format=raw,file=$(IMAGE) \
+	-drive if=none,id=usbstick,format=raw,file=$(LIVECD_IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick,bootindex=0
 
 QEMU_DISK := \
-	-drive file=$(IMAGE),media=cdrom,format=raw,index=0,readonly=on \
-	-drive if=none,id=cdrom0,file=$(IMAGE),media=cdrom,format=raw \
+	-drive file=$(LIVECD_IMAGE),media=cdrom,format=raw,index=0,readonly=on \
+	-drive if=none,id=cdrom0,file=$(LIVECD_IMAGE),media=cdrom,format=raw \
 	-device ide-cd,drive=cdrom0,bus=ahci.2,bootindex=0
 
 qemu_disks:

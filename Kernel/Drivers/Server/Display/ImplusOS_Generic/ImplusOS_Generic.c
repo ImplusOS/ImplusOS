@@ -76,6 +76,29 @@ static void generic_copy_string(char *dst, uint32_t dst_size, const char *src) {
     dst[i] = '\0';
 }
 
+static void generic_publish_display_event(uint16_t action, const char *detail) {
+#ifdef IMPLUS_DRIVER_MODULE
+    if (g_driver_api == NULL || g_driver_api->pnp_notify == NULL) {
+        return;
+    }
+
+    pnp_event_t event;
+    pnp_event_init(&event,
+                   action,
+                   PNP_BUS_DISPLAY,
+                   PNP_CLASS_DISPLAY,
+                   "ImplusOS_Generic_Display_Driver.ELF",
+                   "ImplusOS Generic Display",
+                   detail);
+    event.location0 = g_fb.width;
+    event.location1 = g_fb.height;
+    g_driver_api->pnp_notify(&event);
+#else
+    (void)action;
+    (void)detail;
+#endif
+}
+
 static bool map_framebuffer_chunks(uint64_t phys_addr, uint64_t size_bytes) {
     if (size_bytes == 0) {
         return false;
@@ -122,6 +145,13 @@ static inline volatile uint8_t *resolve_pixel_addr(uint64_t pixel_index) {
 }
 
 bool generic_fb_set(const driver_boot_framebuffer_t *framebuffer) {
+    int was_ready = g_ready;
+
+    if (framebuffer == NULL && was_ready) {
+        generic_publish_display_event(PNP_EVENT_DEVICE_REMOVED,
+                                      "boot framebuffer detached");
+    }
+
     g_ready = 0;
     g_fb.mapped_chunks = 0;
     ++g_generation;
@@ -186,6 +216,12 @@ bool generic_fb_set(const driver_boot_framebuffer_t *framebuffer) {
     g_double_buffer.buffer_size = buffer_size;
 
     g_ready = 1;
+    generic_publish_display_event(was_ready ?
+                                  PNP_EVENT_DEVICE_CHANGED :
+                                  PNP_EVENT_DEVICE_ADDED,
+                                  was_ready ?
+                                  "boot framebuffer changed" :
+                                  "boot framebuffer ready");
 
     return true;
 }

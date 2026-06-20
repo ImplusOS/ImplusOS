@@ -12,6 +12,9 @@
 typedef device_type_t driver_manager_kind_t;
 
 void driver_manager_init(void);
+void driver_manager_schedule_hotplug_poll(void);
+bool driver_manager_check_hotplug_poll(void);
+void driver_manager_hotplug_poll(void);
 
 bool driver_manager_attach(const char *module_name,
                            driver_manager_kind_t kind,

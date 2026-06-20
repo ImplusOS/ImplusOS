@@ -15,6 +15,8 @@
 #include "API/Input.h"
 #include "Unicode/UTF8/UTF8.h"
 #include "Crypto/Crypto.h"
+#include <Identifier/Identifier.h>
+
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #define STBTT_STATIC
@@ -981,6 +983,8 @@ static void write_boot_count(int count) {
     file_close(fd);
 }
 
+int Enable_Login = false;
+
 void _start(void) {
     int boot_count = read_boot_count();
     bool first_boot = (boot_count == 0);
@@ -996,11 +1000,31 @@ void _start(void) {
         draw_text_centered("おかえりなさい。サービスを開始中です。", 0, 42.0f, 0xFFFFFF);
     }
 
-    char current_user[33] = {0};
-    if (!run_user_login_flow(current_user, sizeof(current_user))) {
-        draw_text_centered("ログインに失敗しました。再起動してください。", 80, 20.0f, 0xFF8080);
-        draw_present();
-        while (1) process_yield();
+    uuid_t id;
+
+    uuid_generate_v4(&id);
+
+    char buf[UUID_STR_BUF_SIZE];
+    uuid_to_string(&id, buf);
+
+    char current_user[128];
+
+    snprintf(
+        current_user,
+        sizeof(current_user),
+        "Nameless User %s",
+        buf
+    );
+
+    if (Enable_Login) {
+        current_user[0] = '\0';
+
+        if (!run_user_login_flow(current_user, sizeof(current_user))) {
+            draw_text_centered("ログインに失敗しました。再起動してください。", 80, 20.0f, 0xFF8080);
+            draw_present();
+
+            while (1) process_yield();
+        }
     }
 
     char welcome_text[128];
@@ -1012,31 +1036,34 @@ void _start(void) {
     draw_text_centered(boot_msg, 100, 25.0f, 0xFFFFFF);
 
     draw_present();
-    fade_in(1200, 32);
+    fade_in(240, 12);
 
     static const char *const com_ImplusOS_windowmanager[] = {
         "/Userland/SystemApps/com_ImplusOS_windowmanager/com_ImplusOS_windowmanager.ELF",
     };
-    static const char *const com_ImplusOS_procman[] = {
-        "/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF",
-    };
-
     spawn_with_fallbacks(com_ImplusOS_windowmanager, 1);
-    process_yield();
-    spawn_with_fallbacks(com_ImplusOS_procman, 1);
     process_yield();
 
     int32_t wm_pid = -1;
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < 250; i++) {
         wm_pid = window_get_wm_pid();
         if (wm_pid >= 0) break;
-        sleep_ms(100);
+        sleep_ms(20);
     }
 
     if (wm_pid >= 0) {
-        sleep_ms(1000);
+        static const char *const com_ImplusOS_sysnotif[] = {
+            "/Userland/SystemApps/com_ImplusOS_sysnotif/com_ImplusOS_sysnotif.ELF",
+        };
+        spawn_with_fallbacks(com_ImplusOS_sysnotif, 1);
+        sleep_ms(200);
         window_show_notification("System", "Welcome to ImplusOS!");
     }
+
+    static const char *const com_ImplusOS_watermark[] = {
+        "/Userland/UserApps/com_ImplusOS_watermark/com_ImplusOS_watermark.ELF",
+    };
+    spawn_with_fallbacks(com_ImplusOS_watermark, 1);
 
     if (g_bg_cache) {
         free(g_bg_cache);

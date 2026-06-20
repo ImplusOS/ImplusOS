@@ -5,6 +5,7 @@
 #include "interfaces/timer_hal.h"
 #include "Core/process/ProcessManager.h"
 #include "Core/window/WindowManager_Kernel.h"
+#include "Drivers/Module/DriverManager.h"
 #include "Drivers/Module/InputManager.h"
 #include "Network/network_main.h"
 #include "smp/SMP_Main.h"
@@ -36,6 +37,13 @@ static void timer_core_handler(void) {
     if (__atomic_load_n(&g_timer_services_started, __ATOMIC_ACQUIRE) != 0u) {
         process_on_timer_tick();
         input_manager_schedule_poll();
+        uint32_t hotplug_interval = g_requested_hz != 0u ?
+                                    g_requested_hz :
+                                    TIMER_DEFAULT_HZ;
+        if (hotplug_interval != 0u &&
+            (g_tick_count % hotplug_interval) == 0u) {
+            driver_manager_schedule_hotplug_poll();
+        }
         network_stack_on_timer_tick();
         wm_kernel_on_timer();
     }

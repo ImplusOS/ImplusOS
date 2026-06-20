@@ -270,6 +270,7 @@ typedef struct {
     uint32_t wallpaper_width;
     uint32_t wallpaper_height;
     wm_system_icons_t system_icons;
+    bool wallpaper_load_attempted;
 } wm_assets_t;
 
 typedef struct {

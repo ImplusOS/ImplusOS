@@ -18,6 +18,48 @@ static wm_rect_t content_bounds(const wm_window_t *window)
     return (wm_rect_t){0, 0, window->frame.w, window->frame.h};
 }
 
+static bool window_can_use_partial_content_damage(const wm_window_t *window)
+{
+    if (!window || !window->visible || window->minimized ||
+        window->close_requested || window->transition != WM_TRANSITION_NONE)
+        return false;
+    return window->visual_alpha >= 0.999f &&
+           window->visual_scale >= 0.999f &&
+           window->visual_scale <= 1.001f &&
+           window->visual_offset_y > -0.5f &&
+           window->visual_offset_y < 0.5f;
+}
+
+static void mark_content_damage_on_screen(wm_state_t *state,
+                                          const wm_window_t *window,
+                                          wm_rect_t rect)
+{
+    if (!state || !window) return;
+    wm_rect_t clipped = wm_rect_intersection(rect, content_bounds(window));
+    if (!clipped.w || !clipped.h) return;
+
+    if (!window_can_use_partial_content_damage(window)) {
+        wm_window_mark_frame_damage(state, window);
+        return;
+    }
+
+    wm_rect_t screen = {
+        window->frame.x + clipped.x,
+        window->frame.y +
+            (int32_t)(window->is_system ? 0u : state->theme.title_height) +
+            clipped.y,
+        clipped.w,
+        clipped.h
+    };
+
+    if (!window->is_system) {
+        ++screen.x;
+        ++screen.y;
+    }
+
+    wm_region_add(&state->compositor.damage, screen, screen_bounds(state));
+}
+
 static void layer_remove(wm_scene_t *scene, wm_window_t *window)
 {
     wm_layer_t layer = window->layer;
@@ -413,15 +455,7 @@ void wm_window_damage_content(wm_state_t *state, wm_window_t *window, wm_rect_t 
         window->transaction_dirty = true;
         return;
     }
-    wm_rect_t screen = {
-        window->frame.x + clipped.x,
-        window->frame.y +
-            (int32_t)(window->is_system ? 0u : state->theme.title_height) +
-            clipped.y,
-        clipped.w,
-        clipped.h
-    };
-    wm_region_add(&state->compositor.damage, screen, screen_bounds(state));
+    mark_content_damage_on_screen(state, window, clipped);
 }
 
 void wm_window_end_transaction(wm_state_t *state, wm_window_t *window)
@@ -430,6 +464,12 @@ void wm_window_end_transaction(wm_state_t *state, wm_window_t *window)
     --window->transaction_depth;
     if (window->transaction_depth == 0u && window->transaction_dirty) {
         window->transaction_dirty = false;
-        wm_window_mark_frame_damage(state, window);
+        if (window->damage.full) {
+            mark_content_damage_on_screen(state, window, content_bounds(window));
+        } else {
+            for (uint32_t i = 0u; i < window->damage.count; ++i)
+                mark_content_damage_on_screen(state, window,
+                                              window->damage.rects[i]);
+        }
     }
 }

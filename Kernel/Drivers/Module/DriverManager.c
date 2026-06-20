@@ -12,9 +12,12 @@
 #include "Core/vfs/VFS.h"
 #include "Drivers/Client/NIC/NIC.h"
 #include "Drivers/Client/PS2/PS2_Input.h"
+#include "IPC/PnP_Notifications.h"
 
 #include <stddef.h>
 #include <string.h>
+
+static volatile uint32_t g_hotplug_poll_pending = 0u;
 
 static bool driver_manager_streq(const char *lhs, const char *rhs)
 {
@@ -31,10 +34,100 @@ static void driver_manager_device_detached(const char *name, device_type_t type)
     }
 }
 
+static uint32_t driver_manager_pnp_bus_for_kind(driver_manager_kind_t kind)
+{
+    switch (kind) {
+    case DEVICE_TYPE_PCI:
+        return PNP_BUS_PCI;
+    case DEVICE_TYPE_DISPLAY:
+        return PNP_BUS_DISPLAY;
+    case DEVICE_TYPE_INPUT:
+        return PNP_BUS_PS2;
+    case DEVICE_TYPE_USB:
+        return PNP_BUS_USB;
+    default:
+        return PNP_BUS_KERNEL;
+    }
+}
+
+static uint32_t driver_manager_pnp_class_for_kind(driver_manager_kind_t kind)
+{
+    switch (kind) {
+    case DEVICE_TYPE_PCI:
+        return PNP_CLASS_PCI_DEVICE;
+    case DEVICE_TYPE_DISPLAY:
+        return PNP_CLASS_DISPLAY;
+    case DEVICE_TYPE_INPUT:
+        return PNP_CLASS_INPUT;
+    case DEVICE_TYPE_USB:
+        return PNP_CLASS_USB_DEVICE;
+    default:
+        return PNP_CLASS_DRIVER;
+    }
+}
+
+static void driver_manager_publish_attach_event(const char *module_name,
+                                                driver_manager_kind_t kind)
+{
+    if (kind != DEVICE_TYPE_PCI &&
+        kind != DEVICE_TYPE_DISPLAY &&
+        kind != DEVICE_TYPE_INPUT &&
+        kind != DEVICE_TYPE_USB) {
+        return;
+    }
+
+    pnp_event_t event;
+    pnp_event_init(&event,
+                   PNP_EVENT_DRIVER_READY,
+                   driver_manager_pnp_bus_for_kind(kind),
+                   driver_manager_pnp_class_for_kind(kind),
+                   module_name,
+                   "Driver module",
+                   "registered and ready");
+    pnp_notifications_publish(&event);
+}
+
 void driver_manager_init(void)
 {
     device_registry_init();
     device_registry_set_detach_callback(driver_manager_device_detached);
+}
+
+void driver_manager_schedule_hotplug_poll(void)
+{
+    __atomic_store_n(&g_hotplug_poll_pending, 1u, __ATOMIC_RELEASE);
+}
+
+bool driver_manager_check_hotplug_poll(void)
+{
+    return __atomic_exchange_n(&g_hotplug_poll_pending, 0u,
+                               __ATOMIC_ACQ_REL) != 0u;
+}
+
+void driver_manager_hotplug_poll(void)
+{
+    const pci_driver_t *pci = driver_manager_get_pci_driver();
+    if (pci != NULL && pci->scan_bus != NULL) {
+        pci->scan_bus();
+    }
+
+    const usb_master_vtable_t *usb = driver_manager_get_usb_driver();
+    if (usb != NULL && usb->usb.poll_hotplug != NULL) {
+        (void)usb->usb.poll_hotplug();
+    }
+
+    for (uint32_t i = 0u;; ++i) {
+        const device_t *dev = device_registry_find_by_index(DEVICE_TYPE_INPUT, i);
+        if (dev == NULL) {
+            break;
+        }
+        const driver_input_t *input = (const driver_input_t *)dev->ops;
+        if (input != NULL && input->poll_hotplug != NULL) {
+            (void)input->poll_hotplug();
+        }
+    }
+
+    (void)display_manager_poll_config();
 }
 
 bool driver_manager_attach(const char *module_name,
@@ -51,7 +144,11 @@ bool driver_manager_attach(const char *module_name,
     dev.ops = driver_api;
     dev.priv = NULL;
     dev.name = module_name;
-    return device_registry_add(&dev);
+    bool attached = device_registry_add(&dev);
+    if (attached) {
+        driver_manager_publish_attach_event(module_name, kind);
+    }
+    return attached;
 }
 
 bool driver_manager_detach(const char *module_name)

@@ -15,3 +15,4 @@
 #include "API/SystemInfo.h"
 #include "API/Audio.h"
 #include "API/Socket.h"
+#include "API/PnP.h"

@@ -16,6 +16,7 @@
 #include "API/SystemInfo.h"
 #include "API/Audio.h"
 #include "API/Socket.h"
+#include "API/PnP.h"
 
 static uint32_t g_current_window_id = 0;
 static uint32_t g_wm_request_id = 0;
@@ -412,6 +413,30 @@ int32_t ipc_receive_message(ipc_message_t *out_message)
         return 0;
     }
     return ipc_receive_raw(out_message);
+}
+
+static int32_t pnp_send_request(uint16_t opcode)
+{
+    pnp_request_t request;
+    pnp_request_init(&request, opcode);
+    return ipc_send_message(PNP_NOTIFICATION_ENDPOINT_PID,
+                            &request,
+                            (uint32_t)sizeof(request));
+}
+
+int32_t pnp_subscribe(void)
+{
+    return pnp_send_request(PNP_OP_SUBSCRIBE);
+}
+
+int32_t pnp_unsubscribe(void)
+{
+    return pnp_send_request(PNP_OP_UNSUBSCRIBE);
+}
+
+int32_t pnp_drain(void)
+{
+    return pnp_send_request(PNP_OP_DRAIN);
 }
 
 int32_t process_get_current_pid(void)

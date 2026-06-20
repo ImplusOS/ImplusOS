@@ -5,9 +5,10 @@
 #include <stddef.h>
 
 #include "kernel/interfaces/device.h"
+#include "kernel/pnp.h"
 
 #define DRIVER_API_VERSION_MAJOR 2u
-#define DRIVER_API_VERSION_MINOR 0u
+#define DRIVER_API_VERSION_MINOR 1u
 
 #define DRIVER_DESCRIPTOR_MAGIC 0x44525641u
 #define DRIVER_DESCRIPTOR_VERSION 2u
@@ -223,6 +224,7 @@ typedef struct {
     void (*serial_write_char)(char c);
     void (*serial_write_string)(const char *str);
     void (*serial_write_uint32)(uint32_t val);
+    void (*pnp_notify)(const pnp_event_t *event);
 } driver_binary_t;
 
 typedef struct {
@@ -234,6 +236,7 @@ typedef struct {
                            void (*forward)(driver_keyboard_event_t *));
     void (*drain_mouse)(driver_mouse_event_t *tmp,
                         void (*forward)(driver_mouse_event_t *));
+    bool (*poll_hotplug)(void);
 } driver_input_t;
 
 #define DRIVER_BLOCK_FLAG_WRITABLE  (1u << 0)
@@ -317,6 +320,7 @@ typedef struct {
     bool (*submit_interrupt_in_sync)(uint8_t addr, uint8_t endpoint,
                                       uint16_t max_packet_size,
                                       void *data, uint16_t length);
+    bool (*poll_hotplug)(void);
 } driver_usb_t;
 
 typedef struct {

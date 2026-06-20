@@ -69,12 +69,16 @@ static void test_damage_overflow(void)
 {
     wm_region_t region;
     wm_region_reset(&region);
-    wm_rect_t bounds = {0, 0, 1000u, 1000u};
+    wm_rect_t bounds = {0, 0, 4096u, 4096u};
     for (uint32_t i = 0; i <= WM_MAX_DAMAGE_RECTS; ++i)
         wm_region_add(&region,
             (wm_rect_t){(int32_t)(i * 20u), 10, 2u, 2u}, bounds);
-    assert(region.full);
-    assert(region.count == 0u);
+    assert(!region.full);
+    assert(region.count == 1u);
+    assert(region.rects[0].x == 0);
+    assert(region.rects[0].y == 10);
+    assert(region.rects[0].w == WM_MAX_DAMAGE_RECTS * 20u + 2u);
+    assert(region.rects[0].h == 2u);
 }
 
 static void test_raster_clip_and_blend(void)

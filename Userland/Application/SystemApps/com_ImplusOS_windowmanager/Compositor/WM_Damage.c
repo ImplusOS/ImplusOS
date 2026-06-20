@@ -17,6 +17,16 @@ static bool rect_touches(wm_rect_t a, wm_rect_t b)
            (int64_t)a.y <= bb + 2 && (int64_t)b.y <= ab + 2;
 }
 
+static void region_compact_to_union(wm_region_t *region, wm_rect_t rect)
+{
+    if (!region) return;
+    wm_rect_t merged = rect;
+    for (uint32_t i = 0; i < region->count; ++i)
+        merged = wm_rect_union(merged, region->rects[i]);
+    region->rects[0] = merged;
+    region->count = 1u;
+}
+
 void wm_region_reset(wm_region_t *region)
 {
     if (!region) return;
@@ -91,7 +101,7 @@ void wm_region_add(wm_region_t *region, wm_rect_t rect, wm_rect_t bounds)
     }
 
     if (region->count >= WM_MAX_DAMAGE_RECTS) {
-        wm_region_add_full(region);
+        region_compact_to_union(region, rect);
         return;
     }
     region->rects[region->count++] = rect;

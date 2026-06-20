@@ -313,12 +313,74 @@ static void pci_probe_device(const pci_device_t *dev)
     }
 }
 
+static void pci_remove_device(const pci_device_t *dev)
+{
+    if (dev == NULL) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < g_pci_driver_count; ++i) {
+        pci_bus_driver_t *driver = g_pci_drivers[i];
+        if (driver == NULL ||
+            driver->id_table == NULL ||
+            driver->remove == NULL) {
+            continue;
+        }
+
+        for (const pci_device_id_t *id = driver->id_table;
+             id->vendor_id != 0u || id->device_id != 0u || id->class_code != 0u;
+             ++id) {
+            if (pci_id_matches(id, dev)) {
+                driver->remove(dev);
+                break;
+            }
+        }
+    }
+}
+
+static void pci_publish_device_event(const pci_device_t *dev,
+                                     uint16_t action,
+                                     const char *detail)
+{
+#ifdef IMPLUS_DRIVER_MODULE
+    if (dev == NULL || g_driver_api == NULL ||
+        g_driver_api->pnp_notify == NULL) {
+        return;
+    }
+
+    pnp_event_t event;
+    pnp_event_init(&event,
+                   action,
+                   PNP_BUS_PCI,
+                   PNP_CLASS_PCI_DEVICE,
+                   "PCI_Driver.ELF",
+                   "PCI device",
+                   detail);
+    event.vendor_id = dev->vendor_id;
+    event.device_id = dev->device_id;
+    event.location0 = ((uint32_t)dev->bus << 16u) |
+                      ((uint32_t)dev->device << 8u) |
+                      (uint32_t)dev->func;
+    event.location1 = ((uint32_t)dev->class_code << 16u) |
+                      ((uint32_t)dev->subclass << 8u) |
+                      (uint32_t)dev->prog_if;
+    g_driver_api->pnp_notify(&event);
+#else
+    (void)dev;
+    (void)action;
+    (void)detail;
+#endif
+}
+
 static void pci_store_device(const pci_device_t *dev)
 {
     if (dev == NULL || g_pci_device_count >= PCI_MAX_SCANNED_DEVICES) {
         return;
     }
     g_pci_devices[g_pci_device_count++] = *dev;
+    pci_publish_device_event(dev,
+                             PNP_EVENT_DEVICE_ADDED,
+                             "PCI function enumerated");
     pci_probe_device(dev);
 }
 
@@ -375,16 +437,63 @@ int pci_find_device(uint16_t vendor_id, uint16_t device_id, pci_device_t *out_de
     return 0;
 }
 
-void pci_scan_bus(void)
+static bool pci_same_slot(const pci_device_t *a, const pci_device_t *b)
 {
-    if (g_pci_scan_done != 0u) {
-        return;
+    return a != NULL && b != NULL &&
+           a->bus == b->bus &&
+           a->device == b->device &&
+           a->func == b->func;
+}
+
+static bool pci_same_config(const pci_device_t *a, const pci_device_t *b)
+{
+    if (!pci_same_slot(a, b)) {
+        return false;
+    }
+    if (a->vendor_id != b->vendor_id ||
+        a->device_id != b->device_id ||
+        a->class_code != b->class_code ||
+        a->subclass != b->subclass ||
+        a->prog_if != b->prog_if ||
+        a->revision != b->revision ||
+        a->interrupt_line != b->interrupt_line ||
+        a->interrupt_pin != b->interrupt_pin) {
+        return false;
+    }
+    for (uint32_t i = 0u; i < 6u; ++i) {
+        if (a->bar[i] != b->bar[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int32_t pci_find_in_list(const pci_device_t *devices,
+                                uint32_t count,
+                                const pci_device_t *needle)
+{
+    if (devices == NULL || needle == NULL) {
+        return -1;
+    }
+    for (uint32_t i = 0u; i < count; ++i) {
+        if (pci_same_slot(&devices[i], needle)) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}
+
+static uint32_t pci_collect_devices(pci_device_t *devices, uint32_t max_devices)
+{
+    uint32_t count = 0u;
+
+    if (devices == NULL || max_devices == 0u) {
+        return 0u;
     }
 
-    g_pci_device_count = 0;
-    for (uint16_t bus = 0; bus < 256; bus++) {
-        for (uint8_t device = 0; device < 32; device++) {
-            for (uint8_t func = 0; func < 8; func++) {
+    for (uint16_t bus = 0; bus < 256 && count < max_devices; bus++) {
+        for (uint8_t device = 0; device < 32 && count < max_devices; device++) {
+            for (uint8_t func = 0; func < 8 && count < max_devices; func++) {
                 uint32_t vendor_device = pci_read_config((uint8_t)bus, device, func, 0x00);
                 uint16_t vendor_id = (uint16_t)(vendor_device & 0xFFFFu);
                 uint16_t device_id = (uint16_t)((vendor_device >> 16) & 0xFFFFu);
@@ -397,26 +506,21 @@ void pci_scan_bus(void)
                 }
 
                 uint32_t class_reg = pci_read_config((uint8_t)bus, device, func, 0x08);
-                uint8_t class_code = (uint8_t)((class_reg >> 24) & 0xFFu);
-                uint8_t subclass = (uint8_t)((class_reg >> 16) & 0xFFu);
-                uint8_t prog_if = (uint8_t)((class_reg >> 8) & 0xFFu);
-
-                pci_device_t dev;
-                dev.bus = (uint8_t)bus;
-                dev.device = device;
-                dev.func = func;
-                dev.vendor_id = vendor_id;
-                dev.device_id = device_id;
-                dev.class_code = class_code;
-                dev.subclass = subclass;
-                dev.prog_if = prog_if;
-                dev.revision = (uint8_t)(class_reg & 0xFFu);
+                pci_device_t *dev = &devices[count++];
+                dev->bus = (uint8_t)bus;
+                dev->device = device;
+                dev->func = func;
+                dev->vendor_id = vendor_id;
+                dev->device_id = device_id;
+                dev->class_code = (uint8_t)((class_reg >> 24) & 0xFFu);
+                dev->subclass = (uint8_t)((class_reg >> 16) & 0xFFu);
+                dev->prog_if = (uint8_t)((class_reg >> 8) & 0xFFu);
+                dev->revision = (uint8_t)(class_reg & 0xFFu);
                 uint32_t irq_reg = pci_read_config((uint8_t)bus, device,
                                                    func, 0x3Cu);
-                dev.interrupt_line = (uint8_t)(irq_reg & 0xFFu);
-                dev.interrupt_pin = (uint8_t)((irq_reg >> 8u) & 0xFFu);
-                pci_read_bars(&dev);
-                pci_store_device(&dev);
+                dev->interrupt_line = (uint8_t)(irq_reg & 0xFFu);
+                dev->interrupt_pin = (uint8_t)((irq_reg >> 8u) & 0xFFu);
+                pci_read_bars(dev);
 
                 if (func == 0u) {
                     uint32_t header_type = pci_read_config((uint8_t)bus, device, func, 0x0C);
@@ -426,6 +530,73 @@ void pci_scan_bus(void)
                 }
             }
         }
+    }
+
+    return count;
+}
+
+void pci_scan_bus(void)
+{
+    pci_device_t scanned[PCI_MAX_SCANNED_DEVICES];
+    uint32_t scanned_count = pci_collect_devices(scanned,
+                                                 PCI_MAX_SCANNED_DEVICES);
+
+    if (g_pci_scan_done == 0u) {
+        g_pci_device_count = 0u;
+        for (uint32_t i = 0u; i < scanned_count; ++i) {
+            pci_store_device(&scanned[i]);
+        }
+        g_pci_scan_done = 1u;
+        return;
+    }
+
+    for (uint32_t i = 0u; i < g_pci_device_count; ++i) {
+        const pci_device_t *old_dev = &g_pci_devices[i];
+        int32_t new_index = pci_find_in_list(scanned, scanned_count, old_dev);
+        if (new_index < 0) {
+            pci_publish_device_event(old_dev,
+                                     PNP_EVENT_DEVICE_REMOVED,
+                                     "PCI function removed");
+            pci_remove_device(old_dev);
+            continue;
+        }
+
+        const pci_device_t *new_dev = &scanned[(uint32_t)new_index];
+        if (!pci_same_config(old_dev, new_dev)) {
+            if (old_dev->vendor_id != new_dev->vendor_id ||
+                old_dev->device_id != new_dev->device_id ||
+                old_dev->class_code != new_dev->class_code ||
+                old_dev->subclass != new_dev->subclass ||
+                old_dev->prog_if != new_dev->prog_if) {
+                pci_publish_device_event(old_dev,
+                                         PNP_EVENT_DEVICE_REMOVED,
+                                         "PCI function removed");
+                pci_remove_device(old_dev);
+                pci_publish_device_event(new_dev,
+                                         PNP_EVENT_DEVICE_ADDED,
+                                         "PCI function hotplugged");
+                pci_probe_device(new_dev);
+            } else {
+                pci_publish_device_event(new_dev,
+                                         PNP_EVENT_DEVICE_CHANGED,
+                                         "PCI function changed");
+            }
+        }
+    }
+
+    for (uint32_t i = 0u; i < scanned_count; ++i) {
+        if (pci_find_in_list(g_pci_devices, g_pci_device_count,
+                             &scanned[i]) < 0) {
+            pci_publish_device_event(&scanned[i],
+                                     PNP_EVENT_DEVICE_ADDED,
+                                     "PCI function hotplugged");
+            pci_probe_device(&scanned[i]);
+        }
+    }
+
+    g_pci_device_count = scanned_count;
+    for (uint32_t i = 0u; i < scanned_count; ++i) {
+        g_pci_devices[i] = scanned[i];
     }
     g_pci_scan_done = 1u;
 }

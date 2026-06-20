@@ -168,6 +168,44 @@ void usb_hid_add_mouse(uint8_t dev_addr, uint8_t interface,
     g_usd_mouse.pending = false;
 }
 
+void usb_hid_remove_keyboard(uint8_t dev_addr)
+{
+    if (!g_usd_kbd.valid || g_usd_kbd.dev_addr != dev_addr) {
+        return;
+    }
+
+    uint64_t flags = irq_save_disable();
+    spinlock_lock(&g_kbd_lock);
+    g_usd_kbd.valid = false;
+    g_usd_kbd.pending = false;
+    g_kbd_head = 0;
+    g_kbd_tail = 0;
+    g_kbd_count = 0;
+    for (uint32_t i = 0u; i < sizeof(g_last_kbd_report); ++i) {
+        g_last_kbd_report[i] = 0u;
+    }
+    spinlock_unlock(&g_kbd_lock);
+    irq_restore(flags);
+}
+
+void usb_hid_remove_mouse(uint8_t dev_addr)
+{
+    if (!g_usd_mouse.valid || g_usd_mouse.dev_addr != dev_addr) {
+        return;
+    }
+
+    uint64_t flags = irq_save_disable();
+    spinlock_lock(&g_mouse_lock);
+    g_usd_mouse.valid = false;
+    g_usd_mouse.pending = false;
+    g_mouse_head = 0;
+    g_mouse_tail = 0;
+    g_mouse_count = 0;
+    g_last_mouse_buttons = 0u;
+    spinlock_unlock(&g_mouse_lock);
+    irq_restore(flags);
+}
+
 static void push_kbd_event(uint16_t hid_keycode, uint8_t pressed, uint8_t modifiers)
 {
     uint64_t flags = irq_save_disable();

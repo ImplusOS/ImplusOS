@@ -26,11 +26,15 @@ static uint8_t  g_hid_kbd_addr      = 0;
 static uint8_t  g_hid_kbd_interface = 0;
 static uint8_t  g_hid_kbd_ep_in     = 0;
 static uint16_t g_hid_kbd_ep_mps    = 0;
+static uint16_t g_hid_kbd_vendor_id = 0;
+static uint16_t g_hid_kbd_device_id = 0;
 
 static uint8_t  g_hid_mouse_addr      = 0;
 static uint8_t  g_hid_mouse_interface = 0;
 static uint8_t  g_hid_mouse_ep_in     = 0;
 static uint16_t g_hid_mouse_ep_mps    = 0;
+static uint16_t g_hid_mouse_vendor_id = 0;
+static uint16_t g_hid_mouse_device_id = 0;
 
 static usb_hc_type_t g_hc_type = USB_HC_NONE;
 static bool g_ohci_ready = false;
@@ -38,9 +42,68 @@ static usb_hc_type_t g_dev_hc[256];
 static uint16_t g_dev_ep0_mps[256] = {0};
 static usb_hc_type_t g_default_hc = USB_HC_NONE;
 static bool g_uhci_ready = false;
+static bool g_usb_initialized = false;
+static uint8_t g_usb_next_addr = 1;
+
+#define USB_HC_TABLE_SIZE 5u
+#define USB_MAX_TRACKED_ROOT_PORTS 32u
+
+typedef struct {
+    bool connected;
+    uint8_t addr;
+    usb_hc_type_t hc;
+    uint32_t port;
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint8_t has_keyboard;
+    uint8_t has_mouse;
+    uint8_t keyboard_addr;
+    uint8_t keyboard_interface;
+    uint8_t keyboard_endpoint;
+    uint16_t keyboard_vendor_id;
+    uint16_t keyboard_device_id;
+    uint8_t mouse_addr;
+    uint8_t mouse_interface;
+    uint8_t mouse_endpoint;
+    uint16_t mouse_vendor_id;
+    uint16_t mouse_device_id;
+} usb_root_port_state_t;
+
+static usb_root_port_state_t g_root_ports[USB_HC_TABLE_SIZE][USB_MAX_TRACKED_ROOT_PORTS];
 
 usb_hc_type_t usb_get_hc_type(void) { return g_hc_type; }
 usb_hc_type_t usb_get_device_hc_type(uint8_t addr) { return g_dev_hc[addr]; }
+
+static void usb_publish_hid_event(uint32_t device_class,
+                                  uint16_t action,
+                                  const char *device_name,
+                                  const char *detail,
+                                  uint8_t addr,
+                                  uint8_t interface,
+                                  uint8_t endpoint,
+                                  uint16_t vendor_id,
+                                  uint16_t device_id)
+{
+    if (g_api == NULL || g_api->pnp_notify == NULL) {
+        return;
+    }
+
+    pnp_event_t event;
+    pnp_event_init(&event,
+                   action,
+                   PNP_BUS_USB,
+                   device_class,
+                   "USB_Driver.ELF",
+                   device_name,
+                   detail);
+    event.vendor_id = vendor_id;
+    event.device_id = device_id;
+    event.location0 = ((uint32_t)addr << 16u) |
+                      ((uint32_t)interface << 8u) |
+                      (uint32_t)endpoint;
+    event.location1 = (uint32_t)usb_get_device_hc_type(addr);
+    g_api->pnp_notify(&event);
+}
 
 static void usb_wait_ms(usb_hc_type_t hc, uint32_t ms)
 {
@@ -326,6 +389,8 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
             g_hid_kbd_interface = kbd_iface;
             g_hid_kbd_ep_in = kbd_ep_in;
             g_hid_kbd_ep_mps = kbd_ep_mps ? kbd_ep_mps : 8;
+            g_hid_kbd_vendor_id = desc.idVendor;
+            g_hid_kbd_device_id = desc.idProduct;
         }
 
         if (mouse_iface != 0xFF && mouse_ep_in != 0) {
@@ -333,15 +398,35 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
             g_hid_mouse_interface = mouse_iface;
             g_hid_mouse_ep_in = mouse_ep_in;
             g_hid_mouse_ep_mps = mouse_ep_mps ? mouse_ep_mps : 8;
+            g_hid_mouse_vendor_id = desc.idVendor;
+            g_hid_mouse_device_id = desc.idProduct;
         }
     }
 
     if (g_hid_kbd_addr == current_addr && g_hid_kbd_ep_in != 0) {
         usb_hid_add_keyboard(g_hid_kbd_addr, g_hid_kbd_interface, g_hid_kbd_ep_in, g_hid_kbd_ep_mps);
+        usb_publish_hid_event(PNP_CLASS_KEYBOARD,
+                              PNP_EVENT_DEVICE_ADDED,
+                              "USB HID keyboard",
+                              "USB HID device ready",
+                              g_hid_kbd_addr,
+                              g_hid_kbd_interface,
+                              g_hid_kbd_ep_in,
+                              desc.idVendor,
+                              desc.idProduct);
     }
 
     if (g_hid_mouse_addr == current_addr && g_hid_mouse_ep_in != 0) {
         usb_hid_add_mouse(g_hid_mouse_addr, g_hid_mouse_interface, g_hid_mouse_ep_in, g_hid_mouse_ep_mps);
+        usb_publish_hid_event(PNP_CLASS_MOUSE,
+                              PNP_EVENT_DEVICE_ADDED,
+                              "USB HID mouse",
+                              "USB HID device ready",
+                              g_hid_mouse_addr,
+                              g_hid_mouse_interface,
+                              g_hid_mouse_ep_in,
+                              desc.idVendor,
+                              desc.idProduct);
     }
 
     if (is_hub) {
@@ -408,6 +493,8 @@ static bool usb_enumerate_hub_port(uint8_t hub_addr, uint8_t hub_port, uint16_t 
     (*next_addr)++;
     usb_wait_ms(g_dev_hc[hub_addr], 10);
     g_dev_hc[current_addr] = g_dev_hc[hub_addr];
+    g_dev_root_port[current_addr] = g_dev_root_port[hub_addr];
+    g_dev_route_string[current_addr] = g_dev_route_string[0];
     return usb_enumerate_device(current_addr, g_dev_hc[hub_addr], max_packet_size, next_addr);
 }
 
@@ -429,14 +516,309 @@ static bool usb_enumerate_hub(uint8_t hub_addr, uint16_t max_packet_size, uint8_
     return true;
 }
 
+static uint8_t usb_alloc_address(void)
+{
+    if (g_usb_next_addr == 0u || g_usb_next_addr >= 255u) {
+        g_usb_next_addr = 1u;
+    }
+    return g_usb_next_addr++;
+}
+
+static uint32_t usb_hc_port_count(usb_hc_type_t hc)
+{
+    if (hc == USB_HC_XHCI && xhci_is_ready()) {
+        return xhci_get_num_ports();
+    }
+    if (hc == USB_HC_EHCI && ehci_get_num_ports() > 0u) {
+        return ehci_get_num_ports();
+    }
+    if (hc == USB_HC_OHCI && g_ohci_ready) {
+        return ohci_get_num_ports();
+    }
+    if (hc == USB_HC_UHCI && g_uhci_ready) {
+        return uhci_get_num_ports();
+    }
+    return 0u;
+}
+
+static bool usb_hc_port_valid(usb_hc_type_t hc, uint32_t port)
+{
+    if (hc == USB_HC_XHCI) {
+        return xhci_port_valid(port);
+    }
+    if (hc == USB_HC_EHCI) {
+        return ehci_port_valid(port);
+    }
+    if (hc == USB_HC_OHCI) {
+        return ohci_port_valid(port);
+    }
+    if (hc == USB_HC_UHCI) {
+        return uhci_port_valid(port);
+    }
+    return false;
+}
+
+static bool usb_hc_port_connected(usb_hc_type_t hc, uint32_t port)
+{
+    if (hc == USB_HC_XHCI) {
+        return xhci_port_connected(port);
+    }
+    if (hc == USB_HC_EHCI) {
+        return ehci_port_connected(port);
+    }
+    if (hc == USB_HC_OHCI) {
+        return ohci_port_connected(port);
+    }
+    if (hc == USB_HC_UHCI) {
+        return uhci_port_connected(port);
+    }
+    return false;
+}
+
+static bool usb_hc_reset_port(usb_hc_type_t hc, uint32_t port)
+{
+    if (hc == USB_HC_XHCI) {
+        return xhci_reset_port(port);
+    }
+    if (hc == USB_HC_EHCI) {
+        return ehci_reset_port(port);
+    }
+    if (hc == USB_HC_OHCI) {
+        return ohci_reset_port(port);
+    }
+    if (hc == USB_HC_UHCI) {
+        return uhci_reset_port(port);
+    }
+    return false;
+}
+
+static usb_root_port_state_t *usb_root_port_state(usb_hc_type_t hc, uint32_t port)
+{
+    if ((uint32_t)hc >= USB_HC_TABLE_SIZE ||
+        port >= USB_MAX_TRACKED_ROOT_PORTS) {
+        return NULL;
+    }
+    return &g_root_ports[(uint32_t)hc][port];
+}
+
+static void usb_clear_root_port_states(void)
+{
+    for (uint32_t hc = 0u; hc < USB_HC_TABLE_SIZE; ++hc) {
+        for (uint32_t port = 0u; port < USB_MAX_TRACKED_ROOT_PORTS; ++port) {
+            g_root_ports[hc][port].connected = false;
+            g_root_ports[hc][port].addr = 0u;
+            g_root_ports[hc][port].hc = USB_HC_NONE;
+            g_root_ports[hc][port].port = 0u;
+            g_root_ports[hc][port].vendor_id = 0u;
+            g_root_ports[hc][port].device_id = 0u;
+            g_root_ports[hc][port].has_keyboard = 0u;
+            g_root_ports[hc][port].has_mouse = 0u;
+            g_root_ports[hc][port].keyboard_addr = 0u;
+            g_root_ports[hc][port].keyboard_interface = 0u;
+            g_root_ports[hc][port].keyboard_endpoint = 0u;
+            g_root_ports[hc][port].keyboard_vendor_id = 0u;
+            g_root_ports[hc][port].keyboard_device_id = 0u;
+            g_root_ports[hc][port].mouse_addr = 0u;
+            g_root_ports[hc][port].mouse_interface = 0u;
+            g_root_ports[hc][port].mouse_endpoint = 0u;
+            g_root_ports[hc][port].mouse_vendor_id = 0u;
+            g_root_ports[hc][port].mouse_device_id = 0u;
+        }
+    }
+}
+
+static void usb_disconnect_root_device(usb_root_port_state_t *state)
+{
+    if (state == NULL || !state->connected) {
+        return;
+    }
+
+    if (state->has_keyboard != 0u) {
+        usb_publish_hid_event(PNP_CLASS_KEYBOARD,
+                              PNP_EVENT_DEVICE_REMOVED,
+                              "USB HID keyboard",
+                              "USB HID device removed",
+                              state->keyboard_addr,
+                              state->keyboard_interface,
+                              state->keyboard_endpoint,
+                              state->keyboard_vendor_id,
+                              state->keyboard_device_id);
+        usb_hid_remove_keyboard(state->keyboard_addr);
+        if (g_hid_kbd_addr == state->keyboard_addr) {
+            g_hid_kbd_addr = 0u;
+            g_hid_kbd_interface = 0u;
+            g_hid_kbd_ep_in = 0u;
+            g_hid_kbd_ep_mps = 0u;
+            g_hid_kbd_vendor_id = 0u;
+            g_hid_kbd_device_id = 0u;
+        }
+        if (state->keyboard_addr != 0u) {
+            g_dev_hc[state->keyboard_addr] = USB_HC_NONE;
+            g_dev_ep0_mps[state->keyboard_addr] = 0u;
+            g_dev_root_port[state->keyboard_addr] = 0u;
+            g_dev_route_string[state->keyboard_addr] = 0u;
+        }
+    }
+
+    if (state->has_mouse != 0u) {
+        usb_publish_hid_event(PNP_CLASS_MOUSE,
+                              PNP_EVENT_DEVICE_REMOVED,
+                              "USB HID mouse",
+                              "USB HID device removed",
+                              state->mouse_addr,
+                              state->mouse_interface,
+                              state->mouse_endpoint,
+                              state->mouse_vendor_id,
+                              state->mouse_device_id);
+        usb_hid_remove_mouse(state->mouse_addr);
+        if (g_hid_mouse_addr == state->mouse_addr) {
+            g_hid_mouse_addr = 0u;
+            g_hid_mouse_interface = 0u;
+            g_hid_mouse_ep_in = 0u;
+            g_hid_mouse_ep_mps = 0u;
+            g_hid_mouse_vendor_id = 0u;
+            g_hid_mouse_device_id = 0u;
+        }
+        if (state->mouse_addr != 0u) {
+            g_dev_hc[state->mouse_addr] = USB_HC_NONE;
+            g_dev_ep0_mps[state->mouse_addr] = 0u;
+            g_dev_root_port[state->mouse_addr] = 0u;
+            g_dev_route_string[state->mouse_addr] = 0u;
+        }
+    }
+
+    if (state->addr != 0u) {
+        g_dev_hc[state->addr] = USB_HC_NONE;
+        g_dev_ep0_mps[state->addr] = 0u;
+        g_dev_root_port[state->addr] = 0u;
+        g_dev_route_string[state->addr] = 0u;
+    }
+
+    state->connected = false;
+    state->addr = 0u;
+    state->hc = USB_HC_NONE;
+    state->port = 0u;
+    state->vendor_id = 0u;
+    state->device_id = 0u;
+    state->has_keyboard = 0u;
+    state->has_mouse = 0u;
+    state->keyboard_addr = 0u;
+    state->keyboard_interface = 0u;
+    state->keyboard_endpoint = 0u;
+    state->keyboard_vendor_id = 0u;
+    state->keyboard_device_id = 0u;
+    state->mouse_addr = 0u;
+    state->mouse_interface = 0u;
+    state->mouse_endpoint = 0u;
+    state->mouse_vendor_id = 0u;
+    state->mouse_device_id = 0u;
+}
+
+static void usb_record_root_device(usb_root_port_state_t *state,
+                                   usb_hc_type_t hc,
+                                   uint32_t port,
+                                   uint8_t addr,
+                                   const usb_device_descriptor_t *desc)
+{
+    if (state == NULL) {
+        return;
+    }
+
+    state->connected = true;
+    state->addr = addr;
+    state->hc = hc;
+    state->port = port;
+    state->vendor_id = desc ? desc->idVendor : 0u;
+    state->device_id = desc ? desc->idProduct : 0u;
+    uint8_t root_port = (uint8_t)(port + 1u);
+    state->has_keyboard =
+        (g_hid_kbd_addr != 0u &&
+         g_hid_kbd_ep_in != 0u &&
+         g_dev_hc[g_hid_kbd_addr] == hc &&
+         g_dev_root_port[g_hid_kbd_addr] == root_port) ? 1u : 0u;
+    state->has_mouse =
+        (g_hid_mouse_addr != 0u &&
+         g_hid_mouse_ep_in != 0u &&
+         g_dev_hc[g_hid_mouse_addr] == hc &&
+         g_dev_root_port[g_hid_mouse_addr] == root_port) ? 1u : 0u;
+    if (state->has_keyboard != 0u) {
+        state->keyboard_addr = g_hid_kbd_addr;
+        state->keyboard_interface = g_hid_kbd_interface;
+        state->keyboard_endpoint = g_hid_kbd_ep_in;
+        state->keyboard_vendor_id = g_hid_kbd_vendor_id;
+        state->keyboard_device_id = g_hid_kbd_device_id;
+    }
+    if (state->has_mouse != 0u) {
+        state->mouse_addr = g_hid_mouse_addr;
+        state->mouse_interface = g_hid_mouse_interface;
+        state->mouse_endpoint = g_hid_mouse_ep_in;
+        state->mouse_vendor_id = g_hid_mouse_vendor_id;
+        state->mouse_device_id = g_hid_mouse_device_id;
+    }
+}
+
+static bool usb_enumerate_root_port(usb_hc_type_t hc, uint32_t port)
+{
+    usb_root_port_state_t *state = usb_root_port_state(hc, port);
+    if (state == NULL ||
+        !usb_hc_port_valid(hc, port) ||
+        !usb_hc_port_connected(hc, port)) {
+        return false;
+    }
+
+    if (!usb_hc_reset_port(hc, port)) {
+        return false;
+    }
+
+    usb_wait_ms(hc, 30);
+    if (!usb_hc_port_connected(hc, port)) {
+        return false;
+    }
+
+    uint8_t current_addr = usb_alloc_address();
+
+    g_default_hc = hc;
+    g_dev_hc[0] = hc;
+    g_enum_parent_hub_addr = 0u;
+    g_enum_parent_port = 0u;
+    g_enum_speed = 0u;
+    g_dev_route_string[0] = 0u;
+
+    if (!usb_set_address(0, current_addr)) {
+        return false;
+    }
+
+    usb_wait_ms(hc, 10);
+    g_dev_hc[current_addr] = hc;
+    g_dev_root_port[current_addr] = (uint8_t)(port + 1u);
+    g_dev_route_string[current_addr] = 0u;
+
+    uint16_t ep0_mps = 64u;
+    usb_device_descriptor_t desc = {0};
+    if (usb_get_device_descriptor(current_addr, &desc)) {
+        ep0_mps = usb_device_max_packet_size(desc.bMaxPacketSize0);
+        if (hc == USB_HC_XHCI) {
+            xhci_evaluate_ep0_mps(current_addr, ep0_mps);
+        }
+    }
+
+    if (!usb_enumerate_device(current_addr, hc, ep0_mps, &g_usb_next_addr)) {
+        g_dev_hc[current_addr] = USB_HC_NONE;
+        g_dev_ep0_mps[current_addr] = 0u;
+        return false;
+    }
+
+    usb_record_root_device(state, hc, port, current_addr, &desc);
+    return true;
+}
+
 extern bool xhci_is_ready(void);
 
 void usb_core_init(void)
 {
     usb_wait_ms(g_hc_type, 20);
 
-    uint8_t next_addr = 1;
-
+    g_usb_next_addr = 1u;
     g_mass_storage_addr = 0;
     g_mass_storage_ep_in = 0;
     g_mass_storage_ep_out = 0;
@@ -448,105 +830,95 @@ void usb_core_init(void)
     g_hid_kbd_interface = 0;
     g_hid_kbd_ep_in = 0;
     g_hid_kbd_ep_mps = 0;
+    g_hid_kbd_vendor_id = 0;
+    g_hid_kbd_device_id = 0;
 
     g_hid_mouse_addr = 0;
     g_hid_mouse_interface = 0;
     g_hid_mouse_ep_in = 0;
     g_hid_mouse_ep_mps = 0;
+    g_hid_mouse_vendor_id = 0;
+    g_hid_mouse_device_id = 0;
 
     for (uint32_t i = 0; i < 256u; ++i) {
         g_dev_hc[i] = USB_HC_NONE;
         g_dev_ep0_mps[i] = 8;
     }
+    usb_clear_root_port_states();
 
     usb_hc_type_t hc_types[] = { USB_HC_XHCI, USB_HC_EHCI, USB_HC_OHCI, USB_HC_UHCI };
 
     for (int t = 0; t < 4; t++) {
         usb_hc_type_t cur_hc = hc_types[t];
-        uint32_t num_ports = 0;
-
-        if (cur_hc == USB_HC_XHCI && xhci_is_ready()) {
-            num_ports = xhci_get_num_ports();
-        } else if (cur_hc == USB_HC_EHCI && ehci_get_num_ports() > 0) {
-            num_ports = ehci_get_num_ports();
-        } else if (cur_hc == USB_HC_OHCI && g_ohci_ready) {
-            num_ports = ohci_get_num_ports();
-        } else if (cur_hc == USB_HC_UHCI && g_uhci_ready) {
-            num_ports = uhci_get_num_ports();
-        }
+        uint32_t num_ports = usb_hc_port_count(cur_hc);
 
         if (num_ports == 0) {
             continue;
         }
+        if (num_ports > USB_MAX_TRACKED_ROOT_PORTS) {
+            num_ports = USB_MAX_TRACKED_ROOT_PORTS;
+        }
 
         for (uint32_t i = 0; i < num_ports; i++) {
-            bool port_valid = false;
-            if      (cur_hc == USB_HC_EHCI) port_valid = ehci_port_valid(i);
-            else if (cur_hc == USB_HC_OHCI) port_valid = ohci_port_valid(i);
-            else if (cur_hc == USB_HC_UHCI) port_valid = uhci_port_valid(i);
-            else if (cur_hc == USB_HC_XHCI) port_valid = xhci_port_valid(i);
-            if (!port_valid) {
-                continue;
-            }
-
-            bool port_ok = false;
-            if (cur_hc == USB_HC_EHCI) {
-                port_ok = ehci_reset_port(i);
-            } else if (cur_hc == USB_HC_OHCI) {
-                port_ok = ohci_reset_port(i);
-            } else if (cur_hc == USB_HC_UHCI) {
-                port_ok = uhci_reset_port(i);
-            } else if (cur_hc == USB_HC_XHCI) {
-                port_ok = xhci_reset_port(i);
-            }
-
-            if (!port_ok) {
-                continue;
-            }
-
-            usb_wait_ms(cur_hc, 30);
-
-            bool connected = false;
-            if      (cur_hc == USB_HC_EHCI) connected = ehci_port_connected(i);
-            else if (cur_hc == USB_HC_OHCI) connected = ohci_port_connected(i);
-            else if (cur_hc == USB_HC_UHCI) connected = uhci_port_connected(i);
-            else if (cur_hc == USB_HC_XHCI) connected = xhci_port_connected(i);
-            
-            if (!connected) {
-                continue;
-            }
-
-            uint8_t current_addr = next_addr++;
-
-            g_default_hc = cur_hc;
-            g_dev_hc[0] = cur_hc;
-
-            if (!usb_set_address(0, current_addr)) {
-                continue;
-            }
-
-            usb_wait_ms(cur_hc, 10);
-            g_dev_hc[current_addr] = cur_hc;
-
-            uint16_t ep0_mps = 64;
-
-            usb_device_descriptor_t desc = {0};
-            if (usb_get_device_descriptor(current_addr, &desc)) {
-                ep0_mps = usb_device_max_packet_size(desc.bMaxPacketSize0);
-
-                if (cur_hc == USB_HC_XHCI) {
-                    xhci_evaluate_ep0_mps(current_addr, ep0_mps);
-                }
-            }
-
-            usb_enumerate_device(
-                current_addr,
-                cur_hc,
-                ep0_mps,
-                &next_addr
-            );
+            (void)usb_enumerate_root_port(cur_hc, i);
         }
     }
+}
+
+static bool usb_poll_hc_hotplug(usb_hc_type_t hc)
+{
+    uint32_t num_ports = usb_hc_port_count(hc);
+    bool changed = false;
+
+    if (num_ports > USB_MAX_TRACKED_ROOT_PORTS) {
+        num_ports = USB_MAX_TRACKED_ROOT_PORTS;
+    }
+
+    for (uint32_t port = 0u; port < num_ports; ++port) {
+        usb_root_port_state_t *state = usb_root_port_state(hc, port);
+        bool valid = usb_hc_port_valid(hc, port);
+        bool connected = valid && usb_hc_port_connected(hc, port);
+
+        if (state == NULL) {
+            continue;
+        }
+
+        if (state->connected && !connected) {
+            usb_disconnect_root_device(state);
+            changed = true;
+            continue;
+        }
+
+        if (!state->connected && connected) {
+            if (usb_enumerate_root_port(hc, port)) {
+                changed = true;
+            }
+        }
+    }
+
+    return changed;
+}
+
+static bool usb_poll_hotplug(void)
+{
+    if (!g_usb_initialized) {
+        return false;
+    }
+
+    bool changed = false;
+    usb_hc_type_t hc_types[] = {
+        USB_HC_XHCI,
+        USB_HC_EHCI,
+        USB_HC_OHCI,
+        USB_HC_UHCI,
+    };
+
+    for (uint32_t i = 0u; i < sizeof(hc_types) / sizeof(hc_types[0]); ++i) {
+        if (usb_poll_hc_hotplug(hc_types[i])) {
+            changed = true;
+        }
+    }
+    return changed;
 }
 
 bool usb_control_transfer(uint8_t addr, uint8_t endpoint, uint16_t max_packet_size,
@@ -653,8 +1025,6 @@ bool usb_get_device_descriptor(uint8_t addr, usb_device_descriptor_t *desc) {
 void usb_set_hc_type(usb_hc_type_t type) {
     g_hc_type = type;
 }
-
-static bool g_usb_initialized = false;
 
 static void usb_master_init(void)
 {
@@ -795,6 +1165,7 @@ static const usb_master_vtable_t g_usb_vtable = {
         .submit_interrupt_in_async = usb_submit_interrupt_in_async,
         .check_interrupt_event      = usb_check_interrupt_event,
         .submit_interrupt_in_sync  = usb_submit_interrupt_in_sync,
+        .poll_hotplug              = usb_poll_hotplug,
     }
 };
 
@@ -805,10 +1176,14 @@ static void usb_driver_shutdown(void)
     g_hid_kbd_interface = 0;
     g_hid_kbd_ep_in = 0;
     g_hid_kbd_ep_mps = 0;
+    g_hid_kbd_vendor_id = 0;
+    g_hid_kbd_device_id = 0;
     g_hid_mouse_addr = 0;
     g_hid_mouse_interface = 0;
     g_hid_mouse_ep_in = 0;
     g_hid_mouse_ep_mps = 0;
+    g_hid_mouse_vendor_id = 0;
+    g_hid_mouse_device_id = 0;
     g_hc_type = USB_HC_NONE;
     g_ohci_ready = false;
     g_default_hc = USB_HC_NONE;
@@ -817,6 +1192,7 @@ static void usb_driver_shutdown(void)
         g_dev_hc[i] = USB_HC_NONE;
         g_dev_ep0_mps[i] = 0;
     }
+    usb_clear_root_port_states();
     g_api = NULL;
 }
 
