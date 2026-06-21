@@ -613,12 +613,16 @@ void iso9660_list_root_files(void) {
                 if (!((f.name[0] == '.' && f.name[1] == '\0') ||
                       (f.name[0] == '.' && f.name[1] == '.' &&
                        f.name[2] == '\0'))) {
+
+                    serial_write_string(f.name);
+                    serial_write_string("\n");
                 }
             }
 
             offset     += rec_len;
             bytes_read += rec_len;
         }
+
         extent++;
     }
 

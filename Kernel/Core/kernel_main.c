@@ -297,7 +297,8 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
             0x000000;
         kernel_boot_screen_color(color);
     }
-
+    serial_write_uint64(fs_ready);
+    vfs_list_root();
     if (fs_ready) {
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
             kernel_panic("Failed to start Userland.", "kernel_main");

@@ -18,6 +18,7 @@ static const driver_binary_t *g_driver_api = NULL;
 #define disk_read           g_driver_api->hw.disk_read
 #define disk_write          g_driver_api->hw.disk_write
 #define disk_get_partition_lba g_driver_api->hw.disk_get_partition_lba
+#define serial_write_string g_driver_api->dbg.write_string
 
 typedef struct { volatile int locked; } spinlock_t;
 static inline void spinlock_init(spinlock_t *l)   { l->locked = 0; }
@@ -1965,7 +1966,15 @@ static void _fat32_list_root_files(void) {
                 char short_name[13];
                 fat32_short_name_to_string(&g_sector_buffer[i], short_name);
 
-                lfn_valid = 0; memset(lfn_name, 0, sizeof(lfn_name));
+                if (lfn_valid && lfn_name[0] != '\0') {
+                    serial_write_string(lfn_name);
+                } else {
+                    serial_write_string(short_name);
+                }
+                serial_write_string("\r\n");
+
+                lfn_valid = 0;
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
         }
         uint32_t next = fat_get_next_cluster(cluster);
@@ -2200,6 +2209,7 @@ static const driver_module_descriptor_t g_fat32_module = {
 #undef disk_get_partition_lba
 #undef memset
 #undef memcpy
+#undef serial_write_string
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
 {
