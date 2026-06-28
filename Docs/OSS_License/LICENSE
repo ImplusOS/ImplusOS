@@ -88,3 +88,51 @@ https://github.com/ozkl/doomgeneric/blob/master/LICENSE
 
 License file:
 Docs/OSS_License/LICENSEFILE/GPL-2.0
+
+curl
+
+Copyright (c) 1996-2026 Daniel Stenberg and many contributors.
+
+Licensed under the MIT-like (ISC-style) License.
+See:
+https://curl.se/docs/copyright.html
+
+License file:
+Docs/OSS_License/LICENSEFILE/curl
+
+mbedtls
+
+Copyright (c) The Mbed TLS Contributors.
+
+Licensed under the Apache License, Version 2.0 OR GPL-2.0-or-later (dual).
+See:
+https://github.com/Mbed-TLS/mbedtls/blob/development/LICENSE
+
+License files:
+Docs/OSS_License/LICENSEFILE/mbedtls
+Docs/OSS_License/LICENSEFILE/Apache-2.0
+Docs/OSS_License/LICENSEFILE/GPL-2.0
+
+NetSurf Browser
+
+Copyright (c) The NetSurf Contributors.
+
+Licensed under the GNU General Public License v2 with OpenSSL linking exception.
+Visual artwork is under the MIT License.
+See:
+https://www.netsurf-browser.org/
+
+License file:
+Docs/OSS_License/LICENSEFILE/NetSurf
+Docs/OSS_License/LICENSEFILE/GPL-2.0
+
+NetSurf Libraries (libcss, libdom, libhubbub, libnsbmp, libnsfb, libnsgif, libnsutils, libparserutils, libwapcaplet, netsurf-buildsystem)
+
+Copyright (c) J-M Bell, Richard Wilson, Vincent Sanders, Michael Drake, The NetSurf Browser Project.
+
+All licensed under the MIT License.
+See:
+https://www.netsurf-browser.org/projects/library/
+
+License file:
+Docs/OSS_License/LICENSEFILE/NetSurf_libraries
