@@ -18,4 +18,14 @@ SECTIONS
     }
     
     _kernel_end = .;
+
+    /DISCARD/ : {
+        *(.comment*)
+        *(.note*)
+        *(.debug*)
+        *(.eh_frame*)
+        *(.eh_frame_hdr*)
+        *(.gcc_except_table*)
+        *(.interp)
+    }
 }

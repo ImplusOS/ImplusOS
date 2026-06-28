@@ -18,7 +18,7 @@
 #define GB (1024ULL * 1024ULL * 1024ULL)
 #define MB2 (2ULL * 1024ULL * 1024ULL)
 #define MAX_PDPT_ENTRIES 512
-#define MMIO_WINDOW_BASE 0x00000000F0000000ULL
+#define MMIO_WINDOW_BASE 0xFFFF800000000000ULL
 #define MMIO_WINDOW_SLOTS 512
 #define PAGING_BOOT_IDENTITY_GB 64ULL
 #define SWAP_TRACK_MAX 4096
@@ -37,6 +37,8 @@ typedef struct {
 static uint64_t g_kernel_pml4[512] __attribute__((aligned(4096)));
 static uint64_t g_kernel_pdpt[512] __attribute__((aligned(4096)));
 static uint64_t g_kernel_pd[MAX_PDPT_ENTRIES][512] __attribute__((aligned(4096)));
+static uint64_t g_mmio_pdpt[512] __attribute__((aligned(4096)));
+static uint64_t g_mmio_pd[512] __attribute__((aligned(4096)));
 static uint64_t g_mmio_phys_base[MMIO_WINDOW_SLOTS];
 static uint32_t g_mmio_slots_used = 0;
 static uint64_t g_kernel_identity_entries = PAGING_BOOT_IDENTITY_GB;
@@ -522,7 +524,7 @@ static void paging_identity_mark_2mb_uncached(uint64_t phys_addr)
 
 void *map_mmio_virt(uint64_t phys_addr)
 {
-    if (phys_addr >= 0x10000000000ULL) {
+    if ((phys_addr & ~(PAGE_FRAME_MASK | (PAGE_SIZE_BYTES - 1ULL))) != 0u) {
         return NULL;
     }
 
@@ -549,19 +551,20 @@ void *map_mmio_virt(uint64_t phys_addr)
     uint64_t pdpt_index = (virt_base >> 30) & 0x1FFULL;
     uint64_t pd_index = (virt_base >> 21) & 0x1FFULL;
 
-    if (pdpt_index >= MAX_PDPT_ENTRIES) {
+    if (PML4_INDEX(virt_base) != PML4_INDEX(MMIO_WINDOW_BASE) ||
+        pdpt_index != PDPT_INDEX(MMIO_WINDOW_BASE)) {
         return NULL;
     }
 
-    if ((g_kernel_pdpt[pdpt_index] & PAGE_PRESENT) == 0) {
-        g_kernel_pdpt[pdpt_index] = ((uint64_t)g_kernel_pd[pdpt_index]) | PAGE_PRESENT | PAGE_RW;
+    if ((g_kernel_pml4[PML4_INDEX(MMIO_WINDOW_BASE)] & PAGE_PRESENT) == 0) {
+        g_kernel_pml4[PML4_INDEX(MMIO_WINDOW_BASE)] =
+            ((uint64_t)g_mmio_pdpt) | PAGE_PRESENT | PAGE_RW;
+    }
+    if ((g_mmio_pdpt[pdpt_index] & PAGE_PRESENT) == 0) {
+        g_mmio_pdpt[pdpt_index] = ((uint64_t)g_mmio_pd) | PAGE_PRESENT | PAGE_RW;
     }
 
-    g_kernel_pd[pdpt_index][pd_index] = phys_base | PAGE_PRESENT | PAGE_RW | PAGE_PS | PAGE_PCD | PAGE_PWT;
-    
-    if (pdpt_index + 1 > g_kernel_identity_entries) {
-        g_kernel_identity_entries = pdpt_index + 1;
-    }
+    g_mmio_pd[pd_index] = phys_base | PAGE_PRESENT | PAGE_RW | PAGE_PS | PAGE_PCD | PAGE_PWT;
     
     invlpg_addr(virt_base);
 
@@ -581,6 +584,8 @@ void init_paging(void)
     memset(g_kernel_pml4, 0, sizeof(g_kernel_pml4));
     memset(g_kernel_pdpt, 0, sizeof(g_kernel_pdpt));
     memset(g_kernel_pd, 0, sizeof(g_kernel_pd));
+    memset(g_mmio_pdpt, 0, sizeof(g_mmio_pdpt));
+    memset(g_mmio_pd, 0, sizeof(g_mmio_pd));
     memset(g_mmio_phys_base, 0, sizeof(g_mmio_phys_base));
     memset(g_swap_slots, 0, sizeof(g_swap_slots));
     memset(g_swap_tracks, 0, sizeof(g_swap_tracks));
@@ -611,6 +616,10 @@ void init_paging(void)
     }
 
     g_kernel_pml4[0] = ((uint64_t)g_kernel_pdpt) | PAGE_PRESENT | PAGE_RW;
+    g_kernel_pml4[PML4_INDEX(MMIO_WINDOW_BASE)] =
+        ((uint64_t)g_mmio_pdpt) | PAGE_PRESENT | PAGE_RW;
+    g_mmio_pdpt[PDPT_INDEX(MMIO_WINDOW_BASE)] =
+        ((uint64_t)g_mmio_pd) | PAGE_PRESENT | PAGE_RW;
 
     for (uint64_t i = 0; i < g_kernel_identity_entries; ++i) {
         if (ensure_kernel_pdpt_entry(i) < 0) {

@@ -284,6 +284,7 @@ static bool sata_dma_rw(uint64_t lba, uint32_t sectors, bool write) {
     s_ctbl->prdt[0].dbau = (uint32_t)(s_dma_phys >> 32);
     s_ctbl->prdt[0].dbc  = ((sectors * AHCI_SECTOR_SIZE) - 1u) | (1u << 31);
 
+    __sync_synchronize();
     port_wr(g_port, P_CI, 1u);
 
     for (uint32_t t = 10000000u; t; --t) {
@@ -294,6 +295,7 @@ static bool sata_dma_rw(uint64_t lba, uint32_t sectors, bool write) {
             return false;
         }
         if ((ci & 1u) == 0u) {
+            __sync_synchronize();
             port_wr(g_port, P_IS, is);
             return true;
         }
@@ -365,6 +367,7 @@ static bool sata_identify_device(uint64_t *total_bytes_out) {
     s_ctbl->prdt[0].dbau = (uint32_t)(s_dma_phys >> 32);
     s_ctbl->prdt[0].dbc  = (AHCI_SECTOR_SIZE - 1u) | (1u << 31);
 
+    __sync_synchronize();
     port_wr(g_port, P_CI, 1u);
 
     for (uint32_t t = 10000000u; t; --t) {
@@ -375,6 +378,7 @@ static bool sata_identify_device(uint64_t *total_bytes_out) {
             return false;
         }
         if ((ci & 1u) == 0u) {
+            __sync_synchronize();
             port_wr(g_port, P_IS, is);
             if (total_bytes_out != NULL) {
                 *total_bytes_out = ahci_identify_capacity_bytes();
@@ -511,6 +515,7 @@ bool ahci_flush(void) {
     s_ctbl->cfis[1] = 0x80u;
     s_ctbl->cfis[2] = ATA_CMD_FLUSH_CACHE_EXT;
     port_wr(g_port, P_IS, port_rd(g_port, P_IS));
+    __sync_synchronize();
     port_wr(g_port, P_CI, 1u);
     for (uint32_t t = 10000000u; t; --t) {
         uint32_t is = port_rd(g_port, P_IS);

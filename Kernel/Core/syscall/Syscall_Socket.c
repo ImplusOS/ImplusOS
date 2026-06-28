@@ -15,6 +15,7 @@
 #define SOCKET_SOL_SOCKET 1
 #define SOCKET_SO_REUSEADDR 2
 #define SOCKET_SO_ERROR 4
+#define SOCKET_ERR_ETIMEDOUT 110
 
 #define SOCKET_POLL_IN   0x0001u
 #define SOCKET_POLL_OUT  0x0004u
@@ -357,15 +358,27 @@ int32_t syscall_socket_get_option(int32_t fd, int32_t level,
     }
     if (option == SOCKET_SO_REUSEADDR) {
         *value_out = socket->reuse_address != 0u ? 1 : 0;
+        spinlock_unlock(&g_socket_lock);
+        return 0;
     } else if (option == SOCKET_SO_ERROR) {
-        *value_out = socket->last_error;
+        int32_t error = socket->last_error;
+        int32_t connection_id = socket->connection_id;
         socket->last_error = 0;
+        spinlock_unlock(&g_socket_lock);
+
+        if (error == 0 && connection_id >= 0) {
+            tcp_connection_info_t info;
+            if (tcp_get_connection_info(connection_id, &info) < 0 ||
+                info.state == TCP_STATE_CLOSED) {
+                error = SOCKET_ERR_ETIMEDOUT;
+            }
+        }
+        *value_out = error;
+        return 0;
     } else {
         spinlock_unlock(&g_socket_lock);
         return (int32_t)OS_STATUS_NOT_SUPPORTED;
     }
-    spinlock_unlock(&g_socket_lock);
-    return 0;
 }
 
 int32_t syscall_socket_shutdown(int32_t fd, int32_t how)

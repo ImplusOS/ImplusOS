@@ -10,5 +10,7 @@ static inline int isprint(int c) { return (c >= 0x20 && c <= 0x7E); }
 static inline int ispunct(int c) { return isprint(c) && !isalnum(c) && !isspace(c); }
 static inline int isxdigit(int c) { return isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 static inline int iscntrl(int c) { return (c >= 0 && c < 0x20) || c == 0x7F; }
+static inline int isascii(int c) { return (c >= 0 && c <= 0x7F); }
 static inline int toupper(int c) { return islower(c) ? (c - 'a' + 'A') : c; }
 static inline int tolower(int c) { return isupper(c) ? (c - 'A' + 'a') : c; }
+static inline int toascii(int c) { return c & 0x7F; }

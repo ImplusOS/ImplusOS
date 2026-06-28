@@ -19,6 +19,7 @@ static const store_app_t g_apps[] = {
     {"File Manager", "Browse folders and inspect files", "/Userland/UserApps/com_ImplusOS_filemanager/com_ImplusOS_filemanager.ELF"},
     {"Process Manager", "Inspect and manage running processes", "/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF"},
     {"Network Test", "Run UDP and DNS smoke tests", "/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF"},
+    {"NetSurf", "Framebuffer web browser port", "/Userland/UserApps/NetSurf/NetSurf.ELF"},
     {"Virtual Machine", "Boot the experimental KVM frontend", "/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF"},
 };
 

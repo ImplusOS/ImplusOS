@@ -14,6 +14,11 @@ void abort(void) {
     exit(1);
 }
 
+int atexit(void (*function)(void)) {
+    (void)function;
+    return 0;
+}
+
 #else
 extern void* syscall1(uint64_t num, uint64_t arg1);
 extern void* syscall2(uint64_t num, uint64_t arg1, uint64_t arg2);
@@ -23,6 +28,10 @@ extern uint64_t syscall0(uint64_t num);
 #define SYSCALL_PROCESS_YIELD 7ULL
 #define SYSCALL_PROCESS_EXIT  8ULL
 #define SYSCALL_USER_MMAP    43ULL
+
+#define ATEXIT_MAX_HANDLERS 32
+static void (*g_atexit_handlers[ATEXIT_MAX_HANDLERS])(void);
+static int g_atexit_count = 0;
 
 typedef struct malloc_block {
     size_t size;
@@ -140,7 +149,22 @@ void free(void* p) {
     malloc_unlock();
 }
 
+int atexit(void (*function)(void))
+{
+    if (!function || g_atexit_count >= ATEXIT_MAX_HANDLERS) {
+        return -1;
+    }
+    g_atexit_handlers[g_atexit_count++] = function;
+    return 0;
+}
+
 void exit(int status) {
+    while (g_atexit_count > 0) {
+        void (*handler)(void) = g_atexit_handlers[--g_atexit_count];
+        if (handler) {
+            handler();
+        }
+    }
     (void)syscall1(SYSCALL_PROCESS_EXIT, (uint64_t)status);
     for(;;);
 }

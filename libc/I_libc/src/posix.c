@@ -30,6 +30,7 @@
 #include <regex.h>
 #include <glob.h>
 #include <fnmatch.h>
+#include <getopt.h>
 #include <ifaddrs.h>
 #include <netdb.h>
 #include <stdio.h>
@@ -86,6 +87,7 @@ extern int32_t socket_set_option(int32_t sockfd, int32_t level,
 extern int32_t socket_get_option(int32_t sockfd, int32_t level,
                                  int32_t option, int32_t *value_out);
 extern int32_t socket_shutdown(int32_t sockfd, int32_t how);
+extern uint32_t dns_resolve(const char *hostname);
 
 typedef struct {
     uint32_t local_ip;
@@ -107,9 +109,153 @@ extern int32_t sys_get_rtc_time(rtc_time_t* time);
 extern sighandler_t os_signal(int32_t signum, sighandler_t handler);
 
 #define POSIX_MAX_TRACKED_FDS 1024
+
+char* optarg = NULL;
+int optind = 1;
+int opterr = 1;
+int optopt = 0;
+static const char* getopt_next = NULL;
+
+static int getopt_missing_arg(const char* optstring)
+{
+    return (optstring && optstring[0] == ':') ? ':' : '?';
+}
+
+int getopt(int argc, char* const argv[], const char* optstring)
+{
+    optarg = NULL;
+
+    if (!argv || !optstring || optind < 0) {
+        return -1;
+    }
+    if (optind == 0) {
+        optind = 1;
+    }
+
+    if (!getopt_next || *getopt_next == '\0') {
+        if (optind >= argc || !argv[optind] || argv[optind][0] != '-' ||
+            argv[optind][1] == '\0') {
+            return -1;
+        }
+        if (strcmp(argv[optind], "--") == 0) {
+            optind++;
+            return -1;
+        }
+        getopt_next = argv[optind] + 1;
+    }
+
+    char c = *getopt_next++;
+    const char* spec = strchr(optstring, c);
+    if (!spec || c == ':') {
+        optopt = (unsigned char)c;
+        if (*getopt_next == '\0') {
+            optind++;
+            getopt_next = NULL;
+        }
+        return '?';
+    }
+
+    if (spec[1] == ':') {
+        if (*getopt_next != '\0') {
+            optarg = (char*)getopt_next;
+            optind++;
+            getopt_next = NULL;
+        } else if (optind + 1 < argc) {
+            optarg = argv[++optind];
+            optind++;
+            getopt_next = NULL;
+        } else {
+            optopt = (unsigned char)c;
+            optind++;
+            getopt_next = NULL;
+            return getopt_missing_arg(optstring);
+        }
+    } else if (*getopt_next == '\0') {
+        optind++;
+        getopt_next = NULL;
+    }
+
+    return (unsigned char)c;
+}
+
+static int getopt_long_match(const char* arg, size_t name_len,
+                             const struct option* longopts)
+{
+    if (!longopts) {
+        return -1;
+    }
+    for (int i = 0; longopts[i].name; i++) {
+        if (strlen(longopts[i].name) == name_len &&
+            strncmp(arg, longopts[i].name, name_len) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int getopt_long(int argc, char* const argv[], const char* optstring,
+                const struct option* longopts, int* longindex)
+{
+    if (!argv || optind < 0) {
+        return -1;
+    }
+    if (optind == 0) {
+        optind = 1;
+    }
+
+    if (optind < argc && argv[optind] && strncmp(argv[optind], "--", 2) == 0) {
+        const char* arg = argv[optind] + 2;
+        const char* eq;
+        size_t name_len;
+        int idx;
+
+        if (*arg == '\0') {
+            optind++;
+            return -1;
+        }
+
+        eq = strchr(arg, '=');
+        name_len = eq ? (size_t)(eq - arg) : strlen(arg);
+        idx = getopt_long_match(arg, name_len, longopts);
+        if (idx < 0) {
+            optind++;
+            return '?';
+        }
+
+        if (longindex) {
+            *longindex = idx;
+        }
+
+        optarg = NULL;
+        if (longopts[idx].has_arg == required_argument) {
+            if (eq) {
+                optarg = (char*)(eq + 1);
+            } else if (optind + 1 < argc) {
+                optarg = argv[++optind];
+            } else {
+                optopt = longopts[idx].val;
+                optind++;
+                return getopt_missing_arg(optstring);
+            }
+        } else if (longopts[idx].has_arg == optional_argument && eq) {
+            optarg = (char*)(eq + 1);
+        }
+
+        optind++;
+        if (longopts[idx].flag) {
+            *longopts[idx].flag = longopts[idx].val;
+            return 0;
+        }
+        return longopts[idx].val;
+    }
+
+    return getopt(argc, argv, optstring);
+}
 #define POSIX_FD_FILE   1
 #define POSIX_FD_PIPE   2
 #define POSIX_FD_SOCKET 3
+#define POSIX_MAX_TRACKED_DIRS 128
+#define POSIX_AT_PATH_MAX 512
 
 typedef struct {
     int valid;
@@ -119,6 +265,96 @@ typedef struct {
 } posix_fd_state_t;
 
 static posix_fd_state_t g_fd_state[POSIX_MAX_TRACKED_FDS];
+
+typedef struct {
+    int valid;
+    int handle;
+    char path[POSIX_AT_PATH_MAX];
+} posix_dir_state_t;
+
+static posix_dir_state_t g_dir_state[POSIX_MAX_TRACKED_DIRS];
+
+static void posix_dir_track_open(int handle, const char* path)
+{
+    if (handle < 0 || !path) {
+        return;
+    }
+
+    for (size_t i = 0; i < POSIX_MAX_TRACKED_DIRS; i++) {
+        if (g_dir_state[i].valid && g_dir_state[i].handle == handle) {
+            strlcpy(g_dir_state[i].path, path, sizeof(g_dir_state[i].path));
+            return;
+        }
+    }
+
+    for (size_t i = 0; i < POSIX_MAX_TRACKED_DIRS; i++) {
+        if (!g_dir_state[i].valid) {
+            g_dir_state[i].valid = 1;
+            g_dir_state[i].handle = handle;
+            strlcpy(g_dir_state[i].path, path, sizeof(g_dir_state[i].path));
+            return;
+        }
+    }
+}
+
+static void posix_dir_track_close(int handle)
+{
+    for (size_t i = 0; i < POSIX_MAX_TRACKED_DIRS; i++) {
+        if (g_dir_state[i].valid && g_dir_state[i].handle == handle) {
+            g_dir_state[i].valid = 0;
+            g_dir_state[i].handle = -1;
+            g_dir_state[i].path[0] = '\0';
+            return;
+        }
+    }
+}
+
+static const char* posix_dir_path_from_handle(int handle)
+{
+    for (size_t i = 0; i < POSIX_MAX_TRACKED_DIRS; i++) {
+        if (g_dir_state[i].valid && g_dir_state[i].handle == handle) {
+            return g_dir_state[i].path;
+        }
+    }
+    return NULL;
+}
+
+static int posix_make_at_path(int dirfd, const char* path, char* out, size_t out_size)
+{
+    if (!path || !out || out_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (path[0] == '/' || dirfd == AT_FDCWD) {
+        if (strlcpy(out, path, out_size) >= out_size) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        return 0;
+    }
+
+    const char* base = posix_dir_path_from_handle(dirfd);
+    if (!base) {
+        errno = EBADF;
+        return -1;
+    }
+
+    size_t base_len = strlen(base);
+    size_t path_len = strlen(path);
+    int needs_slash = (base_len > 0 && base[base_len - 1] != '/');
+    if (base_len + (needs_slash ? 1u : 0u) + path_len + 1u > out_size) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    strlcpy(out, base, out_size);
+    if (needs_slash) {
+        strlcat(out, "/", out_size);
+    }
+    strlcat(out, path, out_size);
+    return 0;
+}
 
 static posix_fd_state_t* posix_fd_state(int fd)
 {
@@ -150,6 +386,42 @@ static void posix_fd_mark_closed(int fd)
     state->type = 0;
     state->status_flags = 0;
     state->fd_flags = 0;
+}
+
+static int posix_translate_status(int32_t status)
+{
+    if (status >= 0) {
+        return 0;
+    }
+    switch (status) {
+        case OS_STATUS_NOT_FOUND:      return ENOENT;
+        case OS_STATUS_IO_ERROR:       return EIO;
+        case OS_STATUS_ACCESS_DENIED:  return EACCES;
+        case OS_STATUS_FAULT:          return EFAULT;
+        case OS_STATUS_INVALID_ARG:    return EINVAL;
+        case OS_STATUS_LIMIT_REACHED:  return EMFILE;
+        case OS_STATUS_NOT_SUPPORTED:  return ENOTSUP;
+        case OS_STATUS_INTERNAL:       return EIO;
+        default:
+            if (status <= -4096) {
+                return EIO;
+            }
+            return -status;
+    }
+}
+
+static void posix_set_errno_from_status(int32_t status)
+{
+    errno = posix_translate_status(status);
+}
+
+static int posix_status_to_rc(int32_t status)
+{
+    if (status < 0) {
+        posix_set_errno_from_status(status);
+        return -1;
+    }
+    return status;
 }
 
 static uint16_t byte_swap16(uint16_t value)
@@ -387,6 +659,16 @@ int fstat(int fd, struct stat* st)
     return 0;
 }
 
+int fstatat(int dirfd, const char* path, struct stat* st, int flags)
+{
+    (void)flags;
+    char full_path[POSIX_AT_PATH_MAX];
+    if (posix_make_at_path(dirfd, path, full_path, sizeof(full_path)) < 0) {
+        return -1;
+    }
+    return stat(full_path, st);
+}
+
 int mkdir(const char* path, mode_t mode)
 {
     (void)mode;
@@ -424,6 +706,7 @@ DIR* opendir(const char* path)
 
     memset(dir, 0, sizeof(*dir));
     dir->handle = handle;
+    posix_dir_track_open(handle, path);
     return dir;
 }
 
@@ -451,9 +734,104 @@ int closedir(DIR* dirp)
         errno = EINVAL;
         return -1;
     }
+    posix_dir_track_close(dirp->handle);
     rc = file_closedir(dirp->handle);
     free(dirp);
     return rc;
+}
+
+int dirfd(DIR* dirp)
+{
+    if (!dirp) {
+        errno = EINVAL;
+        return -1;
+    }
+    return dirp->handle;
+}
+
+int alphasort(const struct dirent** a, const struct dirent** b)
+{
+    if (!a || !*a || !b || !*b) {
+        return 0;
+    }
+    return strcasecmp((*a)->d_name, (*b)->d_name);
+}
+
+int scandir(const char* dirp, struct dirent*** namelist,
+            int (*filter)(const struct dirent*),
+            int (*compar)(const struct dirent**, const struct dirent**))
+{
+    if (!dirp || !namelist) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    DIR* dir = opendir(dirp);
+    if (!dir) {
+        return -1;
+    }
+
+    struct dirent** list = NULL;
+    size_t count = 0;
+    size_t capacity = 0;
+    struct dirent* ent;
+
+    while ((ent = readdir(dir)) != NULL) {
+        if (filter && !filter(ent)) {
+            continue;
+        }
+
+        if (count == capacity) {
+            size_t new_capacity = capacity == 0 ? 16 : capacity * 2;
+            struct dirent** new_list =
+                (struct dirent**)realloc(list, new_capacity * sizeof(*new_list));
+            if (!new_list) {
+                for (size_t i = 0; i < count; i++) {
+                    free(list[i]);
+                }
+                free(list);
+                closedir(dir);
+                errno = ENOMEM;
+                return -1;
+            }
+            list = new_list;
+            capacity = new_capacity;
+        }
+
+        struct dirent* copy = (struct dirent*)malloc(sizeof(*copy));
+        if (!copy) {
+            for (size_t i = 0; i < count; i++) {
+                free(list[i]);
+            }
+            free(list);
+            closedir(dir);
+            errno = ENOMEM;
+            return -1;
+        }
+        memcpy(copy, ent, sizeof(*copy));
+        list[count++] = copy;
+    }
+
+    closedir(dir);
+
+    if (compar) {
+        for (size_t i = 1; i < count; i++) {
+            struct dirent* item = list[i];
+            size_t j = i;
+            const struct dirent* lhs = item;
+            const struct dirent* rhs = NULL;
+            while (j > 0 &&
+                   ((rhs = list[j - 1]),
+                    compar(&lhs, &rhs) < 0)) {
+                list[j] = list[j - 1];
+                j--;
+            }
+            list[j] = item;
+        }
+    }
+
+    *namelist = list;
+    return (int)count;
 }
 
 int gettimeofday(struct timeval* tv, struct timezone* tz)
@@ -848,7 +1226,7 @@ int select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds,
                 fd_ready = 1;
             }
             if (writefds && FD_ISSET(fd, &requested_write) &&
-                (ready & POLLOUT) != 0u) {
+                (ready & (POLLOUT | POLLERR | POLLHUP)) != 0u) {
                 FD_SET(fd, writefds);
                 fd_ready = 1;
             }
@@ -896,18 +1274,33 @@ int poll(struct pollfd* fds, nfds_t nfds, int timeout)
 
 int socket(int domain, int type, int protocol)
 {
+    int fd_flags = 0;
+    int status_flags = 0;
+    int socket_type = type & ~(SOCK_NONBLOCK | SOCK_CLOEXEC);
+
     if (domain != AF_INET) {
         errno = EAFNOSUPPORT;
         return -1;
     }
-    if (type != SOCK_STREAM || (protocol != 0 && protocol != 6)) {
+    if ((type & SOCK_NONBLOCK) != 0) {
+        status_flags |= O_NONBLOCK;
+    }
+    if ((type & SOCK_CLOEXEC) != 0) {
+        fd_flags |= FD_CLOEXEC;
+    }
+    if (socket_type != SOCK_STREAM ||
+        (protocol != 0 && protocol != IPPROTO_TCP)) {
         errno = EPROTONOSUPPORT;
         return -1;
     }
-    int fd = socket_create(type);
+    int fd = socket_create(socket_type);
     if (fd >= 0) {
-        posix_fd_mark_open(fd, 0);
+        posix_fd_mark_open(fd, status_flags);
         posix_fd_state(fd)->type = POSIX_FD_SOCKET;
+        posix_fd_state(fd)->fd_flags = fd_flags;
+    } else {
+        posix_set_errno_from_status(fd);
+        return -1;
     }
     return fd;
 }
@@ -915,21 +1308,73 @@ int socket(int domain, int type, int protocol)
 int connect(int sockfd, const struct sockaddr* addr, socklen_t addrlen)
 {
     const struct sockaddr_in* in = (const struct sockaddr_in*)addr;
+    posix_fd_state_t* state = posix_fd_state(sockfd);
     if (!addr || addrlen < sizeof(*in) || in->sin_family != AF_INET) {
         errno = EINVAL;
         return -1;
     }
+    if (!state || !state->valid || state->type != POSIX_FD_SOCKET) {
+        errno = EBADF;
+        return -1;
+    }
+
+    socket_info_t info;
+    if (socket_get_info(sockfd, &info) == 0) {
+        if (info.state == 4u) {
+            errno = EISCONN;
+            return -1;
+        }
+        if (info.state == 2u || info.state == 3u) {
+            if ((state->status_flags & O_NONBLOCK) != 0) {
+                errno = EALREADY;
+                return -1;
+            }
+            uint64_t existing_deadline = get_uptime_ms() + 10000u;
+            for (;;) {
+                if (socket_get_info(sockfd, &info) < 0) {
+                    errno = EIO;
+                    return -1;
+                }
+                if (info.state == 4u) return 0;
+                if (info.error != 0) {
+                    errno = info.error;
+                    return -1;
+                }
+                if (info.state == 0u || get_uptime_ms() >= existing_deadline) {
+                    errno = ETIMEDOUT;
+                    return -1;
+                }
+                sleep_ms(1u);
+            }
+        }
+    }
+
     int result = socket_connect(
         sockfd, ntohl(in->sin_addr.s_addr), ntohs(in->sin_port));
-    if (result < 0) return result;
+    if (result < 0) {
+        posix_set_errno_from_status(result);
+        return -1;
+    }
+
+    if ((state->status_flags & O_NONBLOCK) != 0) {
+        if (socket_get_info(sockfd, &info) == 0 && info.state == 4u) {
+            return 0;
+        }
+        errno = EINPROGRESS;
+        return -1;
+    }
+
     uint64_t deadline = get_uptime_ms() + 10000u;
     for (;;) {
-        socket_info_t info;
         if (socket_get_info(sockfd, &info) < 0) {
             errno = EIO;
             return -1;
         }
         if (info.state == 4u) return 0;
+        if (info.error != 0) {
+            errno = info.error;
+            return -1;
+        }
         if (info.state == 0u || get_uptime_ms() >= deadline) {
             errno = ETIMEDOUT;
             return -1;
@@ -945,7 +1390,7 @@ int bind(int sockfd, const struct sockaddr* addr, socklen_t addrlen)
         errno = EINVAL;
         return -1;
     }
-    return socket_bind(sockfd, ntohs(in->sin_port));
+    return posix_status_to_rc(socket_bind(sockfd, ntohs(in->sin_port)));
 }
 
 int listen(int sockfd, int backlog)
@@ -954,7 +1399,7 @@ int listen(int sockfd, int backlog)
         errno = EINVAL;
         return -1;
     }
-    return socket_listen_with_backlog(sockfd, backlog);
+    return posix_status_to_rc(socket_listen_with_backlog(sockfd, backlog));
 }
 
 int accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)
@@ -989,28 +1434,75 @@ int accept(int sockfd, struct sockaddr* addr, socklen_t* addrlen)
 
 ssize_t send(int sockfd, const void* buf, size_t len, int flags)
 {
+    posix_fd_state_t* state = posix_fd_state(sockfd);
     if ((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) != 0) {
         errno = EINVAL;
         return -1;
     }
-    return (ssize_t)socket_send(sockfd, buf, (uint32_t)len);
+    if (!buf && len != 0u) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!state || !state->valid || state->type != POSIX_FD_SOCKET) {
+        errno = EBADF;
+        return -1;
+    }
+    for (;;) {
+        int32_t result = socket_send(sockfd, buf, (uint32_t)len);
+        if (result < 0) {
+            posix_set_errno_from_status(result);
+            return -1;
+        }
+        if (result > 0 || len == 0u) {
+            return (ssize_t)result;
+        }
+        if ((flags & MSG_DONTWAIT) != 0 ||
+            (state->status_flags & O_NONBLOCK) != 0) {
+            errno = EAGAIN;
+            return -1;
+        }
+        socket_info_t info;
+        if (socket_get_info(sockfd, &info) < 0 || info.state != 4u) {
+            errno = EPIPE;
+            return -1;
+        }
+        sleep_ms(1u);
+    }
 }
 
 ssize_t recv(int sockfd, void* buf, size_t len, int flags)
 {
+    posix_fd_state_t* state = posix_fd_state(sockfd);
     if ((flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL)) != 0) {
         errno = EINVAL;
         return -1;
     }
+    if (!buf && len != 0u) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!state || !state->valid || state->type != POSIX_FD_SOCKET) {
+        errno = EBADF;
+        return -1;
+    }
     for (;;) {
         int32_t result = socket_recv(sockfd, buf, (uint32_t)len);
-        if (result != 0 || (flags & MSG_DONTWAIT) != 0) {
+        if (result < 0) {
+            posix_set_errno_from_status(result);
+            return -1;
+        }
+        if (result != 0 || len == 0u) {
             return (ssize_t)result;
         }
         socket_info_t info;
         if (socket_get_info(sockfd, &info) < 0 ||
             (info.state != 4u && info.state != 5u && info.state != 6u)) {
             return 0;
+        }
+        if ((flags & MSG_DONTWAIT) != 0 ||
+            (state->status_flags & O_NONBLOCK) != 0) {
+            errno = EAGAIN;
+            return -1;
         }
         sleep_ms(1u);
     }
@@ -1029,7 +1521,7 @@ int shutdown(int sockfd, int how)
         errno = EINVAL;
         return -1;
     }
-    return socket_shutdown(sockfd, how);
+    return posix_status_to_rc(socket_shutdown(sockfd, how));
 }
 
 int setsockopt(int sockfd, int level, int optname, const void* optval, socklen_t optlen)
@@ -2067,6 +2559,40 @@ int clock_gettime(clockid_t clk_id, struct timespec *tp)
     return -1;
 }
 
+ssize_t getrandom(void *buffer, size_t length, unsigned int flags)
+{
+    if (!buffer && length != 0u) {
+        errno = EINVAL;
+        return -1;
+    }
+    int64_t result = (int64_t)syscall3(SYSCALL_GETRANDOM,
+                                       (uint64_t)(uintptr_t)buffer,
+                                       (uint64_t)length,
+                                       (uint64_t)flags);
+    if (result < 0) {
+        posix_set_errno_from_status((int32_t)result);
+        return -1;
+    }
+    return (ssize_t)result;
+}
+
+int getentropy(void *buffer, size_t length)
+{
+    if (length > 256u) {
+        errno = EIO;
+        return -1;
+    }
+    ssize_t result = getrandom(buffer, length, 0u);
+    if (result < 0) {
+        return -1;
+    }
+    if ((size_t)result != length) {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
 int clock_settime(clockid_t clk_id, const struct timespec *tp)
 {
     (void)clk_id; (void)tp;
@@ -2139,6 +2665,173 @@ struct tm *localtime(const time_t *timep)
     return localtime_r(timep, &result);
 }
 
+static int strftime_append_char(char* s, size_t max, size_t* pos, char c)
+{
+    if (*pos + 1 >= max) {
+        return 0;
+    }
+    s[*pos] = c;
+    (*pos)++;
+    s[*pos] = '\0';
+    return 1;
+}
+
+static int strftime_append_string(char* s, size_t max, size_t* pos, const char* value)
+{
+    while (value && *value) {
+        if (!strftime_append_char(s, max, pos, *value++)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int strftime_append_number(char* s, size_t max, size_t* pos,
+                                  int value, int width, char pad)
+{
+    char digits[16];
+    int ndigits = 0;
+
+    if (value < 0) {
+        value = 0;
+    }
+
+    do {
+        digits[ndigits++] = (char)('0' + (value % 10));
+        value /= 10;
+    } while (value != 0 && ndigits < (int)sizeof(digits));
+
+    while (ndigits < width) {
+        if (!strftime_append_char(s, max, pos, pad)) {
+            return 0;
+        }
+        width--;
+    }
+
+    while (ndigits > 0) {
+        if (!strftime_append_char(s, max, pos, digits[--ndigits])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+size_t strftime(char* s, size_t max, const char* format, const struct tm* tm)
+{
+    static const char* const wday_short[] = {
+        "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+    };
+    static const char* const wday_long[] = {
+        "Sunday", "Monday", "Tuesday", "Wednesday",
+        "Thursday", "Friday", "Saturday"
+    };
+    static const char* const mon_short[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    static const char* const mon_long[] = {
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    };
+
+    if (!s || max == 0 || !format || !tm) {
+        return 0;
+    }
+
+    s[0] = '\0';
+    size_t pos = 0;
+
+    for (const char* p = format; *p; p++) {
+        if (*p != '%') {
+            if (!strftime_append_char(s, max, &pos, *p)) {
+                return 0;
+            }
+            continue;
+        }
+
+        p++;
+        if (*p == '\0') {
+            if (!strftime_append_char(s, max, &pos, '%')) {
+                return 0;
+            }
+            break;
+        }
+
+        int mon = tm->tm_mon;
+        int wday = tm->tm_wday;
+        if (mon < 0 || mon > 11) mon = 0;
+        if (wday < 0 || wday > 6) wday = 0;
+
+        switch (*p) {
+            case '%':
+                if (!strftime_append_char(s, max, &pos, '%')) return 0;
+                break;
+            case 'a':
+                if (!strftime_append_string(s, max, &pos, wday_short[wday])) return 0;
+                break;
+            case 'A':
+                if (!strftime_append_string(s, max, &pos, wday_long[wday])) return 0;
+                break;
+            case 'b':
+            case 'h':
+                if (!strftime_append_string(s, max, &pos, mon_short[mon])) return 0;
+                break;
+            case 'B':
+                if (!strftime_append_string(s, max, &pos, mon_long[mon])) return 0;
+                break;
+            case 'd':
+                if (!strftime_append_number(s, max, &pos, tm->tm_mday, 2, '0')) return 0;
+                break;
+            case 'e':
+                if (!strftime_append_number(s, max, &pos, tm->tm_mday, 2, ' ')) return 0;
+                break;
+            case 'H':
+                if (!strftime_append_number(s, max, &pos, tm->tm_hour, 2, '0')) return 0;
+                break;
+            case 'M':
+                if (!strftime_append_number(s, max, &pos, tm->tm_min, 2, '0')) return 0;
+                break;
+            case 'S':
+                if (!strftime_append_number(s, max, &pos, tm->tm_sec, 2, '0')) return 0;
+                break;
+            case 'm':
+                if (!strftime_append_number(s, max, &pos, tm->tm_mon + 1, 2, '0')) return 0;
+                break;
+            case 'Y':
+                if (!strftime_append_number(s, max, &pos, tm->tm_year + 1900, 4, '0')) return 0;
+                break;
+            case 'y':
+                if (!strftime_append_number(s, max, &pos, (tm->tm_year + 1900) % 100, 2, '0')) return 0;
+                break;
+            case 'F':
+                if (!strftime_append_number(s, max, &pos, tm->tm_year + 1900, 4, '0')) return 0;
+                if (!strftime_append_char(s, max, &pos, '-')) return 0;
+                if (!strftime_append_number(s, max, &pos, tm->tm_mon + 1, 2, '0')) return 0;
+                if (!strftime_append_char(s, max, &pos, '-')) return 0;
+                if (!strftime_append_number(s, max, &pos, tm->tm_mday, 2, '0')) return 0;
+                break;
+            case 'R':
+                if (!strftime_append_number(s, max, &pos, tm->tm_hour, 2, '0')) return 0;
+                if (!strftime_append_char(s, max, &pos, ':')) return 0;
+                if (!strftime_append_number(s, max, &pos, tm->tm_min, 2, '0')) return 0;
+                break;
+            case 'T':
+                if (!strftime_append_number(s, max, &pos, tm->tm_hour, 2, '0')) return 0;
+                if (!strftime_append_char(s, max, &pos, ':')) return 0;
+                if (!strftime_append_number(s, max, &pos, tm->tm_min, 2, '0')) return 0;
+                if (!strftime_append_char(s, max, &pos, ':')) return 0;
+                if (!strftime_append_number(s, max, &pos, tm->tm_sec, 2, '0')) return 0;
+                break;
+            default:
+                if (!strftime_append_char(s, max, &pos, '%')) return 0;
+                if (!strftime_append_char(s, max, &pos, *p)) return 0;
+                break;
+        }
+    }
+
+    return pos;
+}
+
 time_t mktime(struct tm *t)
 {
     if (!t) return (time_t)-1;
@@ -2167,8 +2860,6 @@ double difftime(time_t t1, time_t t0)
 {
     return (double)(t1 - t0);
 }
-
-static int rmdir(const char *path);
 
 char *getcwd(char *buf, size_t size)
 {
@@ -2203,6 +2894,56 @@ int access(const char *path, int mode)
         return -1;
     }
     return 0;
+}
+
+char *realpath(const char *path, char *resolved_path)
+{
+    char temp[POSIX_AT_PATH_MAX];
+    char cwd_buf[POSIX_AT_PATH_MAX];
+    char *out;
+
+    if (!path) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    if (path[0] == '/') {
+        if (strlcpy(temp, path, sizeof(temp)) >= sizeof(temp)) {
+            errno = ENAMETOOLONG;
+            return NULL;
+        }
+    } else {
+        if (!getcwd(cwd_buf, sizeof(cwd_buf))) {
+            return NULL;
+        }
+        size_t cwd_len = strlen(cwd_buf);
+        size_t path_len = strlen(path);
+        int needs_slash = (cwd_len > 0 && cwd_buf[cwd_len - 1] != '/');
+        if (cwd_len + (needs_slash ? 1u : 0u) + path_len + 1u > sizeof(temp)) {
+            errno = ENAMETOOLONG;
+            return NULL;
+        }
+        strlcpy(temp, cwd_buf, sizeof(temp));
+        if (needs_slash) {
+            strlcat(temp, "/", sizeof(temp));
+        }
+        strlcat(temp, path, sizeof(temp));
+    }
+
+    if (access(temp, F_OK) != 0) {
+        return NULL;
+    }
+
+    out = resolved_path;
+    if (!out) {
+        out = (char*)malloc(strlen(temp) + 1u);
+        if (!out) {
+            errno = ENOMEM;
+            return NULL;
+        }
+    }
+    strcpy(out, temp);
+    return out;
 }
 
 int lstat(const char *path, struct stat *st)
@@ -2296,15 +3037,19 @@ gid_t getegid(void) { return 0; }
 
 int openat(int dirfd, const char *path, int flags, ...)
 {
-    (void)dirfd;
     va_list ap;
+    char full_path[POSIX_AT_PATH_MAX];
+    if (posix_make_at_path(dirfd, path, full_path, sizeof(full_path)) < 0) {
+        return -1;
+    }
+
     va_start(ap, flags);
     int rc;
     if (flags & O_CREAT) {
         (void)va_arg(ap, mode_t);
-        rc = open(path, flags | O_CREAT);
+        rc = open(full_path, flags | O_CREAT);
     } else {
-        rc = open(path, flags);
+        rc = open(full_path, flags);
     }
     va_end(ap);
     return rc;
@@ -2312,24 +3057,28 @@ int openat(int dirfd, const char *path, int flags, ...)
 
 int unlinkat(int dirfd, const char *path, int flags)
 {
-    (void)dirfd;
-    if (flags & AT_REMOVEDIR) {
-        return rmdir(path);
+    char full_path[POSIX_AT_PATH_MAX];
+    if (posix_make_at_path(dirfd, path, full_path, sizeof(full_path)) < 0) {
+        return -1;
     }
-    return unlink(path);
+    if (flags & AT_REMOVEDIR) {
+        return rmdir(full_path);
+    }
+    return unlink(full_path);
 }
 
 int mkdirat(int dirfd, const char *path, mode_t mode)
 {
-    (void)dirfd;
-    return mkdir(path, mode);
+    char full_path[POSIX_AT_PATH_MAX];
+    if (posix_make_at_path(dirfd, path, full_path, sizeof(full_path)) < 0) {
+        return -1;
+    }
+    return mkdir(full_path, mode);
 }
 
-static int rmdir(const char *path)
+int rmdir(const char *path)
 {
-    (void)path;
-    errno = ENOSYS;
-    return -1;
+    return file_unlink(path);
 }
 
 ssize_t readv(int fd, const struct iovec *iov, int iovcnt)
@@ -2479,8 +3228,46 @@ int inet_pton(int af, const char *src, void *dst)
 int getaddrinfo(const char *node, const char *service,
                 const struct addrinfo *hints, struct addrinfo **res)
 {
+    const int supported_flags = AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST |
+                                AI_NUMERICSERV | AI_ADDRCONFIG;
+    uint16_t port = 0u;
+    int family = hints ? hints->ai_family : AF_UNSPEC;
+    int socktype = hints ? hints->ai_socktype : 0;
+    int protocol = hints ? hints->ai_protocol : 0;
+    int flags = hints ? hints->ai_flags : 0;
+
     if (!res) return EAI_BADFLAGS;
+    *res = NULL;
     if (!node && !service) return EAI_NONAME;
+    if ((flags & ~supported_flags) != 0) return EAI_BADFLAGS;
+    if (family != AF_UNSPEC && family != AF_INET) return EAI_FAMILY;
+    if (socktype != 0 && socktype != SOCK_STREAM && socktype != SOCK_DGRAM)
+        return EAI_SOCKTYPE;
+    if (socktype == 0) socktype = SOCK_STREAM;
+    if (protocol == 0) {
+        protocol = socktype == SOCK_DGRAM ? IPPROTO_UDP : IPPROTO_TCP;
+    } else if ((socktype == SOCK_STREAM && protocol != IPPROTO_TCP) ||
+               (socktype == SOCK_DGRAM && protocol != IPPROTO_UDP)) {
+        return EAI_SERVICE;
+    }
+
+    if (service) {
+        char *end = NULL;
+        long parsed = strtol(service, &end, 10);
+        if (end != service && *end == '\0' && parsed >= 0 && parsed <= 65535) {
+            port = (uint16_t)parsed;
+        } else if ((flags & AI_NUMERICSERV) != 0) {
+            return EAI_SERVICE;
+        } else if (strcmp(service, "http") == 0) {
+            port = 80u;
+        } else if (strcmp(service, "https") == 0) {
+            port = 443u;
+        } else if (strcmp(service, "domain") == 0) {
+            port = 53u;
+        } else {
+            return EAI_SERVICE;
+        }
+    }
 
     struct addrinfo *ai = (struct addrinfo*)calloc(1, sizeof(struct addrinfo));
     if (!ai) return EAI_MEMORY;
@@ -2488,34 +3275,44 @@ int getaddrinfo(const char *node, const char *service,
     struct sockaddr_in *sin = (struct sockaddr_in*)calloc(1, sizeof(struct sockaddr_in));
     if (!sin) { free(ai); return EAI_MEMORY; }
 
-    ai->ai_flags = hints ? hints->ai_flags : 0;
+    ai->ai_flags = flags;
     ai->ai_family = AF_INET;
-    ai->ai_socktype = hints ? hints->ai_socktype : SOCK_STREAM;
-    ai->ai_protocol = hints ? hints->ai_protocol : 0;
+    ai->ai_socktype = socktype;
+    ai->ai_protocol = protocol;
     ai->ai_addrlen = sizeof(struct sockaddr_in);
     ai->ai_addr = (struct sockaddr*)sin;
 
     sin->sin_family = AF_INET;
-    sin->sin_port = 0;
+    sin->sin_port = htons(port);
     sin->sin_addr.s_addr = INADDR_ANY;
 
     if (node) {
         if (inet_pton(AF_INET, node, &sin->sin_addr) <= 0) {
-            free(sin);
-            free(ai);
-            return EAI_NONAME;
+            if ((flags & AI_NUMERICHOST) != 0) {
+                free(sin);
+                free(ai);
+                return EAI_NONAME;
+            }
+            uint32_t resolved = dns_resolve(node);
+            if (resolved == 0u) {
+                free(sin);
+                free(ai);
+                return EAI_NONAME;
+            }
+            sin->sin_addr.s_addr = htonl(resolved);
+        }
+        if ((flags & AI_CANONNAME) != 0) {
+            ai->ai_canonname = strdup(node);
+            if (!ai->ai_canonname) {
+                free(sin);
+                free(ai);
+                return EAI_MEMORY;
+            }
         }
     } else if (ai->ai_flags & AI_PASSIVE) {
         sin->sin_addr.s_addr = htonl(INADDR_ANY);
     } else {
         sin->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    }
-
-    if (service) {
-        long port = strtol(service, NULL, 10);
-        if (port > 0 && port < 65536) {
-            sin->sin_port = htons((uint16_t)port);
-        }
     }
 
     *res = ai;
@@ -2524,9 +3321,12 @@ int getaddrinfo(const char *node, const char *service,
 
 void freeaddrinfo(struct addrinfo *res)
 {
-    if (res) {
+    while (res) {
+        struct addrinfo *next = res->ai_next;
         free(res->ai_addr);
+        free(res->ai_canonname);
         free(res);
+        res = next;
     }
 }
 
@@ -2552,6 +3352,24 @@ int getnameinfo(const struct sockaddr *sa, socklen_t salen,
     return 0;
 }
 
+const char *gai_strerror(int errcode)
+{
+    switch (errcode) {
+        case 0: return "Success";
+        case EAI_BADFLAGS: return "Bad flags";
+        case EAI_NONAME: return "Name or service not known";
+        case EAI_AGAIN: return "Temporary name resolution failure";
+        case EAI_FAIL: return "Non-recoverable name resolution failure";
+        case EAI_FAMILY: return "Address family not supported";
+        case EAI_MEMORY: return "Memory allocation failure";
+        case EAI_SERVICE: return "Service not supported";
+        case EAI_SOCKTYPE: return "Socket type not supported";
+        case EAI_NODATA: return "No address associated with name";
+        case EAI_SYSTEM: return "System error";
+        default: return "Unknown getaddrinfo error";
+    }
+}
+
 struct hostent *gethostbyname(const char *name)
 {
     static struct hostent he;
@@ -2565,7 +3383,12 @@ struct hostent *gethostbyname(const char *name)
     hostname_buf[sizeof(hostname_buf) - 1] = '\0';
 
     if (inet_pton(AF_INET, name, &addr) <= 0) {
-        addr.s_addr = htonl(INADDR_LOOPBACK);
+        uint32_t resolved = dns_resolve(name);
+        if (resolved == 0u) {
+            errno = ENOENT;
+            return NULL;
+        }
+        addr.s_addr = htonl(resolved);
     }
 
     he.h_name = hostname_buf;
@@ -2605,17 +3428,55 @@ struct hostent *gethostbyaddr(const void *addr, socklen_t len, int type)
 
 struct servent *getservbyname(const char *name, const char *proto)
 {
-    (void)name;
-    (void)proto;
-    errno = ENOSYS;
-    return NULL;
+    static struct servent service;
+    static char *aliases[1];
+    if (!name) {
+        errno = EINVAL;
+        return NULL;
+    }
+    if (proto && strcmp(proto, "tcp") != 0 && strcmp(proto, "udp") != 0) {
+        errno = ENOENT;
+        return NULL;
+    }
+    memset(&service, 0, sizeof(service));
+    aliases[0] = NULL;
+    service.s_name = (char*)name;
+    service.s_aliases = aliases;
+    service.s_proto = (char*)(proto ? proto : "tcp");
+    if (strcmp(name, "http") == 0) {
+        service.s_port = (int)htons(80u);
+    } else if (strcmp(name, "https") == 0) {
+        service.s_port = (int)htons(443u);
+    } else if (strcmp(name, "domain") == 0) {
+        service.s_port = (int)htons(53u);
+    } else {
+        errno = ENOENT;
+        return NULL;
+    }
+    return &service;
 }
 
 struct protoent *getprotobyname(const char *name)
 {
-    (void)name;
-    errno = ENOSYS;
-    return NULL;
+    static struct protoent proto;
+    static char *aliases[1];
+    if (!name) {
+        errno = EINVAL;
+        return NULL;
+    }
+    memset(&proto, 0, sizeof(proto));
+    aliases[0] = NULL;
+    proto.p_name = (char*)name;
+    proto.p_aliases = aliases;
+    if (strcmp(name, "tcp") == 0) {
+        proto.p_proto = IPPROTO_TCP;
+    } else if (strcmp(name, "udp") == 0) {
+        proto.p_proto = IPPROTO_UDP;
+    } else {
+        errno = ENOENT;
+        return NULL;
+    }
+    return &proto;
 }
 
 int pthread_rwlock_init(pthread_rwlock_t *rwlock, const pthread_rwlockattr_t *attr)

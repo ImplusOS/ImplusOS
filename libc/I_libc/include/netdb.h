@@ -72,6 +72,7 @@ void freeaddrinfo(struct addrinfo *res);
 int getnameinfo(const struct sockaddr *sa, socklen_t salen,
                 char *host, size_t hostlen, char *serv, size_t servlen,
                 int flags);
+const char *gai_strerror(int errcode);
 
 struct hostent *gethostbyname(const char *name);
 struct hostent *gethostbyaddr(const void *addr, socklen_t len, int type);

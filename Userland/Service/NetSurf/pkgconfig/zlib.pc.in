@@ -1,0 +1,11 @@
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=@REPO_ROOT@/Vendor/Library/zlib
+
+Name: zlib
+Description: ImplusOS staged zlib
+Version: 1.3.1
+Libs: -L${libdir} -lz
+Cflags: -I${includedir}
+

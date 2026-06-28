@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 
 typedef int64_t time_t;
@@ -44,3 +45,4 @@ struct tm  *gmtime      (const time_t* timep);
 struct tm  *localtime   (const time_t* timep);
 time_t      mktime      (struct tm* tm);
 double      difftime    (time_t t1, time_t t0);
+size_t      strftime    (char* s, size_t max, const char* format, const struct tm* tm);

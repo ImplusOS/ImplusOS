@@ -76,8 +76,12 @@ static float parse_float_value(const char *text, float fallback)
 static void surface_clear(wm_window_t *window)
 {
     if (!window || !window->surface) return;
-    uint64_t count = (uint64_t)window->frame.w * window->frame.h;
-    for (uint64_t i = 0; i < count; ++i) window->surface[i] = window->bg_color;
+    uint32_t w = window->frame.w;
+    uint32_t h = window->frame.h;
+    uint32_t color = window->bg_color;
+    for (uint32_t col = 0u; col < w; ++col) window->surface[col] = color;
+    for (uint32_t row = 1u; row < h; ++row)
+        memcpy(&window->surface[row * w], &window->surface[0], (size_t)w * sizeof(uint32_t));
 }
 
 static void render_xml_node(wm_state_t *state, wm_window_t *window,

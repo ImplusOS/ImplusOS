@@ -17,6 +17,7 @@ void    sleep_ms(uint64_t milliseconds);
 
 int open(const char* path, int flags, ...);
 int creat(const char* path, int mode);
+int rmdir(const char* path);
 ssize_t read(int fd, void* buf, size_t count);
 ssize_t write(int fd, const void* buf, size_t count);
 int close(int fd);
@@ -34,6 +35,7 @@ int dup2(int oldfd, int newfd);
 unsigned int sleep(unsigned int seconds);
 typedef unsigned int useconds_t;
 int usleep(useconds_t usec);
+int getentropy(void *buffer, size_t length);
 
 char *getcwd(char *buf, size_t size);
 int chdir(const char *path);

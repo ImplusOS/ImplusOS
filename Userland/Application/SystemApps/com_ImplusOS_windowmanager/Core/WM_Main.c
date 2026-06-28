@@ -72,8 +72,6 @@ void wm_service_init(wm_state_t *state)
 
 void wm_service_main_loop(void)
 {
-    draw_fill_rect(0u, 0u, get_display_width(), get_display_height(), 0xFFEEEEEEu);
-    draw_present();
     wm_service_init(&g_wm_state);
     if (!g_wm_state.running) {
         for (;;) process_yield();

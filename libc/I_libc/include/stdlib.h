@@ -22,6 +22,7 @@ double atof(const char* nptr);
 
 void exit(int status);
 void abort(void);
+int atexit(void (*function)(void));
 
 int atoi(const char* nptr);
 long atol(const char* nptr);
@@ -41,10 +42,13 @@ void qsort(void* base, size_t nmemb, size_t size, int (*compar)(const void*, con
 void* bsearch(const void* key, const void* base, size_t nmemb, size_t size,
               int (*compar)(const void*, const void*));
 
+#define RAND_MAX 0x7fff
+
 char* getenv(const char* name);
 int setenv(const char *name, const char *value, int overwrite);
 int unsetenv(const char *name);
 int putenv(char *string);
+char* realpath(const char* path, char* resolved_path);
 
 int rand(void);
 void srand(unsigned int seed);

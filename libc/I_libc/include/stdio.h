@@ -19,6 +19,9 @@ struct FILE {
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
+#define _IONBF 0
+#define _IOLBF 1
+#define _IOFBF 2
 
 extern FILE* stdin;
 extern FILE* stdout;
@@ -41,6 +44,8 @@ int fclose(FILE* stream);
 size_t fread(void* ptr, size_t size, size_t nmemb, FILE* stream);
 size_t fwrite(const void* ptr, size_t size, size_t nmemb, FILE* stream);
 int fflush(FILE* stream);
+void setbuf(FILE* stream, char* buf);
+int setvbuf(FILE* stream, char* buf, int mode, size_t size);
 int fseek(FILE* stream, long offset, int whence);
 long ftell(FILE* stream);
 void rewind(FILE* stream);

@@ -201,31 +201,15 @@ static void draw_cursor(wm_state_t *state, wm_canvas_t *canvas)
         draw_resize_cursor(state, canvas, x, y);
 }
 
-static void draw_cursor_layer(wm_state_t *state)
+static void draw_cursor_on_shadow(wm_state_t *state)
 {
     if (!state->scene.cursor_visible) return;
-    uint32_t *framebuffer = (uint32_t *)sys_get_display_framebuffer();
-    if (framebuffer) {
-        wm_canvas_t canvas;
-        wm_canvas_init(&canvas, framebuffer,
-                       state->compositor.framebuffer_width,
-                       state->compositor.framebuffer_height,
-                       state->compositor.framebuffer_width);
-        draw_cursor(state, &canvas);
-        return;
-    }
     wm_canvas_t canvas;
     wm_canvas_init(&canvas, state->compositor.shadow,
                    state->compositor.framebuffer_width,
                    state->compositor.framebuffer_height,
                    state->compositor.framebuffer_width);
     draw_cursor(state, &canvas);
-    wm_rect_t cr = wm_rect_intersection(
-        (wm_rect_t){(int32_t)state->scene.cursor_x-3,
-                    (int32_t)state->scene.cursor_y-3,
-                    WM_CURSOR_WIDTH+12u, WM_CURSOR_HEIGHT+12u},
-        display_bounds(state));
-    if (cr.w && cr.h) flush_rect(state, cr);
 }
 
 static void flush_rect(wm_state_t *state, wm_rect_t rect)
@@ -289,6 +273,7 @@ void wm_compositor_render(wm_state_t *state, uint64_t now_ms)
     if (damage.full) rects[0] = full;
     else memcpy(rects, damage.rects, sizeof(wm_rect_t)*rect_count);
 
+    /* Phase 1: Render scene content into shadow buffer */
     for (uint32_t i = 0; i < rect_count; ++i) {
         wm_rect_t rect = wm_rect_intersection(rects[i], full);
         if (!rect.w || !rect.h) continue;
@@ -303,9 +288,18 @@ void wm_compositor_render(wm_state_t *state, uint64_t now_ms)
         wm_taskbar_draw(state, &canvas);
         wm_start_menu_draw(state, &canvas);
         wm_notification_draw(state, &canvas, now_ms);
+    }
+
+    /* Phase 2: Draw cursor into shadow buffer (not directly to FB) */
+    draw_cursor_on_shadow(state);
+
+    /* Phase 3: Flush all damage rects to driver framebuffer */
+    for (uint32_t i = 0; i < rect_count; ++i) {
+        wm_rect_t rect = wm_rect_intersection(rects[i], full);
+        if (!rect.w || !rect.h) continue;
         flush_rect(state, rect);
     }
-    draw_cursor_layer(state);
+
     draw_present();
     state->compositor.previous_cursor_x       = state->scene.cursor_x;
     state->compositor.previous_cursor_y       = state->scene.cursor_y;

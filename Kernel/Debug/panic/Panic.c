@@ -172,6 +172,61 @@ static void draw_text_ttf(int x, int y, const char* text, float size, uint32_t c
     }
 }
 
+static void draw_recent_kernel_log(int x, int y, int max_width_px, int max_lines)
+{
+    static char log_buf[8192];
+    char line_buf[192];
+
+    if (!g_font_valid || max_lines <= 0 || max_width_px <= 0) {
+        return;
+    }
+
+    uint32_t len = serial_copy_log(log_buf, sizeof(log_buf));
+    if (len == 0u) {
+        return;
+    }
+
+    const char *line_starts[96];
+    int line_count = 0;
+    line_starts[line_count++] = log_buf;
+    for (uint32_t i = 0u; i < len && line_count < 96; ++i) {
+        if (log_buf[i] == '\n' && i + 1u < len) {
+            line_starts[line_count++] = &log_buf[i + 1u];
+        }
+    }
+
+    int first = line_count - max_lines;
+    if (first < 0) {
+        first = 0;
+    }
+
+    draw_text_ttf(x, y, "Recent kernel log:", 16.0f, 0xFFFFFF);
+    y += 24;
+
+    int max_chars = max_width_px / 8;
+    if (max_chars > (int)sizeof(line_buf) - 1) {
+        max_chars = (int)sizeof(line_buf) - 1;
+    }
+    if (max_chars < 16) {
+        max_chars = 16;
+    }
+
+    for (int l = first; l < line_count; ++l) {
+        const char *src = line_starts[l];
+        int n = 0;
+        while (src[n] != '\0' && src[n] != '\n' && n < max_chars) {
+            char c = src[n];
+            line_buf[n] = (c >= 0x20 && c <= 0x7E) ? c : '?';
+            ++n;
+        }
+        line_buf[n] = '\0';
+        if (n > 0) {
+            draw_text_ttf(x, y, line_buf, 13.0f, 0xD8E8FF);
+            y += 16;
+        }
+    }
+}
+
 void kernel_panic(const char* module_name, const char* message) {
     load_bar_finish();
 
@@ -187,7 +242,7 @@ void kernel_panic(const char* module_name, const char* message) {
         uint32_t height = bi->VerticalResolution;
         uint32_t pitch = bi->PixelsPerScanLine;
 
-        uint32_t bg_color = 0x00004488;
+        uint32_t bg_color = 0xFF004488;
         for (uint32_t y = 0; y < height; y++) {
             for (uint32_t x = 0; x < width; x++) {
                 fb[y * pitch + x] = bg_color;
@@ -214,9 +269,18 @@ void kernel_panic(const char* module_name, const char* message) {
             draw_text_ttf(center_x - 300, 350, buf, 20.0f, 0xFFFFFF);
         }
 
-        draw_text_ttf(center_x - 300, 450, "ACPIが使用できないため、お使いのコンピューターを再起動してください。", 18.0f, 0xAAAAAA);
-        draw_text_ttf(center_x - 300, 480, "未知の問題であり、かつあなたが開発者であれば、GithubにIssueを出してみてください。", 18.0f, 0xAAAAAA);
-        draw_text_ttf(center_x - 300, 510, "URL : https://github.com/ImplusOS/ImplusOS/issues", 18.0f, 0xAAAAAA);
+        int log_lines = ((int)height - 470) / 16;
+        if (log_lines < 12) log_lines = 12;
+        if (log_lines > 28) log_lines = 28;
+        draw_recent_kernel_log(32, 390, (int)width - 64, log_lines);
+
+        int footer_y = (int)height - 96;
+        if (footer_y < 700) {
+            footer_y = 700;
+        }
+        draw_text_ttf(center_x - 300, footer_y, "ACPIが使用できないため、お使いのコンピューターを再起動してください。", 18.0f, 0xAAAAAA);
+        draw_text_ttf(center_x - 300, footer_y + 30, "未知の問題であり、かつあなたが開発者であれば、GithubにIssueを出してみてください。", 18.0f, 0xAAAAAA);
+        draw_text_ttf(center_x - 300, footer_y + 60, "URL : https://github.com/ImplusOS/ImplusOS/issues", 18.0f, 0xAAAAAA);
     }
 
     while (1) {

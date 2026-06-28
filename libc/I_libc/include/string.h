@@ -5,6 +5,10 @@ void* memset(void* ptr, int v, size_t n);
 void* memcpy(void* dst, const void* src, size_t n);
 void* memmove(void* dst, const void* src, size_t n);
 int memcmp(const void* a, const void* b, size_t n);
+int bcmp(const void* s1, const void* s2, size_t n);
+void bcopy(const void* src, void* dst, size_t n);
+void bzero(void* s, size_t n);
+int ffs(int i);
 
 size_t strlen(const char* s);
 size_t strnlen(const char* s, size_t max_len);
@@ -24,6 +28,7 @@ char* strstr(const char* haystack, const char* needle);
 char* strtok(char* str, const char* delim);
 char* strtok_r(char* str, const char* delim, char** saveptr);
 char* strdup(const char* s);
+char* strndup(const char* s, size_t n);
 char* strcat(char* dst, const char* src);
 char* strncat(char* dst, const char* src, size_t n);
 const char* strerror(int errnum);

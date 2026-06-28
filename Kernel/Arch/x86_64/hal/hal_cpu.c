@@ -114,6 +114,28 @@ void hal_arch_switch_stack(uintptr_t sp)
     __asm__ volatile("mov %0, %%rsp" :: "r"(sp) : "memory");
 }
 
+__attribute__((noreturn))
+void hal_arch_switch_stack_and_jump(uintptr_t sp,
+                                    void (*entry)(BOOT_INFO *),
+                                    BOOT_INFO *boot_info)
+{
+    __asm__ volatile(
+        "mov %[stack], %%rsp\n\t"
+        "andq $-16, %%rsp\n\t"
+        "subq $8, %%rsp\n\t"
+        "movq $0, (%%rsp)\n\t"
+        "xorq %%rbp, %%rbp\n\t"
+        "mov %[boot], %%rdi\n\t"
+        "jmp *%[entry]\n\t"
+        :
+        : [stack] "r"(sp),
+          [entry] "r"(entry),
+          [boot] "r"(boot_info)
+        : "rdi", "memory"
+    );
+    __builtin_unreachable();
+}
+
 uint64_t hal_cpu_get_current_el(void)
 {
     return 0;

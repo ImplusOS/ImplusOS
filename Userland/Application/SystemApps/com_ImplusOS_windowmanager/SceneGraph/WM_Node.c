@@ -3,6 +3,7 @@
 #include "../Animation/WM_Animation.h"
 #include "../Compositor/WM_Damage.h"
 #include "../../../../../Userland/API/Memory.h"
+#include "../../../../../Userland/API/Process.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -154,7 +155,9 @@ static bool allocate_surface(wm_window_t *window, uint32_t width, uint32_t heigh
         (void)os_shared_memory_close(shared_memory_handle);
         return false;
     }
-    for (uint64_t i = 0; i < (uint64_t)width * height; ++i) surface[i] = window->bg_color;
+    for (uint32_t col = 0u; col < width; ++col) surface[col] = window->bg_color;
+    for (uint32_t row = 1u; row < height; ++row)
+        memcpy(&surface[row * width], &surface[0], (size_t)width * sizeof(uint32_t));
 
     if (preserve && window->surface) {
         uint32_t copy_width = wm_min_u32(width, window->frame.w);
@@ -236,6 +239,7 @@ void wm_scene_destroy_immediate(wm_state_t *state, uint32_t id)
         }
     }
     if (state->scene.focused_id == id) state->scene.focused_id = 0u;
+    int32_t owner_pid = window->owner_pid;
     if (window->owner_pid > 0) {
         wm_msg_header_t destroyed = {
             .type = WM_WINDOW_DESTROYED,
@@ -255,6 +259,19 @@ void wm_scene_destroy_immediate(wm_state_t *state, uint32_t id)
     free(window->shadow_mask);
     free(window);
     if (state->scene.focused_id == 0u) wm_scene_focus_next(state, id);
+
+    if (owner_pid > 0 && owner_pid != process_get_current_pid()) {
+        bool has_other = false;
+        for (uint32_t i = 1u; i <= WM_MAX_WINDOWS; ++i) {
+            if (state->scene.id_table[i] && state->scene.id_table[i]->owner_pid == owner_pid) {
+                has_other = true;
+                break;
+            }
+        }
+        if (!has_other) {
+            process_kill(owner_pid);
+        }
+    }
 }
 
 void wm_scene_destroy_window(wm_state_t *state, uint32_t id)

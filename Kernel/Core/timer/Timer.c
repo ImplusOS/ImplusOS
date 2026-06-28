@@ -4,6 +4,7 @@
 
 #include "interfaces/timer_hal.h"
 #include "Core/process/ProcessManager.h"
+#include "Core/syscall/Syscall_Futex.h"
 #include "Core/window/WindowManager_Kernel.h"
 #include "Drivers/Module/DriverManager.h"
 #include "Drivers/Module/InputManager.h"
@@ -22,7 +23,12 @@ static uint32_t g_requested_hz = 0;
 #define TIMER_DEFAULT_HZ 250u
 
 static void timer_core_handler(void) {
-    if (smp_get_current_cpu_id() != 0u) {
+    uint32_t cpu_id = smp_get_current_cpu_id();
+    if (__atomic_load_n(&g_timer_services_started, __ATOMIC_ACQUIRE) != 0u) {
+        process_on_timer_tick();
+    }
+
+    if (cpu_id != 0u) {
         return;
     }
     g_tick_count++;
@@ -35,7 +41,7 @@ static void timer_core_handler(void) {
     }
 
     if (__atomic_load_n(&g_timer_services_started, __ATOMIC_ACQUIRE) != 0u) {
-        process_on_timer_tick();
+        syscall_futex_on_timer_tick();
         input_manager_schedule_poll();
         uint32_t hotplug_interval = g_requested_hz != 0u ?
                                     g_requested_hz :

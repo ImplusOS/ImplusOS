@@ -1400,9 +1400,17 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 stat.is_dir = 0;
                 stat.exists = 1;
             } else {
-                stat.size = 0;
-                stat.is_dir = 0;
-                stat.exists = 0;
+                int32_t dir_handle = vfs_opendir(path);
+                if (dir_handle >= 0) {
+                    (void)vfs_closedir(dir_handle);
+                    stat.size = 0;
+                    stat.is_dir = 1;
+                    stat.exists = 1;
+                } else {
+                    stat.size = 0;
+                    stat.is_dir = 0;
+                    stat.exists = 0;
+                }
             }
             if (copy_to_user(stat_out, &stat, sizeof(stat)) != 0u) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_stat_buffer");

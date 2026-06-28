@@ -2,6 +2,7 @@
 #include <string.h>
 #include "Core/sync/Spinlock.h"
 #include "Debug/serial/Serial.h"
+#include "Debug/printf/printf.h"
 
 static vfs_driver_t g_vfs_drivers[16];
 static int g_vfs_driver_count = 0;
@@ -42,8 +43,73 @@ bool vfs_init(void) {
     return true;
 }
 
+static bool vfs_probe_file_on_driver(const vfs_driver_t *driver,
+                                     const char *path,
+                                     uint32_t min_size,
+                                     const uint8_t *magic,
+                                     uint32_t magic_size)
+{
+    if (driver == NULL || driver->find_file == NULL || path == NULL) {
+        return false;
+    }
+    if (magic_size > 16u) {
+        return false;
+    }
+
+    vfs_file_t file;
+    memset(&file, 0, sizeof(file));
+    if (!driver->find_file(path, &file)) {
+        return false;
+    }
+    file.fs_driver = driver;
+
+    bool ok = file.size >= min_size;
+    if (ok && magic != NULL && magic_size != 0u) {
+        uint8_t probe[16];
+        memset(probe, 0, sizeof(probe));
+        ok = driver->read_at != NULL &&
+             driver->read_at(&file, 0u, probe, magic_size) &&
+             memcmp(probe, magic, magic_size) == 0;
+    }
+
+    if (driver->close_file != NULL) {
+        (void)driver->close_file(&file);
+    }
+    return ok;
+}
+
+bool vfs_set_default_fs_for_file(const char *path,
+                                 uint32_t min_size,
+                                 const uint8_t *magic,
+                                 uint32_t magic_size)
+{
+    if (path == NULL || path[0] == '\0') {
+        return false;
+    }
+
+    if (g_default_fs != NULL) {
+        if (vfs_probe_file_on_driver(g_default_fs, path, min_size,
+                                     magic, magic_size)) {
+            return true;
+        }
+    }
+
+    for (int i = 0; i < g_vfs_driver_count; i++) {
+        const vfs_driver_t *driver = &g_vfs_drivers[i];
+        if (driver == g_default_fs) {
+            continue;
+        }
+        if (vfs_probe_file_on_driver(driver, path, min_size,
+                                     magic, magic_size)) {
+            g_default_fs = driver;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool vfs_find_file(const char *path, vfs_file_t *out_file) {
-    const vfs_driver_t* best_match = NULL;
     size_t best_match_len = 0;
 
     for (int i = 0; i < g_vfs_driver_count; i++) {
@@ -68,9 +134,11 @@ bool vfs_find_file(const char *path, vfs_file_t *out_file) {
         return false;
     }
 
-    if (g_default_fs && g_default_fs->find_file(path, out_file)) {
-        out_file->fs_driver = g_default_fs;
-        return true;
+    if (g_default_fs) {
+        if (g_default_fs->find_file(path, out_file)) {
+            out_file->fs_driver = g_default_fs;
+            return true;
+        }
     }
 
     for (int i = 0; i < g_vfs_driver_count; i++) {
@@ -375,6 +443,10 @@ bool vfs_rename(const char *old_path, const char *new_path)
         return false;
     }
     return true;
+}
+
+int vfs_driver_count_get(void) {
+    return g_vfs_driver_count;
 }
 
 void vfs_list_root(void) {

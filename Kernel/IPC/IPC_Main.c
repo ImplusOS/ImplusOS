@@ -43,21 +43,6 @@ void ipc_init_process_queue(int32_t pid)
     irq_restore(irq_flags);
 }
 
-static ipc_message_queue_t *get_or_create_queue(int32_t pid)
-{
-    if (pid < 0 || pid >= MAX_PROCESSES) {
-        return NULL;
-    }
-
-    if (g_message_queues[pid] == NULL) {
-        g_message_queues[pid] = (ipc_message_queue_t *)malloc(sizeof(ipc_message_queue_t));
-        if (g_message_queues[pid] != NULL) {
-            memset(g_message_queues[pid], 0, sizeof(ipc_message_queue_t));
-        }
-    }
-    return g_message_queues[pid];
-}
-
 os_status_t ipc_send_message_from_pid(int32_t sender_pid,
                                       int32_t target_pid,
                                       const void *message,
@@ -67,18 +52,14 @@ os_status_t ipc_send_message_from_pid(int32_t sender_pid,
         return OS_STATUS_INVALID_ARG;
     }
 
-    if (!process_is_alive(target_pid)) {
-        return OS_STATUS_NOT_FOUND;
-    }
-
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_ipc_lock);
 
-    ipc_message_queue_t *queue = get_or_create_queue(target_pid);
+    ipc_message_queue_t *queue = g_message_queues[target_pid];
     if (queue == NULL) {
         spinlock_unlock(&g_ipc_lock);
         irq_restore(irq_flags);
-        return OS_STATUS_FAULT;
+        return OS_STATUS_NOT_FOUND;
     }
 
     if (queue->count >= IPC_MAX_MESSAGES_PER_PROCESS) {

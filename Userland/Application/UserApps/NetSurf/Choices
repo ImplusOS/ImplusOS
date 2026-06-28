@@ -1,0 +1,8 @@
+homepage_url:https://example.com/
+ca_bundle:/Userland/UserApps/NetSurf/res/ca-certificates.crt
+ca_path:
+http_proxy:
+max_fetchers:4
+max_fetchers_per_host:2
+max_cached_fetch_handles:2
+curl_fetch_timeout:30

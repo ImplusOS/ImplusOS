@@ -4,8 +4,8 @@
 #include <string.h>
 
 #define WATERMARK_TEXT \
-    "OS Version 0.2 Beta Version\n" \
-    "Build 2026.06.20\n" \
+    "OS Version 0.3 Release Version\n" \
+    "Build 2026\n" \
     "For Testing Only. Please do not redistribute."
 
 #define FONT_SIZE      16.0f

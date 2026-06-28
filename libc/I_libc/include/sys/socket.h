@@ -1,11 +1,17 @@
 #pragma once
 
 #include <sys/types.h>
+#include <sys/select.h>
 
 #define AF_UNSPEC 0
 #define AF_UNIX   1
 #define AF_INET   2
 #define AF_INET6  10
+
+#define PF_UNSPEC AF_UNSPEC
+#define PF_UNIX   AF_UNIX
+#define PF_INET   AF_INET
+#define PF_INET6  AF_INET6
 
 #define SOCK_STREAM 1
 #define SOCK_DGRAM  2
@@ -13,10 +19,12 @@
 #define SOL_SOCKET 1
 #define SO_REUSEADDR 2
 #define SO_ERROR 4
+#define SO_TYPE 3
 #define SHUT_RD 0
 #define SHUT_WR 1
 #define SHUT_RDWR 2
 
+#define MSG_PEEK     0x02
 #define MSG_DONTWAIT 0x40
 #define MSG_NOSIGNAL 0x4000
 

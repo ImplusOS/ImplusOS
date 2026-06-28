@@ -1,6 +1,8 @@
 #include "ProcessManager.h"
+#include "ProcessScheduler.h"
 
 #include "IPC/IPC_Main.h"
+#include "IPC/PnP_Notifications.h"
 #include "Core/elf/ELF_Loader.h"
 #include "Core/memory/SharedMemory.h"
 #include "cpu/GDT_Main.h"
@@ -16,6 +18,7 @@
 #include "smp/SMP_Main.h"
 #include <string.h>
 #include "Debug/serial/Serial.h"
+#include "Debug/printf/printf.h"
 #if defined(__aarch64__)
 #include "cpu/Exception.h"
 #endif
@@ -23,9 +26,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PROCESS_KERNEL_STACK_SIZE (32 * 1024)
-#define PROCESS_USER_ALLOC_MAX 4096
-#define PROCESS_SIGNAL_MAX 32
 #define PROCESS_RFLAGS_DEFAULT 0x202ULL
 #define PROCESS_GUARD_PAGE_SIZE PAGE_SIZE
 #define PROCESS_INITIAL_USER_STACK_SIZE (16ULL * PAGE_SIZE)
@@ -33,21 +33,12 @@
 #define PROCESS_THREAD_STACK_REGION_SIZE \
     (PROCESS_THREAD_STACK_SIZE + PROCESS_GUARD_PAGE_SIZE)
 
-#define PROCESS_STATE_UNUSED  0
-#define PROCESS_STATE_READY   1
-#define PROCESS_STATE_RUNNING 2
-#define PROCESS_STATE_DEAD    3
-#define PROCESS_STATE_INIT    4
-#define PROCESS_STATE_ZOMBIE  5
-#define PROCESS_STATE_BLOCKED 6
-
 #if defined(__aarch64__)
 #define PROCESS_CONTEXT_QWORDS ((uint32_t)(sizeof(arm64_exception_frame_t) / sizeof(uint64_t)))
 #else
 #define PROCESS_CONTEXT_QWORDS SYSCALL_FRAME_QWORDS
 #endif
 #define PROCESS_ELF_MAX_SIZE (20ULL * 1024ULL * 1024ULL)
-#define PROCESS_FPU_STATE_SIZE 544U
 
 #define IA32_FS_BASE 0xC0000100U
 
@@ -95,55 +86,6 @@ static inline void process_fpu_restore(uint8_t *state)
 }
 
 typedef struct {
-    uint8_t used;
-    uint64_t addr;
-    uint32_t size;
-} user_alloc_t;
-
-typedef struct __attribute__((aligned(16))) {
-    uint8_t state;
-    uint8_t is_thread;
-    uint8_t thread_detached;
-    process_capability_mask_t capability_mask;
-    uint64_t entry;
-    uint64_t saved_rsp;
-    uint64_t saved_user_rsp;
-    uint8_t  fpu_state[PROCESS_FPU_STATE_SIZE] __attribute__((aligned(16)));
-
-    uint64_t fs_base;
-
-    uint64_t cr3;
-    uint8_t *kernel_stack_base;
-    uint64_t kernel_stack_top;
-    uint64_t user_code_base;
-    uint64_t user_code_limit;
-    uint64_t user_heap_base;
-    uint64_t user_heap_cursor;
-    uint64_t user_heap_limit;
-    uint64_t user_heap_alloc_limit;
-    uint64_t user_heap_guard_page;
-    uint64_t user_stack_base;
-    uint64_t user_stack_top;
-    uint64_t user_stack_guard_page;
-    uint32_t timeslice;
-    uint64_t total_ticks;
-    char     name[64];
-    char     launch_argument[512];
-    int32_t parent_pid;
-    int32_t memory_owner_pid;
-    int32_t exit_status;
-    uint64_t thread_stack_region_base;
-    uint64_t thread_stack_region_size;
-    user_alloc_t user_allocs[PROCESS_USER_ALLOC_MAX];
-    uint64_t signal_handlers[PROCESS_SIGNAL_MAX];
-    uint64_t signal_mask;
-    uint32_t pending_signals;
-    uint64_t clear_child_tid;
-    uint64_t robust_list_head;
-    uint64_t robust_list_length;
-} process_t;
-
-typedef struct {
     uint64_t a_type;
     uint64_t a_val;
 } process_auxv_t;
@@ -166,10 +108,8 @@ enum {
 
 static process_t *g_processes = NULL;
 static int32_t g_process_capacity = 0;
-static int32_t g_current_pid_per_cpu[OS_CONFIG_SMP_MAX_CPUS];
 static spinlock_t g_process_table_lock;
 static uint32_t g_timeslice_ticks = 4;
-static int g_timeslice_resched = 0;
 
 static void initialize_fpu_state(uint8_t *fpu_state)
 {
@@ -186,16 +126,12 @@ static void initialize_fpu_state(uint8_t *fpu_state)
 
 int32_t current_pid_get(void)
 {
-    uint32_t cpu = smp_get_current_cpu_id();
-    if (cpu >= OS_CONFIG_SMP_MAX_CPUS) cpu = 0;
-    return g_current_pid_per_cpu[cpu];
+    return process_scheduler_current_pid();
 }
 
 static inline void current_pid_set(int32_t pid)
 {
-    uint32_t cpu = smp_get_current_cpu_id();
-    if (cpu >= OS_CONFIG_SMP_MAX_CPUS) cpu = 0;
-    g_current_pid_per_cpu[cpu] = pid;
+    process_scheduler_set_current_pid(pid);
 }
 
 
@@ -523,9 +459,7 @@ static void release_process_table(void)
     free(g_processes);
     g_processes = NULL;
     g_process_capacity = 0;
-    for (uint32_t i = 0; i < OS_CONFIG_SMP_MAX_CPUS; i++) {
-        g_current_pid_per_cpu[i] = -1;
-    }
+    process_scheduler_init(g_timeslice_ticks);
 }
 
 static int32_t find_free_slot(void)
@@ -554,35 +488,6 @@ static int32_t find_free_slot(void)
                 return i;
             }
         }
-    }
-    return -1;
-}
-
-static int32_t pick_next_ready(int32_t current_pid)
-{
-    if (!process_table_ready()) {
-        return -1;
-    }
-
-    if (current_pid < 0) {
-        for (int32_t i = 0; i < g_process_capacity; ++i) {
-            if (g_processes[i].state == PROCESS_STATE_READY ||
-                g_processes[i].state == PROCESS_STATE_RUNNING) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    for (int32_t step = 1; step <= g_process_capacity; ++step) {
-        int32_t idx = (current_pid + step) % g_process_capacity;
-        if (g_processes[idx].state == PROCESS_STATE_READY) {
-            return idx;
-        }
-    }
-    if (g_processes[current_pid].state == PROCESS_STATE_RUNNING ||
-        g_processes[current_pid].state == PROCESS_STATE_READY) {
-        return current_pid;
     }
     return -1;
 }
@@ -963,9 +868,7 @@ void process_manager_init(void)
         desired_capacity = 1;
     }
 
-    for (uint32_t i = 0; i < OS_CONFIG_SMP_MAX_CPUS; i++) {
-        g_current_pid_per_cpu[i] = -1;
-    }
+    process_scheduler_init(g_timeslice_ticks);
 
     release_process_table();
 
@@ -1335,6 +1238,7 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
     elf_loaded_image_info_t image_info = {0};
 
     if (!elf_loader_load_from_path(proc->cr3, path, &policy, &image_info)) {
+        const char *elf_err = elf_loader_last_error();
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
         spinlock_lock(&g_process_table_lock);
@@ -1799,9 +1703,77 @@ int32_t process_register_boot_process(const char *path, uint64_t *entry_out)
     proc->state = PROCESS_STATE_RUNNING;
     current_pid_set(pid);
     proc->timeslice = g_timeslice_ticks;
-    g_timeslice_resched = 0;
+    process_scheduler_consume_reschedule();
     if (entry_out) {
         *entry_out = proc->entry;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    return pid;
+}
+
+int32_t process_register_boot_process_from_memory(const void *data, uint64_t size, uint64_t *entry_out)
+{
+    if (!data || size == 0) return -1;
+
+    int32_t pid = process_create_user_internal(USER_CODE_BASE, 0, 0, 0, 0, 0);
+    if (pid < 0) {
+        return -1;
+    }
+
+    process_t *proc = &g_processes[pid];
+    strncpy(proc->name, "Userland.ELF", sizeof(proc->name) - 1);
+    proc->name[sizeof(proc->name) - 1] = '\0';
+
+    elf_load_policy_t policy = {
+        .max_file_size = PROCESS_ELF_MAX_SIZE,
+        .min_vaddr = USER_CODE_BASE,
+        .max_vaddr = USER_CODE_LIMIT,
+    };
+    elf_loaded_image_info_t image_info = {0};
+
+    if (!elf_loader_load_from_memory(proc->cr3, data, size, &policy, &image_info)) {
+        ipc_cleanup_process_queue(pid);
+        uint64_t irq_flags = irq_save_disable();
+        spinlock_lock(&g_process_table_lock);
+        release_process_resources(proc);
+        reset_process_slot(proc);
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    if (initialize_elf_user_stack(proc, &image_info, "/Userland/Userland.ELF") < 0) {
+        ipc_cleanup_process_queue(pid);
+        uint64_t irq_flags = irq_save_disable();
+        spinlock_lock(&g_process_table_lock);
+        release_process_resources(proc);
+        reset_process_slot(proc);
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+
+#if defined(__aarch64__)
+    arm64_exception_frame_t *frame =
+        (arm64_exception_frame_t *)(uintptr_t)proc->saved_rsp;
+    frame->elr_el1 = image_info.entry;
+    frame->sp_el0 = proc->saved_user_rsp;
+#else
+    uint64_t *kstack = (uint64_t *)(uintptr_t)proc->saved_rsp;
+    kstack[SYSCALL_FRAME_RCX] = image_info.entry;
+#endif
+
+    spinlock_lock(&g_process_table_lock);
+    proc->state = PROCESS_STATE_RUNNING;
+    current_pid_set(pid);
+    proc->timeslice = g_timeslice_ticks;
+    process_scheduler_consume_reschedule();
+    if (entry_out) {
+        *entry_out = image_info.entry;
     }
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -1849,6 +1821,7 @@ void process_exit_current(void)
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
 
+    pnp_notifications_cleanup_process(pid_to_exit);
     ipc_cleanup_process_queue(pid_to_exit);
 }
 
@@ -2092,7 +2065,9 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         return return_saved_rsp;
     }
 
-    int32_t next_pid = pick_next_ready(current_pid_get());
+    int32_t next_pid = process_scheduler_pick_next(g_processes,
+                                                   g_process_capacity,
+                                                   current_pid_get());
     if (next_pid < 0) {
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
@@ -2102,9 +2077,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
     current_pid_set(next_pid);
     process_t *next = &g_processes[current_pid_get()];
     process_deliver_pending_signals_locked(next);
-    next->state = PROCESS_STATE_RUNNING;
-    next->timeslice = g_timeslice_ticks;
-    g_timeslice_resched = 0;
+    process_scheduler_prepare_run(next);
 
     uint64_t next_saved_rsp = next->saved_rsp;
     uint64_t next_user_rsp = next->saved_user_rsp;
@@ -2137,7 +2110,9 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
         halt_forever();
     }
 
-    int32_t next_pid = pick_next_ready(current_pid_get());
+    int32_t next_pid = process_scheduler_pick_next(g_processes,
+                                                   g_process_capacity,
+                                                   current_pid_get());
     if (next_pid < 0) {
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
@@ -2147,9 +2122,7 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
     current_pid_set(next_pid);
     process_t *next = &g_processes[current_pid_get()];
     process_deliver_pending_signals_locked(next);
-    next->state = PROCESS_STATE_RUNNING;
-    next->timeslice = g_timeslice_ticks;
-    g_timeslice_resched = 0;
+    process_scheduler_prepare_run(next);
 
     uint64_t next_saved_rsp = next->saved_rsp;
     uint64_t next_user_rsp = next->saved_user_rsp;
@@ -2169,33 +2142,16 @@ void process_on_timer_tick(void)
 {
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
-    if (is_valid_pid(current_pid_get())) {
-        process_t *proc = &g_processes[current_pid_get()];
-        if (proc->state == PROCESS_STATE_RUNNING) {
-            proc->total_ticks++;
-            if (proc->timeslice == 0) {
-                proc->timeslice = g_timeslice_ticks;
-            }
-            if (proc->timeslice > 0) {
-                proc->timeslice--;
-                if (proc->timeslice == 0) {
-                    g_timeslice_resched = 1;
-                }
-            }
-        }
-    }
+    process_scheduler_on_tick(g_processes, g_process_capacity);
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
-    syscall_futex_on_timer_tick();
 }
 
 int process_timeslice_expired(void)
 {
-    int pending;
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
-    pending = g_timeslice_resched;
-    g_timeslice_resched = 0;
+    int pending = process_scheduler_consume_reschedule();
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return pending;
@@ -2738,7 +2694,7 @@ int process_block_current(void)
     }
 
     g_processes[pid].state = PROCESS_STATE_BLOCKED;
-    g_timeslice_resched = 1;
+    process_scheduler_request_reschedule();
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return 0;

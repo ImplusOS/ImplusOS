@@ -119,6 +119,37 @@ int memcmp(const void* a, const void* b, size_t n)
     return 0;
 }
 
+int bcmp(const void* s1, const void* s2, size_t n)
+{
+    return memcmp(s1, s2, n);
+}
+
+void bcopy(const void* src, void* dst, size_t n)
+{
+    (void)memmove(dst, src, n);
+}
+
+void bzero(void* s, size_t n)
+{
+    (void)memset(s, 0, n);
+}
+
+int ffs(int i)
+{
+    unsigned int value = (unsigned int)i;
+
+    if (value == 0)
+        return 0;
+
+    int bit = 1;
+    while ((value & 1U) == 0U) {
+        value >>= 1;
+        bit++;
+    }
+
+    return bit;
+}
+
 size_t strlen(const char* s)
 {
     size_t n = 0;
@@ -324,6 +355,17 @@ char* strdup(const char* s)
     size_t len = strlen(s) + 1;
     char* d = (char*)malloc(len);
     if (d) memcpy(d, s, len);
+    return d;
+}
+
+char* strndup(const char* s, size_t n)
+{
+    if (s == 0) return 0;
+    size_t len = strnlen(s, n);
+    char* d = (char*)malloc(len + 1);
+    if (d == 0) return 0;
+    memcpy(d, s, len);
+    d[len] = '\0';
     return d;
 }
 

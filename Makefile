@@ -13,7 +13,7 @@ ARCH ?= x86_64
 BUILD_ROOT ?= Build
 BUILD_DIR ?= $(BUILD_ROOT)/$(ARCH)
 IMAGE_DIR := Image
-IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH).iso
+IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH)-InstallMedia.iso
 
 EDK2_DIR ?= $(HOME)/edk2
 EDK2_TARGET ?= RELEASE
@@ -61,6 +61,8 @@ INSTALL_DISK_IMAGE_SIZE_MB ?= 256
 
 IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
 ESP_IMAGE       := $(IMAGE_DIR)/esp-$(ARCH).img
+RECOVERY_ESP_IMAGE_SIZE_MB ?= 16
+LIVECD_ESP_IMAGE_SIZE_MB ?= 16
 
 LIVECD_IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH)-LiveCD.iso
 
@@ -114,6 +116,7 @@ USER_APP_DIRS := \
 	Userland/Application/UserApps/com_ImplusOS_exampleApp \
 	Userland/Application/UserApps/com_ImplusOS_ImplusStore \
 	Userland/Application/UserApps/com_ImplusOS_NetworkTest \
+	Userland/Application/UserApps/com_ImplusOS_curlSocketProbe \
 	Userland/Application/UserApps/com_ImplusOS_editor \
 	Userland/Application/UserApps/com_ImplusOS_filemanager \
 	Userland/Application/UserApps/com_ImplusOS_procman \
@@ -123,6 +126,7 @@ USER_APP_DIRS := \
 	Userland/Application/UserApps/com_ImplusOS_pngTest \
 	Userland/Application/UserApps/com_ImplusOS_sdlTest \
 	Userland/Application/UserApps/doom \
+	Userland/Application/UserApps/NetSurf \
 	Userland/Application/UserApps/com_ImplusOS_watermark
 
 LIBRARY_C_SRCS := $(shell find Library -name "*.c" 2>/dev/null)
@@ -132,6 +136,7 @@ USERLAND_C_SRCS := \
 	libc/I_libc/src/math.c \
 	libc/I_libc/src/stdlib.c \
 	libc/I_libc/src/string.c \
+	libc/I_libc/src/iconv.c \
 	libc/I_libc/src/stdio.c \
 	libc/I_libc/src/errno.c \
 	libc/I_libc/src/posix.c \
@@ -159,6 +164,7 @@ USERLAND_APP_C_SRCS := \
 	libc/I_libc/src/math.c \
 	libc/I_libc/src/stdlib.c \
 	libc/I_libc/src/string.c \
+	libc/I_libc/src/iconv.c \
 	libc/I_libc/src/stdio.c \
 	libc/I_libc/src/errno.c \
 	libc/I_libc/src/posix.c \
@@ -194,15 +200,15 @@ USERLAND_CFLAGS := \
 	-fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
 	$(USERLAND_ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
-	-O3 -MMD -MP
+	-Os -g0 -ffunction-sections -fdata-sections -MMD -MP
 
 USERLAND_CXXFLAGS := \
 	-ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
 	$(USERLAND_ARCH_CXXFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 	-fno-exceptions -fno-rtti \
-	-Wall -Wextra -O3 -MMD -MP
+	-Wall -Wextra -Os -g0 -ffunction-sections -fdata-sections -MMD -MP
 
-USERLAND_LDFLAGS := -T Userland/Userland.ld -nostdlib --build-id=none
+USERLAND_LDFLAGS := -T Userland/Userland.ld -nostdlib --build-id=none --gc-sections
 
 all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel vendor_libs app_build driver_stage $(USERLAND_INIT_ELF)
 
@@ -257,7 +263,9 @@ $(BUILD_DIR)/Userland/%.o: Userland/%.cpp
 
 $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 	@mkdir -p $(dir $@)
-	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
+	$(LD) $(USERLAND_LDFLAGS) $^ -o $@.tmp
+	$(OBJCOPY) --strip-all -R .note -R .comment $@.tmp $@
+	@rm -f $@.tmp
 
 $(BUILD_DIR)/RecoveryEnviroment/%.o: $(RECOVERY_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -266,7 +274,9 @@ $(BUILD_DIR)/RecoveryEnviroment/%.o: $(RECOVERY_DIR)/%.c
 
 $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	@mkdir -p $(dir $@)
-	$(LD) $(USERLAND_LDFLAGS) $^ -o $@
+	$(LD) $(USERLAND_LDFLAGS) $^ -o $@.tmp
+	$(OBJCOPY) --strip-all -R .note -R .comment $@.tmp $@
+	@rm -f $@.tmp
 
 driver_build:
 	@set -e; \
@@ -344,19 +354,16 @@ install_payload: all
 image: install_payload recovery_build
 	@mkdir -p $(IMAGE_DIR)
 	@rm -f $(IMAGE) $(ESP_IMAGE)
-	@dd if=/dev/zero of=$(ESP_IMAGE) bs=1M count=64 status=none
-	@mformat -i $(ESP_IMAGE) -F -v "IMPLUSOS" ::
+	@dd if=/dev/zero of=$(ESP_IMAGE) bs=1M count=$(RECOVERY_ESP_IMAGE_SIZE_MB) status=none
+	@mformat -i $(ESP_IMAGE) -v "IMPLUSOS" ::
 	@mmd -i $(ESP_IMAGE) ::/EFI
 	@mmd -i $(ESP_IMAGE) ::/EFI/BOOT
-	@mmd -i $(ESP_IMAGE) ::/BootManager
-	@mmd -i $(ESP_IMAGE) ::/BootManager/Resource
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		mcopy -o -i $(ESP_IMAGE) $(BOOTLOADER_EFI) ::/EFI/BOOT/BOOTX64.EFI; \
 	else \
 		mcopy -o -i $(ESP_IMAGE) $(BOOTLOADER_EFI) ::/EFI/BOOT/BOOTAA64.EFI; \
 	fi
 	@mcopy -o -i $(ESP_IMAGE) $(BOOTMANAGER_EFI) ::/EFI/BOOT/BOOTMANAGER.EFI
-	@mcopy -s -i $(ESP_IMAGE) $(BOOT_RESOURCE_DIR) ::/BootManager
 	@rm -rf $(IMAGE_STAGE_DIR)
 	@mkdir -p \
 		$(IMAGE_STAGE_DIR)/EFI/BOOT \
@@ -389,6 +396,8 @@ image: install_payload recovery_build
 		-V IMPLUSOS \
 		-e esp.img \
 		-no-emul-boot \
+		-part_like_isohybrid \
+		-isohybrid-gpt-basdat \
 		-o $(IMAGE) \
 		$(IMAGE_STAGE_DIR)
 
@@ -444,6 +453,8 @@ image_livecd: all
 		-V IMPLUSOS \
 		-e esp.img \
 		-no-emul-boot \
+		-part_like_isohybrid \
+		-isohybrid-gpt-basdat \
 		-o $(LIVECD_IMAGE) \
 		$(IMAGE_STAGE_DIR)
 
@@ -460,26 +471,30 @@ QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
 QEMU_SYSTEM_X86_64 ?= qemu-system-x86_64
 
 QEMU_COMMON := \
-	-machine $(QEMU_MACHINE) \
-	-cpu max \
-	-smp 1 \
-	-m 4G \
-	-device qemu-xhci,id=xhci \
-	-device usb-kbd,bus=xhci.0 \
+	-machine $(QEMU_MACHINE),accel=tcg \
+	-cpu Haswell-noTSX,vendor=GenuineIntel,kvm=on,+sse4.2,+aes,+xsave,+avx,+xsaveopt,+avx2,+fma,+bmi1,+bmi2 \
+	-smp 4,sockets=1,cores=4,threads=1 \
+	-m 8192 \
+	-device isa-applesmc,osk="$OSK" \
+	-smbios type=2 \
+	-device ich9-ahci,id=sata \
+	-device qemu-xhci,id=xhci,addr=14.0,p2=4,p3=4 \
+	-device usb-kbd,bus=xhci.0,port=1 \
 	-device usb-mouse,bus=xhci.0 \
-	-device ahci,id=ahci \
-	-drive if=none,id=disk0,file=disk1.qcow2,format=qcow2 \
-	-device ide-hd,bus=ahci.0,drive=disk0,serial=disk1 \
-	-drive if=none,id=disk1,file=disk2.qcow2,format=qcow2 \
-	-device ide-hd,bus=ahci.1,drive=disk1,serial=disk2 \
-	-serial stdio \
-	-device virtio-gpu-pci,max_outputs=2 \
-	-nic user,model=virtio-net-pci \
+	-device ich9-usb-ehci1,id=ehci,addr=1d.7,multifunction=on \
+	-device ich9-usb-uhci1,id=uhci1,addr=1d.0,multifunction=on,masterbus=ehci.0,firstport=0 \
+	-device ich9-usb-uhci2,id=uhci2,addr=1d.1,multifunction=on,masterbus=ehci.0,firstport=2 \
+	-device ich9-usb-uhci3,id=uhci3,addr=1d.2,multifunction=on,masterbus=ehci.0,firstport=4 \
+	-netdev user,id=net0 \
+	-device e1000-82545em,netdev=net0 \
+	-device ich9-intel-hda \
+	-device hda-duplex \
 	-display cocoa \
+	-serial stdio \
 	$(QEMU_EXTRA)
 	
 QEMU_USB := \
-	-drive if=none,id=usbstick,format=raw,file=$(LIVECD_IMAGE) \
+	-drive if=none,id=usbstick,file=$(LIVECD_IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick,bootindex=0
 
 QEMU_DISK := \
@@ -503,6 +518,13 @@ run_uefi_cdrom:
 		qemu-system-aarch64 $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_DISK); \
 	else \
 		qemu-system-x86_64 $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_DISK); \
+	fi
+
+run_bios_cdrom:
+	@if [ "$(ARCH)" = "arm64" ]; then \
+		echo "There is no BIOS on arm64."; \
+	else \
+		qemu-system-x86_64 -cdrom $(LIVECD_IMAGE); \
 	fi
 
 clean:

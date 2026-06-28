@@ -179,6 +179,21 @@ int fflush(FILE* stream)
     return 0;
 }
 
+void setbuf(FILE* stream, char* buf)
+{
+    (void)stream;
+    (void)buf;
+}
+
+int setvbuf(FILE* stream, char* buf, int mode, size_t size)
+{
+    (void)stream;
+    (void)buf;
+    (void)mode;
+    (void)size;
+    return 0;
+}
+
 int fseek(FILE* stream, long offset, int whence)
 {
     if (!stream) {

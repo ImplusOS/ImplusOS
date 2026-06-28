@@ -45,11 +45,32 @@ static BOOT_INFO g_boot_info_copy;
 
 static uint32_t *g_fb_snapshot = NULL;
 static uint32_t g_fb_snapshot_pixels = 0;
+static uint64_t g_boot_framebuffer_phys_base = 0;
+static uint64_t g_boot_framebuffer_phys_size = 0;
 
 __attribute__((aligned(16))) static uint8_t kernel_stack[0x40000];
 
 static uint64_t user_entry = 0;
 extern const arch_ops_t *arch_ops_get(void);
+
+static const char *kernel_boot_drive_type_name(uint32_t type)
+{
+    switch (type) {
+        case BOOT_DRIVE_TYPE_IDE:
+            return "IDE";
+        case BOOT_DRIVE_TYPE_USB:
+            return "USB";
+        case BOOT_DRIVE_TYPE_AHCI:
+            return "AHCI";
+        case BOOT_DRIVE_TYPE_NVME:
+            return "NVMe";
+        case BOOT_DRIVE_TYPE_VIRTIO:
+            return "VirtIO";
+        case BOOT_DRIVE_TYPE_UNKNOWN:
+        default:
+            return "unknown";
+    }
+}
 
 const BOOT_INFO *kernel_get_boot_info(void)
 {
@@ -66,12 +87,75 @@ static inline void kernel_arch_switch_stack(uintptr_t sp)
     hal_arch_switch_stack(sp);
 }
 
+#define BOOT_FRAMEBUFFER_MAP_GRANULE (2ULL * 1024ULL * 1024ULL)
+
+static uint64_t kernel_map_boot_framebuffer_range(uint64_t phys_base,
+                                                  uint64_t size)
+{
+    if (phys_base == 0 || size == 0) {
+        return phys_base;
+    }
+
+    uint64_t base = phys_base & ~(BOOT_FRAMEBUFFER_MAP_GRANULE - 1ULL);
+    uint64_t offset = phys_base - base;
+    uint64_t span = offset + size;
+    if (span < offset) {
+        return 0;
+    }
+
+    uint64_t chunks = (span + BOOT_FRAMEBUFFER_MAP_GRANULE - 1ULL) /
+                      BOOT_FRAMEBUFFER_MAP_GRANULE;
+    uint64_t first_virt = 0;
+
+    for (uint64_t i = 0; i < chunks; ++i) {
+        uint64_t chunk_phys = base + (i * BOOT_FRAMEBUFFER_MAP_GRANULE);
+        void *mapped = map_mmio_virt(chunk_phys);
+        if (mapped == NULL) {
+            return 0;
+        }
+
+        uint64_t chunk_virt = (uint64_t)(uintptr_t)mapped;
+        if (i == 0) {
+            first_virt = chunk_virt;
+        } else if (chunk_virt !=
+                   first_virt + (i * BOOT_FRAMEBUFFER_MAP_GRANULE)) {
+            return 0;
+        }
+    }
+
+    return first_virt + offset;
+}
+
+static void kernel_rebind_boot_framebuffer_after_paging(BOOT_INFO *boot_info)
+{
+    if (boot_info == NULL ||
+        g_boot_framebuffer_phys_base == 0 ||
+        g_boot_framebuffer_phys_size == 0) {
+        return;
+    }
+
+    uint64_t virt_base = kernel_map_boot_framebuffer_range(
+        g_boot_framebuffer_phys_base,
+        g_boot_framebuffer_phys_size
+    );
+    if (virt_base == 0) {
+        return;
+    }
+
+    boot_info->FrameBufferBase = virt_base;
+    g_boot_info_copy.FrameBufferBase = virt_base;
+
+    debugger_init(boot_info);
+    kernel_panic_init(boot_info);
+    load_bar_init(boot_info);
+    serial_set_screen_mirror(NULL);
+}
+
 bool all_fs_initialize(void)
 {
     if (!vfs_init()) {
         return false;
     }
-
     bool iso_ok = iso9660_init();
     bool fat_ok = fat32_init();
 
@@ -80,10 +164,12 @@ bool all_fs_initialize(void)
     }
 
     if (fat_ok) {
-        vfs_mount("", fat32_vfs_get_driver());
+        const vfs_driver_t *fat_drv = fat32_vfs_get_driver();
+        vfs_mount("", fat_drv);
     }
     if (iso_ok) {
-        vfs_mount("", iso9660_vfs_get_driver());
+        const vfs_driver_t *iso_drv = iso9660_vfs_get_driver();
+        vfs_mount("", iso_drv);
         vfs_set_default_fs("iso9660");
     }
 
@@ -212,8 +298,9 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         boot_info->FrameBufferBase,
         boot_info->FrameBufferSize
     );
-
+    serial_set_screen_mirror(NULL);
     init_paging();
+    kernel_rebind_boot_framebuffer_after_paging(boot_info);
     memory_init();
     acpi_init(boot_info);
     platform_interrupts_configure(acpi_get_info());
@@ -232,7 +319,7 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     {
         const arch_ops_t *ops = arch_ops_get();
         if (ops && ops->virtualization_init) {
-            (void)ops->virtualization_init();
+            int vmx_status = ops->virtualization_init();
         }
     }
 #endif
@@ -247,28 +334,25 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     timer_switch_lapic();
 #endif
     timer_start_clock();
-
     driver_module_manager_init(boot_info);
     uint64_t driver_init_irq_flags = irq_save_disable();
     driver_module_init_all();
     irq_restore(driver_init_irq_flags);
-
     audio_manager_init();
 
     driver_boot_framebuffer_t boot_fb = {
-        .addr = (void *)(uintptr_t)boot_info->FrameBufferBase,
-        .size_bytes = (uint32_t)boot_info->FrameBufferSize,
+        .addr = (void *)(uintptr_t)g_boot_framebuffer_phys_base,
+        .size_bytes = (uint32_t)g_boot_framebuffer_phys_size,
         .width = boot_info->HorizontalResolution,
         .height = boot_info->VerticalResolution,
         .pixels_per_scan_line = boot_info->PixelsPerScanLine,
         .bytes_per_pixel = 4
     };
     driver_select_set_boot_framebuffer(&boot_fb);
-    debugger_init(boot_info);
     input_manager_init();
-
     block_manager_set_boot_identity(boot_info);
-    if (!disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType)) {
+    bool disk_ok = disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType);
+    if (!disk_ok) {
         kernel_panic("Disk Protocol initialization failed", "kernel_main");
     }
 
@@ -280,15 +364,18 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     if (!fs_ready) {
         kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");
     }
-    driver_manager_display_init();
+
+    serial_enable_file_logging("/Kernel.log");
+    bool display_ready = driver_manager_display_init();
+    bool debug_display_ready = debugger_display_init();
+    serial_set_screen_mirror(NULL);
     wm_kernel_init();
     process_manager_init();
     ipc_init();
     syscall_file_init();
     network_stack_init();
-    fb_snapshot_create(boot_info);
+    bool fb_snapshot_ok = fb_snapshot_create(boot_info);
     load_bar_finish();
-
     for (int i = 0; i <= 10; i++) {
         timer_apic_sleep_ms(1);
         uint8_t alpha = (uint8_t)(i * 255 / 10);
@@ -297,14 +384,42 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
             0x000000;
         kernel_boot_screen_color(color);
     }
-    serial_write_uint64(fs_ready);
-    vfs_list_root();
+
     if (fs_ready) {
+        static const uint8_t userland_elf_magic[4] = {0x7Fu, 'E', 'L', 'F'};
+        if (!vfs_set_default_fs_for_file("/Userland/Userland.ELF",
+                                         64u,
+                                         userland_elf_magic,
+                                         sizeof(userland_elf_magic))) {
+            vfs_init();
+            if (all_fs_initialize() &&
+                vfs_set_default_fs_for_file("/Userland/Userland.ELF",
+                                           64u,
+                                           userland_elf_magic,
+                                           sizeof(userland_elf_magic))) {
+                serial_write_string("[kernel:init] retry FS init: SUCCESS\n");
+            } else {
+                kernel_panic("Userland ELF not found or unreadable.", "kernel_main");
+            }
+        }
+
         if (process_register_boot_process("/Userland/Userland.ELF", &user_entry) < 0) {
-            kernel_panic("Failed to start Userland.", "kernel_main");
+            const char *elf_err = elf_loader_last_error();
+            char panic_msg[128];
+            if (elf_err) {
+                snprintf(panic_msg, sizeof(panic_msg),
+                         "Failed to start Userland (ELF: %s)", elf_err);
+            } else {
+                snprintf(panic_msg, sizeof(panic_msg),
+                         "Failed to start Userland.");
+            }
+            kernel_panic(panic_msg, "kernel_main");
         }
     }
+
     timer_start_services();
+    serial_set_screen_mirror(debug_putchar);
+
     uint64_t user_rsp = process_get_current_user_rsp();
     uint64_t saved_rsp = process_get_current_saved_rsp();
     uint64_t user_cr3 = process_get_current_cr3();
@@ -338,12 +453,17 @@ void kernel_main(BOOT_INFO *boot_info)
         ops->early_init();
     }
 
+    debugger_init(boot_info);
+
     serial_init();
 
     if (boot_info != NULL) {
         memcpy(&g_boot_info_copy, boot_info, sizeof(BOOT_INFO));
         boot_info = &g_boot_info_copy;
+        g_boot_framebuffer_phys_base = boot_info->FrameBufferBase;
+        g_boot_framebuffer_phys_size = boot_info->FrameBufferSize;
     }
+
     kernel_panic_init(boot_info);
 
     uintptr_t sp = (uintptr_t)(kernel_stack + sizeof(kernel_stack));
@@ -351,11 +471,10 @@ void kernel_main(BOOT_INFO *boot_info)
 
     #ifdef PLATFORM_X86_64
     {
-        kernel_main_after_stack_switch(boot_info);
+        hal_arch_switch_stack_and_jump(sp, kernel_main_after_stack_switch, boot_info);
     }
     #elif defined(PLATFORM_ARM64)
         {
-            extern void hal_arch_switch_stack_and_jump(uintptr_t sp, void (*entry)(BOOT_INFO *), BOOT_INFO *boot_info);
             hal_arch_switch_stack_and_jump(sp, kernel_main_after_stack_switch, boot_info);
         }
     #endif

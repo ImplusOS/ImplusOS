@@ -2,6 +2,7 @@
 
 #include "DeviceRegistry.h"
 #include "MemoryManagement/DMA_Memory.h"
+#include "Debug/serial/Serial.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -42,24 +43,60 @@ void block_manager_set_boot_identity(const BOOT_INFO *boot_info)
     g_initialized = false;
 }
 
+static bool block_transport_matches_boot(const block_device_entry_t *entry)
+{
+    driver_block_transport_t boot_transport =
+        (driver_block_transport_t)g_boot_info.BootStorageTransport;
+
+    if (entry->info.transport == boot_transport) {
+        return true;
+    }
+
+    /*
+     * Some UEFI implementations report the second-stage image through a
+     * controller-level path even though the first-stage loader booted from
+     * removable USB media. In that case prefer the explicit boot-drive hint
+     * and avoid pinning the kernel to the wrong storage transport.
+     */
+    if (g_boot_info.BootDriveType == BOOT_DRIVE_TYPE_USB &&
+        entry->info.transport == DRIVER_BLOCK_TRANSPORT_USB) {
+        return true;
+    }
+
+    return false;
+}
+
 static bool block_device_matches_boot(const block_device_entry_t *entry)
 {
-    if (!g_have_boot_identity || entry == NULL ||
-        entry->info.transport !=
-            (driver_block_transport_t)g_boot_info.BootStorageTransport) {
+    if (!g_have_boot_identity || entry == NULL) {
         return false;
     }
-    if ((g_boot_info.BootStorageIdentityFlags &
+
+    bool usb_boot_hint =
+        g_boot_info.BootDriveType == BOOT_DRIVE_TYPE_USB &&
+        entry->info.transport == DRIVER_BLOCK_TRANSPORT_USB &&
+        entry->info.transport !=
+            (driver_block_transport_t)g_boot_info.BootStorageTransport;
+
+    if (!block_transport_matches_boot(entry)) {
+        return false;
+    }
+
+    if (!usb_boot_hint &&
+        (g_boot_info.BootStorageIdentityFlags &
          BOOT_STORAGE_FLAG_PCI_VALID) != 0u) {
         if ((entry->info.identity_flags &
-             DRIVER_BLOCK_IDENTITY_PCI_VALID) == 0u ||
-            entry->info.pci_segment != g_boot_info.BootStoragePciSegment ||
+             DRIVER_BLOCK_IDENTITY_PCI_VALID) == 0u) {
+            return false;
+        }
+        if (entry->info.pci_segment != g_boot_info.BootStoragePciSegment ||
             entry->info.pci_bus != g_boot_info.BootStoragePciBus ||
             entry->info.pci_device != g_boot_info.BootStoragePciDevice ||
             entry->info.pci_function != g_boot_info.BootStoragePciFunction) {
             return false;
         }
     }
+
     if (entry->info.transport == DRIVER_BLOCK_TRANSPORT_NVME &&
         g_boot_info.BootStorageNamespace != 0u &&
         entry->info.namespace_id != g_boot_info.BootStorageNamespace) {
@@ -70,6 +107,7 @@ static bool block_device_matches_boot(const block_device_entry_t *entry)
         entry->info.controller_port != g_boot_info.BootStoragePort) {
         return false;
     }
+
     return true;
 }
 

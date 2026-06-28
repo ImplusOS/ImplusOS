@@ -95,6 +95,14 @@ static void pnp_drop_subscriber(int32_t pid)
     irq_restore(flags);
 }
 
+void pnp_notifications_cleanup_process(int32_t pid)
+{
+    if (pid < 0) {
+        return;
+    }
+    pnp_drop_subscriber(pid);
+}
+
 static void pnp_flush_subscriber(void)
 {
     for (;;) {

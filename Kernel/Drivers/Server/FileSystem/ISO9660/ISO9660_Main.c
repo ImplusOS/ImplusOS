@@ -114,7 +114,12 @@ static inline uint32_t iso9660_read_u32_both(const uint8_t *p) {
 static bool iso9660_read_sector(uint32_t lba, uint8_t *buffer) {
     uint64_t base = g_iso_partition_lba +
                     (uint64_t)lba * (ISO9660_SECTOR_SIZE / 512u);
-    return disk_read(base, buffer, ISO9660_SECTOR_SIZE / 512u);
+    for (uint32_t i = 0u; i < ISO9660_SECTOR_SIZE / 512u; ++i) {
+        if (!disk_read(base + i, buffer + i * 512u, 1u)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static void ucs2be_to_utf8(const uint8_t *src, uint32_t src_bytes,
@@ -605,18 +610,6 @@ void iso9660_list_root_files(void) {
             if (rec_len == 0u) {
                 bytes_read += (ISO9660_SECTOR_SIZE - offset);
                 break;
-            }
-
-            ISO9660_FILE f;
-            if (iso9660_read_dir_record(rec, &f, extent,
-                                         bytes_read + offset, joliet)) {
-                if (!((f.name[0] == '.' && f.name[1] == '\0') ||
-                      (f.name[0] == '.' && f.name[1] == '.' &&
-                       f.name[2] == '\0'))) {
-
-                    serial_write_string(f.name);
-                    serial_write_string("\n");
-                }
             }
 
             offset     += rec_len;

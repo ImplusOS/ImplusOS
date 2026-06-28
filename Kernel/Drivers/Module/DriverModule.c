@@ -513,7 +513,7 @@ void driver_module_manager_init(const BOOT_INFO *boot_info)
             continue;
         }
         memcpy(kernel_buf, src_ptr, (size_t)file->Size);
-
+        
         module_state_t *state = &g_modules[g_module_count];
         state->present = 1u;
         state->file_data = kernel_buf;
@@ -675,10 +675,13 @@ bool driver_module_init_all(void)
 
     bool all_ok = true;
     for (uint32_t i = 0u; i < g_module_count; ++i) {
-        if (g_modules[i].present && !driver_module_prepare(&g_modules[i])) {
-            all_ok = false;
+        if (g_modules[i].present) {
+            if (!driver_module_prepare(&g_modules[i])) {
+                all_ok = false;
+            }
         }
     }
+
     driver_module_sort();
 
     for (uint32_t i = 0; i < g_module_count; ++i) {
@@ -689,6 +692,7 @@ bool driver_module_init_all(void)
             all_ok = false;
         }
     }
+
     return all_ok;
 }
 

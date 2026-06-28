@@ -72,6 +72,8 @@
 #include <stdarg.h>
 
 #define FAT32_BOOT_BLOCK_MAX 4096u
+#define ISO_SECTOR_SIZE      2048u
+#define MAX_MEDIA_BLOCK_SIZE 4096u
 
 static char* strchr_local(const char* s, int c) {
     while (*s != (char)c) {
@@ -372,13 +374,56 @@ static BOOTLOADER_HANDOFF *FindBootloaderHandoff(EFI_SYSTEM_TABLE *ST) {
     return NULL;
 }
 
+static EFI_STATUS ReadIsoSector(
+    EFI_BLOCK_IO_PROTOCOL *Bio,
+    UINT64                 IsoSector,
+    VOID                  *Scratch,
+    UINTN                  ScratchSize,
+    VOID                 **SectorData
+) {
+    if (!Bio || !Bio->Media || !Scratch || !SectorData) {
+        return EFI_INVALID_PARAMETER;
+    }
+
+    UINT32 BlockSize = Bio->Media->BlockSize;
+    if (BlockSize < 512u || BlockSize > MAX_MEDIA_BLOCK_SIZE ||
+        ScratchSize < BlockSize) {
+        return EFI_UNSUPPORTED;
+    }
+
+    UINT64 BlockLba;
+    UINTN  ReadSize;
+    UINTN  Offset = 0;
+    if (BlockSize > ISO_SECTOR_SIZE) {
+        UINTN SectorsPerBlock = BlockSize / ISO_SECTOR_SIZE;
+        if (SectorsPerBlock == 0) {
+            return EFI_UNSUPPORTED;
+        }
+        BlockLba = IsoSector / SectorsPerBlock;
+        Offset = (UINTN)((IsoSector % SectorsPerBlock) * ISO_SECTOR_SIZE);
+        ReadSize = BlockSize;
+    } else {
+        BlockLba = (IsoSector * ISO_SECTOR_SIZE) / BlockSize;
+        ReadSize = ISO_SECTOR_SIZE;
+    }
+
+    EFI_STATUS Status = uefi_call_wrapper(Bio->ReadBlocks, 5,
+        Bio, Bio->Media->MediaId, BlockLba, ReadSize, Scratch);
+    if (EFI_ERROR(Status)) {
+        return Status;
+    }
+
+    *SectorData = (UINT8 *)Scratch + Offset;
+    return EFI_SUCCESS;
+}
+
 static UINT64 ParseElToritoCatalog(EFI_BLOCK_IO_PROTOCOL *Bio, EFI_SYSTEM_TABLE *ST) {
     UINT32 BS = Bio->Media->BlockSize;
     if (BS < 512 || BS > 4096) return 0;
 
     UINT8      *Buf;
     EFI_STATUS  Status = uefi_call_wrapper(
-        ST->BootServices->AllocatePool, 3, EfiLoaderData, BS, (VOID **)&Buf);
+        ST->BootServices->AllocatePool, 3, EfiLoaderData, MAX_MEDIA_BLOCK_SIZE, (VOID **)&Buf);
     if (EFI_ERROR(Status)) return 0;
 
     Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, 0, BS, Buf);
@@ -395,32 +440,32 @@ static UINT64 ParseElToritoCatalog(EFI_BLOCK_IO_PROTOCOL *Bio, EFI_SYSTEM_TABLE 
     }
 
     UINT64 Result = 0;
-    UINT64 Lba16  = (16ULL * 2048ULL) / (UINT64)BS;
+    VOID *Sector = NULL;
 
-    Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, Lba16, BS, Buf);
+    Status = ReadIsoSector(Bio, 16u, Buf, MAX_MEDIA_BLOCK_SIZE, &Sector);
     if (EFI_ERROR(Status) ||
-        Buf[1] != 'C' || Buf[2] != 'D' ||
-        Buf[3] != '0' || Buf[4] != '0' || Buf[5] != '1') {
+        ((UINT8 *)Sector)[1] != 'C' || ((UINT8 *)Sector)[2] != 'D' ||
+        ((UINT8 *)Sector)[3] != '0' || ((UINT8 *)Sector)[4] != '0' ||
+        ((UINT8 *)Sector)[5] != '1') {
         goto done;
     }
 
     for (UINT32 S = 17; S < 32 && !Result; S++) {
-        UINT64 Lba = ((UINT64)S * 2048ULL) / (UINT64)BS;
-        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, Lba, BS, Buf);
+        Status = ReadIsoSector(Bio, S, Buf, MAX_MEDIA_BLOCK_SIZE, &Sector);
         if (EFI_ERROR(Status)) break;
-        if (Buf[0] == 0xFF) break;
-        if (Buf[0] != 0x00) continue;
+        UINT8 *Iso = (UINT8 *)Sector;
+        if (Iso[0] == 0xFF) break;
+        if (Iso[0] != 0x00) continue;
 
-        UINT32 CatIsoLBA = (UINT32)Buf[71] | ((UINT32)Buf[72] << 8)
-                         | ((UINT32)Buf[73] << 16) | ((UINT32)Buf[74] << 24);
+        UINT32 CatIsoLBA = (UINT32)Iso[71] | ((UINT32)Iso[72] << 8)
+                         | ((UINT32)Iso[73] << 16) | ((UINT32)Iso[74] << 24);
         if (CatIsoLBA == 0) break;
 
-        UINT64 CatBlock = ((UINT64)CatIsoLBA * 2048ULL) / (UINT64)BS;
-        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, CatBlock, BS, Buf);
+        Status = ReadIsoSector(Bio, CatIsoLBA, Buf, MAX_MEDIA_BLOCK_SIZE, &Sector);
         if (EFI_ERROR(Status)) break;
 
         {
-            UINT8 *E = Buf + 32;
+            UINT8 *E = (UINT8 *)Sector + 32;
             if (E[0] == 0x88) {
                 UINT32 RBA = (UINT32)E[8]  | ((UINT32)E[9]  << 8)
                            | ((UINT32)E[10] << 16) | ((UINT32)E[11] << 24);
@@ -430,15 +475,17 @@ static UINT64 ParseElToritoCatalog(EFI_BLOCK_IO_PROTOCOL *Bio, EFI_SYSTEM_TABLE 
 
         if (!Result) {
             UINT32 Off = 64;
-            while (Off + 64 <= BS) {
-                UINT8  Hdr        = Buf[Off];
+            while (Off + 64 <= ISO_SECTOR_SIZE) {
+                UINT8  Hdr        = ((UINT8 *)Sector)[Off];
                 if (Hdr != 0x90 && Hdr != 0x91) break;
-                UINT16 EntryCount = (UINT16)Buf[Off + 2] | ((UINT16)Buf[Off + 3] << 8);
+                UINT16 EntryCount = (UINT16)((UINT8 *)Sector)[Off + 2] |
+                                    ((UINT16)((UINT8 *)Sector)[Off + 3] << 8);
                 Off += 32;
-                for (UINT16 E = 0; E < EntryCount && Off + 32 <= BS; E++, Off += 32) {
-                    if (Buf[Off] != 0x88) continue;
-                    UINT32 RBA = (UINT32)Buf[Off + 8]  | ((UINT32)Buf[Off + 9]  << 8)
-                               | ((UINT32)Buf[Off + 10] << 16) | ((UINT32)Buf[Off + 11] << 24);
+                for (UINT16 E = 0; E < EntryCount && Off + 32 <= ISO_SECTOR_SIZE; E++, Off += 32) {
+                    UINT8 *Iso = (UINT8 *)Sector;
+                    if (Iso[Off] != 0x88) continue;
+                    UINT32 RBA = (UINT32)Iso[Off + 8]  | ((UINT32)Iso[Off + 9]  << 8)
+                               | ((UINT32)Iso[Off + 10] << 16) | ((UINT32)Iso[Off + 11] << 24);
                     if (RBA) { Result = ISO_TO_ATA(RBA); goto done; }
                 }
                 if (Hdr == 0x91) break;
@@ -458,7 +505,9 @@ static uint32_t GetDriveTypeFromDevicePath(EFI_DEVICE_PATH_PROTOCOL *DevicePath)
     EFI_DEVICE_PATH_PROTOCOL *Node = DevicePath;
     while (!IsDevicePathEnd(Node)) {
         if (DevicePathType(Node) == 3) {
-            if (DevicePathSubType(Node) == 5 || DevicePathSubType(Node) == 15)
+            if (DevicePathSubType(Node) == 5  ||
+                DevicePathSubType(Node) == 15 ||
+                DevicePathSubType(Node) == 16)
                 DriveType = BOOT_DRIVE_TYPE_USB;
             else if (DevicePathSubType(Node) == 1)
                 DriveType = BOOT_DRIVE_TYPE_IDE;
@@ -470,6 +519,28 @@ static uint32_t GetDriveTypeFromDevicePath(EFI_DEVICE_PATH_PROTOCOL *DevicePath)
         Node = NextDevicePathNode(Node);
     }
     return DriveType;
+}
+
+static BOOLEAN IsKnownBootDriveType(uint32_t DriveType) {
+    return DriveType == BOOT_DRIVE_TYPE_IDE  ||
+           DriveType == BOOT_DRIVE_TYPE_USB  ||
+           DriveType == BOOT_DRIVE_TYPE_AHCI ||
+           DriveType == BOOT_DRIVE_TYPE_NVME ||
+           DriveType == BOOT_DRIVE_TYPE_VIRTIO;
+}
+
+static BOOLEAN ShouldUseHandoffBootDriveType(uint32_t HandoffType,
+                                             uint32_t DetectedType) {
+    if (!IsKnownBootDriveType(HandoffType)) return FALSE;
+    if (!IsKnownBootDriveType(DetectedType)) return TRUE;
+
+    /*
+     * Some firmware reports the BootManager image through a controller-level
+     * path after the first-stage loader already identified the removable USB
+     * boot path. Keep that media protocol for kernel disk probing.
+     */
+    return HandoffType == BOOT_DRIVE_TYPE_USB &&
+           DetectedType != BOOT_DRIVE_TYPE_USB;
 }
 
 static void CaptureBootStorageIdentity(
@@ -502,9 +573,6 @@ static void CaptureBootStorageIdentity(
             BootInfo->BootStorageNamespace = Nvme->NamespaceId;
         }
         Node = NextDevicePathNode(Node);
-    }
-    if (BootInfo->BootStorageTransport != BOOT_DRIVE_TYPE_UNKNOWN) {
-        BootInfo->BootDriveType = BootInfo->BootStorageTransport;
     }
 
     EFI_DEVICE_PATH_PROTOCOL *Remaining = DevicePath;
@@ -541,7 +609,9 @@ static void CaptureBootStorageIdentity(
     if (!EFI_ERROR(Status) && Ids[0] == 0x1AF4u &&
         (Ids[1] == 0x1042u || Ids[1] == 0x1001u)) {
         BootInfo->BootStorageTransport = BOOT_DRIVE_TYPE_VIRTIO;
-        BootInfo->BootDriveType = BOOT_DRIVE_TYPE_VIRTIO;
+        if (!IsKnownBootDriveType(BootInfo->BootDriveType)) {
+            BootInfo->BootDriveType = BOOT_DRIVE_TYPE_VIRTIO;
+        }
     }
 }
 
@@ -716,15 +786,17 @@ static EFI_STATUS LoadFromISO(
         if (BS < 512 || BS > 4096) continue;
 
         UINT8 *SectorBuf = NULL;
-        Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, 2048, (VOID **)&SectorBuf);
+        Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
+            EfiLoaderData, MAX_MEDIA_BLOCK_SIZE, (VOID **)&SectorBuf);
         if (EFI_ERROR(Status)) continue;
 
-        UINT64 Lba16 = (16ULL * 2048ULL) / (UINT64)BS;
-        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, Lba16, 2048, SectorBuf);
+        VOID *SectorData = NULL;
+        Status = ReadIsoSector(Bio, 16u, SectorBuf, MAX_MEDIA_BLOCK_SIZE, &SectorData);
         if (!EFI_ERROR(Status) &&
-            SectorBuf[1] == 'C' && SectorBuf[2] == 'D' &&
-            SectorBuf[3] == '0' && SectorBuf[4] == '0' && SectorBuf[5] == '1') {
-            ISO9660_PVD *Pvd    = (ISO9660_PVD *)SectorBuf;
+            ((UINT8 *)SectorData)[1] == 'C' && ((UINT8 *)SectorData)[2] == 'D' &&
+            ((UINT8 *)SectorData)[3] == '0' && ((UINT8 *)SectorData)[4] == '0' &&
+            ((UINT8 *)SectorData)[5] == '1') {
+            ISO9660_PVD *Pvd    = (ISO9660_PVD *)SectorData;
             UINT32       CurLba = Pvd->root_dir_record.extent_lba_le;
             UINT32       CurSize = Pvd->root_dir_record.data_length_le;
             BOOLEAN      CurIsDir = TRUE;
@@ -742,13 +814,17 @@ static EFI_STATUS LoadFromISO(
                 UINT32  Sectors   = (CurSize + 2047) / 2048;
                 BOOLEAN FoundComp = FALSE;
                 for (UINT32 s = 0; s < Sectors; s++) {
-                    uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
-                        ((UINT64)(CurLba + s) * 2048ULL) / (UINT64)BS, 2048, SectorBuf);
+                    Status = ReadIsoSector(Bio, CurLba + s, SectorBuf,
+                                           MAX_MEDIA_BLOCK_SIZE, &SectorData);
+                    if (EFI_ERROR(Status)) {
+                        continue;
+                    }
 
-                    UINT8 *ptr = SectorBuf;
-                    while (ptr < SectorBuf + 2048 && *ptr != 0) {
+                    UINT8 *ptr = (UINT8 *)SectorData;
+                    UINT8 *end = (UINT8 *)SectorData + ISO_SECTOR_SIZE;
+                    while (ptr < end && *ptr != 0) {
                         ISO9660_DIR_RECORD *rec = (ISO9660_DIR_RECORD *)ptr;
-                        if (rec->length == 0 || ptr + rec->length > SectorBuf + 2048) break;
+                        if (rec->length == 0 || ptr + rec->length > end) break;
                         if (rec->name_length > 0 && rec->name[0] != 0 && rec->name[0] != 1) {
                             char EntryName[256];
                             IsoGetDirectoryRecordName(rec, ptr + rec->length, EntryName, sizeof(EntryName));
@@ -779,25 +855,15 @@ static EFI_STATUS LoadFromISO(
                     UINT32 L   = CurLba;
                     UINT8 *D   = (UINT8 *)FileBuf;
 
-                    UINT32 ReadBytes = ((2048u + BS - 1u) / BS) * BS;
-                    UINT8 *TempBuf = NULL;
-                    uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
-                        EfiLoaderData, ReadBytes, (VOID **)&TempBuf);
-
-                    while (Rem > 0 && TempBuf) {
-                        UINT64 StartByte   = (UINT64)L * 2048ULL;
-                        UINT64 StartSector = StartByte / (UINT64)BS;
-
-                        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
-                            StartSector, ReadBytes, TempBuf);
+                    while (Rem > 0) {
+                        Status = ReadIsoSector(Bio, L, SectorBuf,
+                                               MAX_MEDIA_BLOCK_SIZE, &SectorData);
                         if (EFI_ERROR(Status)) break;
 
                         UINT32 Copy = (Rem < 2048u) ? Rem : 2048u;
-                        memcpy(D, TempBuf, Copy);
+                        memcpy(D, SectorData, Copy);
                         D += Copy; Rem -= Copy; L++;
                     }
-                    if (TempBuf)
-                        uefi_call_wrapper(ST->BootServices->FreePool, 1, TempBuf);
 
                     if (Rem == 0) {
                         *Buffer = FileBuf;
@@ -845,15 +911,17 @@ static EFI_STATUS PreloadDriversFromISO(
         if (BS < 512 || BS > 4096) continue;
 
         UINT8 *SectorBuf = NULL;
-        Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3, EfiLoaderData, 2048, (VOID **)&SectorBuf);
+        Status = uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
+            EfiLoaderData, MAX_MEDIA_BLOCK_SIZE, (VOID **)&SectorBuf);
         if (EFI_ERROR(Status)) continue;
 
-        UINT64 Lba16 = (16ULL * 2048ULL) / (UINT64)BS;
-        Status = uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId, Lba16, 2048, SectorBuf);
+        VOID *SectorData = NULL;
+        Status = ReadIsoSector(Bio, 16u, SectorBuf, MAX_MEDIA_BLOCK_SIZE, &SectorData);
         if (!EFI_ERROR(Status) &&
-            SectorBuf[1] == 'C' && SectorBuf[2] == 'D' &&
-            SectorBuf[3] == '0' && SectorBuf[4] == '0' && SectorBuf[5] == '1') {
-            ISO9660_PVD *Pvd    = (ISO9660_PVD *)SectorBuf;
+            ((UINT8 *)SectorData)[1] == 'C' && ((UINT8 *)SectorData)[2] == 'D' &&
+            ((UINT8 *)SectorData)[3] == '0' && ((UINT8 *)SectorData)[4] == '0' &&
+            ((UINT8 *)SectorData)[5] == '1') {
+            ISO9660_PVD *Pvd    = (ISO9660_PVD *)SectorData;
             UINT32       CurLba = Pvd->root_dir_record.extent_lba_le;
             UINT32       CurSize = Pvd->root_dir_record.data_length_le;
 
@@ -863,12 +931,16 @@ static EFI_STATUS PreloadDriversFromISO(
                 UINT32  Sectors   = (CurSize + 2047) / 2048;
                 BOOLEAN FoundComp = FALSE;
                 for (UINT32 s = 0; s < Sectors; s++) {
-                    uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
-                        ((UINT64)(CurLba + s) * 2048ULL) / (UINT64)BS, 2048, SectorBuf);
-                    UINT8 *ptr = SectorBuf;
-                    while (ptr < SectorBuf + 2048 && *ptr != 0) {
+                    Status = ReadIsoSector(Bio, CurLba + s, SectorBuf,
+                                           MAX_MEDIA_BLOCK_SIZE, &SectorData);
+                    if (EFI_ERROR(Status)) {
+                        continue;
+                    }
+                    UINT8 *ptr = (UINT8 *)SectorData;
+                    UINT8 *end = (UINT8 *)SectorData + ISO_SECTOR_SIZE;
+                    while (ptr < end && *ptr != 0) {
                         ISO9660_DIR_RECORD *rec = (ISO9660_DIR_RECORD *)ptr;
-                        if (rec->length == 0 || ptr + rec->length > SectorBuf + 2048) break;
+                        if (rec->length == 0 || ptr + rec->length > end) break;
                         if (rec->name_length > 0 && rec->name[0] != 0 && rec->name[0] != 1) {
                             char EntryName[256];
                             IsoGetDirectoryRecordName(rec, ptr + rec->length, EntryName, sizeof(EntryName));
@@ -889,12 +961,16 @@ static EFI_STATUS PreloadDriversFromISO(
             if (FoundDir) {
                 UINT32 Sectors = (CurSize + 2047) / 2048;
                 for (UINT32 s = 0; s < Sectors; s++) {
-                    uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
-                        ((UINT64)(CurLba + s) * 2048ULL) / (UINT64)BS, 2048, SectorBuf);
-                    UINT8 *ptr = SectorBuf;
-                    while (ptr < SectorBuf + 2048 && *ptr != 0) {
+                    Status = ReadIsoSector(Bio, CurLba + s, SectorBuf,
+                                           MAX_MEDIA_BLOCK_SIZE, &SectorData);
+                    if (EFI_ERROR(Status)) {
+                        continue;
+                    }
+                    UINT8 *ptr = (UINT8 *)SectorData;
+                    UINT8 *end = (UINT8 *)SectorData + ISO_SECTOR_SIZE;
+                    while (ptr < end && *ptr != 0) {
                         ISO9660_DIR_RECORD *rec = (ISO9660_DIR_RECORD *)ptr;
-                        if (rec->length == 0 || ptr + rec->length > SectorBuf + 2048) break;
+                        if (rec->length == 0 || ptr + rec->length > end) break;
                         if (rec->name_length > 0 && rec->name[0] != 0 &&
                             rec->name[0] != 1 && !(rec->flags & 2)) {
                             char EntryName[256];
@@ -908,23 +984,41 @@ static EFI_STATUS PreloadDriversFromISO(
                                         UINT32 Rem = rec->data_length_le;
                                         UINT32 L   = rec->extent_lba_le;
                                         UINT8 *D   = (UINT8 *)FileBuf;
-                                        UINT8  TempSector[2048];
-                                        while (Rem > 0) {
-                                            uefi_call_wrapper(Bio->ReadBlocks, 5, Bio, Bio->Media->MediaId,
-                                                ((UINT64)L * 2048ULL) / (UINT64)BS, 2048, TempSector);
+                                        UINT8 *FileSectorBuf = NULL;
+                                        EFI_STATUS FileStatus =
+                                            uefi_call_wrapper(ST->BootServices->AllocatePool, 3,
+                                                EfiLoaderData, MAX_MEDIA_BLOCK_SIZE,
+                                                (VOID **)&FileSectorBuf);
+                                        while (Rem > 0 && !EFI_ERROR(FileStatus)) {
+                                            VOID *FileSector = NULL;
+                                            FileStatus = ReadIsoSector(Bio, L, FileSectorBuf,
+                                                                       MAX_MEDIA_BLOCK_SIZE,
+                                                                       &FileSector);
+                                            if (EFI_ERROR(FileStatus)) {
+                                                break;
+                                            }
                                             UINT32 Copy = (Rem < 2048) ? Rem : 2048;
-                                            memcpy(D, TempSector, Copy);
+                                            memcpy(D, FileSector, Copy);
                                             D += Copy; Rem -= Copy; L++;
                                         }
-                                        UINTN idx = BootInfo->LoadedFileCount++;
-                                        UINTN len = 0;
-                                        while (EntryName[len] && len < LOADED_FILE_NAME_MAX - 1) {
-                                            BootInfo->LoadedFiles[idx].Name[len] = EntryName[len];
-                                            len++;
+                                        if (FileSectorBuf) {
+                                            uefi_call_wrapper(ST->BootServices->FreePool, 1,
+                                                FileSectorBuf);
                                         }
-                                        BootInfo->LoadedFiles[idx].Name[len]    = '\0';
-                                        BootInfo->LoadedFiles[idx].PhysAddr     = (EFI_PHYSICAL_ADDRESS)(UINTN)FileBuf;
-                                        BootInfo->LoadedFiles[idx].Size         = rec->data_length_le;
+                                        if (Rem == 0) {
+                                            UINTN idx = BootInfo->LoadedFileCount++;
+                                            UINTN len = 0;
+                                            while (EntryName[len] && len < LOADED_FILE_NAME_MAX - 1) {
+                                                BootInfo->LoadedFiles[idx].Name[len] = EntryName[len];
+                                                len++;
+                                            }
+                                            BootInfo->LoadedFiles[idx].Name[len]    = '\0';
+                                            BootInfo->LoadedFiles[idx].PhysAddr     = (EFI_PHYSICAL_ADDRESS)(UINTN)FileBuf;
+                                            BootInfo->LoadedFiles[idx].Size         = rec->data_length_le;
+                                        } else {
+                                            uefi_call_wrapper(ST->BootServices->FreePool, 1,
+                                                FileBuf);
+                                        }
                                     }
                                 }
                             }
@@ -1698,6 +1792,13 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
     
     BootInfo.PartitionStartLBA = GetPartitionStartLBA(
         BootManagerDeviceHandle, ST, &BootInfo);
+    BOOLEAN UseHandoffBootDriveType = FALSE;
+    if (Handoff &&
+        ShouldUseHandoffBootDriveType(Handoff->BootDriveType,
+                                      BootInfo.BootDriveType)) {
+        BootInfo.BootDriveType = Handoff->BootDriveType;
+        UseHandoffBootDriveType = TRUE;
+    }
     DiscoverAcpiRsdp(ST, &BootInfo);
 
     if (Handoff && BootInfo.AcpiRsdpAddress == 0 && Handoff->AcpiRsdpAddress != 0) {
@@ -1710,6 +1811,16 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
         BootManagerDeviceHandle, ST, DevicePathFromHandle(
             BootManagerDeviceHandle), &BootInfo);
     BootInfo.BootStoragePartitionLBA = BootInfo.PartitionStartLBA;
+    if (UseHandoffBootDriveType) {
+        BootInfo.BootDriveType = Handoff->BootDriveType;
+        if (Handoff->BootDriveType == BOOT_DRIVE_TYPE_USB &&
+            BootInfo.BootStorageTransport != BOOT_DRIVE_TYPE_USB) {
+            BootInfo.BootStorageTransport = BOOT_DRIVE_TYPE_USB;
+            BootInfo.BootStorageIdentityFlags &= ~BOOT_STORAGE_FLAG_PCI_VALID;
+            BootInfo.BootStoragePort = 0xFFFFu;
+            BootInfo.BootStorageNamespace = 0;
+        }
+    }
 
     if (BootInfo.BootDriveType == BOOT_DRIVE_TYPE_UNKNOWN &&
         BootInfo.PartitionStartLBA != 0) {
@@ -1736,7 +1847,8 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *ST) {
         Status = LoadFromISO(ST, BootManagerDeviceHandle,
             "Kernel/Kernel_Main.ELF", &KernelBuffer, &KernelSize);
         if (!EFI_ERROR(Status)) {
-            BootInfo.PartitionStartLBA = 0;
+            /* Keep PartitionStartLBA (El Torito boot image LBA)
+               so the kernel knows the correct starting sector. */
         }
     }
 

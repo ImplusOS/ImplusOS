@@ -6,6 +6,10 @@
 
 bool vfs_init(void);
 void vfs_mount(const char *prefix, const vfs_driver_t *driver);
+bool vfs_set_default_fs_for_file(const char *path,
+                                 uint32_t min_size,
+                                 const uint8_t *magic,
+                                 uint32_t magic_size);
 bool vfs_find_file(const char *path, vfs_file_t *out_file);
 bool vfs_read_file(vfs_file_t *file, uint8_t *buffer);
 bool vfs_write_file(vfs_file_t *file, const uint8_t *buffer);
@@ -25,3 +29,4 @@ bool vfs_rename(const char *old_path, const char *new_path);
 void vfs_set_case_sensitive(bool enabled);
 bool vfs_get_case_sensitive(void);
 bool vfs_set_default_fs(const char *fs_type);
+int vfs_driver_count_get(void);

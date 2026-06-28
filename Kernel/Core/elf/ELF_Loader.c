@@ -12,6 +12,7 @@
 #include "Core/sync/Spinlock.h"
 #include "Core/vfs/VFS.h"
 #include "Debug/printf/printf.h"
+#include "Debug/serial/Serial.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -209,6 +210,13 @@ static bool runtime_range_ok(uint64_t image_start,
         return false;
     }
     return size <= (image_span - offset);
+}
+
+static const char *g_last_elf_error = NULL;
+
+const char *elf_loader_last_error(void)
+{
+    return g_last_elf_error;
 }
 
 static bool resolve_kernel_symbol(const char *name, uint64_t *addr_out)
@@ -1055,53 +1063,53 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
     }
 
     vfs_file_t file;
+    memset(&file, 0, sizeof(file));
     if (!vfs_find_file(path, &file)) {
         return false;
     }
+    
+    Elf64_Phdr *phdrs = NULL;
 
     if (file.size == 0 || (uint64_t)file.size > policy->max_file_size) {
-        return false;
+        goto fail;
     }
 
     if ((uint64_t)file.size < sizeof(Elf64_Ehdr)) {
-        return false;
+        goto fail;
     }
 
     Elf64_Ehdr ehdr;
     if (!vfs_read_at(&file, 0u, (uint8_t *)&ehdr, sizeof(ehdr))) {
-        return false;
+        goto fail;
     }
 
     if (!elf_validate_ehdr_arch(&ehdr, (uint64_t)file.size, true)) {
-        return false;
+        goto fail;
     }
 
-    Elf64_Phdr *phdrs = NULL;
     {
         uint64_t phdr_table_bytes = (uint64_t)ehdr.e_phnum *
                                     (uint64_t)ehdr.e_phentsize;
         if (ehdr.e_phoff > 0xFFFFFFFFULL ||
             phdr_table_bytes > 0xFFFFFFFFULL) {
-            return false;
+            goto fail;
         }
 
         phdrs = (Elf64_Phdr *)malloc((size_t)phdr_table_bytes);
         if (!phdrs) {
-            return false;
+            goto fail;
         }
 
         if (!vfs_read_at(&file,
                          (uint32_t)ehdr.e_phoff,
                          (uint8_t *)phdrs,
                          (uint32_t)phdr_table_bytes)) {
-            free(phdrs);
-            return false;
+            goto fail;
         }
     }
 
     int    load_segments = 0;
     uint64_t phdr_vaddr  = 0;
-    bool   failed        = false;
 
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         Elf64_Phdr *ph = &phdrs[i];
@@ -1111,40 +1119,40 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
         }
 
         if (ph->p_memsz < ph->p_filesz) {
-            failed = true; break;
+            goto fail;
         }
 
         if (!in_vaddr_range(ph->p_vaddr, ph->p_memsz,
                             policy->min_vaddr, policy->max_vaddr)) {
-            failed = true; break;
+            goto fail;
         }
 
         if (!range_in_file((uint64_t)file.size, ph->p_offset, ph->p_filesz)) {
-            failed = true; break;
+            goto fail;
         }
 
         if (ph->p_offset > 0xFFFFFFFFULL || ph->p_filesz > 0xFFFFFFFFULL) {
-            failed = true; break;
+            goto fail;
         }
 
         uint8_t *seg_buf = NULL;
         if (ph->p_filesz > 0) {
             seg_buf = (uint8_t *)malloc((size_t)ph->p_filesz);
             if (seg_buf == NULL) {
-                failed = true; break;
+                goto fail;
             }
             if (!vfs_read_at(&file,
                              (uint32_t)ph->p_offset,
                              seg_buf,
                              (uint32_t)ph->p_filesz)) {
                 free(seg_buf);
-                failed = true; break;
+                goto fail;
             }
         }
 
         if (phdr_vaddr == 0 &&
             ehdr.e_phoff >= ph->p_offset &&
-            ehdr.e_phoff < (ph->p_offset + ph->p_filesz)) {
+            (ehdr.e_phoff - ph->p_offset) < ph->p_filesz) {
             phdr_vaddr = ph->p_vaddr + (ehdr.e_phoff - ph->p_offset);
         }
 
@@ -1160,7 +1168,7 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
             if (seg_buf != NULL) {
                 free(seg_buf);
             }
-            failed = true; break;
+            goto fail;
         }
 
         bool executable = ((ph->p_flags & PF_X) != 0);
@@ -1173,7 +1181,7 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
                 if (seg_buf != NULL) {
                     free(seg_buf);
                 }
-                failed = true; break;
+                goto fail;
             }
         }
         if (ph->p_memsz > ph->p_filesz) {
@@ -1184,7 +1192,7 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
                 if (seg_buf != NULL) {
                     free(seg_buf);
                 }
-                failed = true; break;
+                goto fail;
             }
         }
 
@@ -1195,15 +1203,13 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
         ++load_segments;
     }
 
-    if (failed || load_segments == 0) {
-        free(phdrs);
-        return false;
+    if (load_segments == 0) {
+        goto fail;
     }
 
     if (ehdr.e_entry < policy->min_vaddr ||
         ehdr.e_entry >= policy->max_vaddr) {
-        free(phdrs);
-        return false;
+        goto fail;
     }
 
     image_out->entry       = ehdr.e_entry;
@@ -1211,7 +1217,15 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
     image_out->phent       = ehdr.e_phentsize;
     image_out->phnum       = ehdr.e_phnum;
     free(phdrs);
+    (void)vfs_close_file(&file);
     return true;
+
+fail:
+    if (phdrs != NULL) {
+        free(phdrs);
+    }
+    (void)vfs_close_file(&file);
+    return false;
 }
 
 bool elf_loader_load_from_memory(uint64_t target_cr3,

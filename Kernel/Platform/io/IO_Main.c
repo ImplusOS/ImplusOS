@@ -1,8 +1,10 @@
 #include "IO_Main.h"
 #include "Protocol/ATA/Protocol_ATA.h"
+#include "Protocol/USB_MassStorage/Protocol_USB_MassStorage.h"
 #include "Drivers/Module/BlockManager.h"
 #include "Debug/serial/Serial.h"
 #include "Debug/printf/printf.h"
+#include "Drivers/Module/DriverManager.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -48,11 +50,17 @@ static uint64_t module_block_get_total_bytes(void)
 }
 
 static const block_device_t g_block_devices[] = {
-    { "block", "Modular block device", IO_PROTOCOL_TYPE_NONE,
+    { "block",  "Modular block device",  IO_PROTOCOL_TYPE_NONE,
       module_block_init, module_block_read, module_block_write,
       module_block_is_working, module_block_get_device_count,
       module_block_select_device, module_block_get_total_bytes },
-    { "ata",  "ATA disk",           IO_PROTOCOL_TYPE_ATA,              ata_init,    ata_read,    ata_write,    ata_is_working,    ata_get_device_count,    ata_select_device,    ata_get_total_bytes    },
+    { "usb_ms", "USB Mass Storage",      IO_PROTOCOL_TYPE_USB_MASS_STORAGE,
+      usb_ms_init, usb_ms_read, usb_ms_write,
+      usb_ms_is_working, usb_ms_get_device_count,
+      usb_ms_select_device, usb_ms_get_total_bytes },
+    { "ata",    "ATA disk",              IO_PROTOCOL_TYPE_ATA,
+      ata_init, ata_read, ata_write, ata_is_working,
+      ata_get_device_count, ata_select_device, ata_get_total_bytes },
 };
 
 #define IO_MAX_DISKS 16
@@ -143,33 +151,61 @@ static bool check_fat_boot_sector(const uint8_t *buffer) {
     return false;
 }
 
-static bool check_iso_signature(const block_device_t *device, uint64_t partition_lba)
+static bool check_iso_signature_at_lba(const block_device_t *device,
+                                       uint64_t              partition_lba)
 {
-    uint8_t buffer[2048];
+    uint8_t buffer[512];
     if (!device || !device->read) return false;
 
-    if (device->read(partition_lba + 16u * 4u, buffer, 4)) {
-        if (memcmp(buffer + 1, "CD001", 5) == 0) return true;
+    return device->read(partition_lba + 16u * 4u, buffer, 1u) &&
+           memcmp(buffer + 1, "CD001", 5) == 0;
+}
+
+static bool check_iso_signature(const block_device_t *device,
+                                uint64_t              partition_lba,
+                                bool                  prefer_whole_disk,
+                                uint64_t             *out_partition_lba)
+{
+    if (!device || !device->read) return false;
+
+    if (prefer_whole_disk &&
+        check_iso_signature_at_lba(device, 0u)) {
+        if (out_partition_lba != NULL) *out_partition_lba = 0u;
+        return true;
     }
-    if (partition_lba != 0u) {
-        if (device->read(16u * 4u, buffer, 4)) {
-            if (memcmp(buffer + 1, "CD001", 5) == 0) return true;
-        }
+
+    if (check_iso_signature_at_lba(device, partition_lba)) {
+        if (out_partition_lba != NULL) *out_partition_lba = partition_lba;
+        return true;
+    }
+
+    if (partition_lba != 0u &&
+        check_iso_signature_at_lba(device, 0u)) {
+        if (out_partition_lba != NULL) *out_partition_lba = 0u;
+        return true;
     }
 
     return false;
 }
 
-static bool check_fat_signature(const block_device_t *device, uint64_t partition_lba)
+static bool check_fat_signature(const block_device_t *device,
+                                uint64_t              partition_lba,
+                                uint64_t             *out_partition_lba)
 {
     uint8_t buffer[2048];
     if (!device || !device->read) return false;
 
     if (device->read(partition_lba, buffer, 1)) {
-        if (check_fat_boot_sector(buffer)) return true;
+        if (check_fat_boot_sector(buffer)) {
+            if (out_partition_lba != NULL) *out_partition_lba = partition_lba;
+            return true;
+        }
     }
     if (partition_lba != 0 && device->read(0, buffer, 1)) {
-        if (check_fat_boot_sector(buffer)) return true;
+        if (check_fat_boot_sector(buffer)) {
+            if (out_partition_lba != NULL) *out_partition_lba = 0u;
+            return true;
+        }
     }
 
     if (device->read(0, buffer, 1)) {
@@ -188,7 +224,10 @@ static bool check_fat_signature(const block_device_t *device, uint64_t partition
                 if ((type == 0x0B || type == 0x0C || type == 0x01 || type == 0x04 || type == 0x06 || type == 0x0E) && start_lba != 0) {
                     uint8_t pbuf[512];
                     if (device->read(start_lba, pbuf, 1)) {
-                        if (check_fat_boot_sector(pbuf)) return true;
+                        if (check_fat_boot_sector(pbuf)) {
+                            if (out_partition_lba != NULL) *out_partition_lba = start_lba;
+                            return true;
+                        }
                     }
                 }
             }
@@ -220,7 +259,10 @@ static bool check_fat_signature(const block_device_t *device, uint64_t partition
                                             if (first_lba != 0 && first_lba <= 0xFFFFFFFFULL) {
                                                 uint8_t pbuf[512];
                                                 if (device->read(first_lba, pbuf, 1)) {
-                                                    if (check_fat_boot_sector(pbuf)) return true;
+                                                    if (check_fat_boot_sector(pbuf)) {
+                                                        if (out_partition_lba != NULL) *out_partition_lba = first_lba;
+                                                        return true;
+                                                    }
                                                 }
                                             }
                                         }
@@ -238,23 +280,40 @@ static bool check_fat_signature(const block_device_t *device, uint64_t partition
 }
 
 static bool check_bootable_signature(const block_device_t *device,
-                                     uint64_t partition_lba)
+                                     uint64_t              partition_lba,
+                                     io_protocol_type_t    requested_protocol,
+                                     uint64_t             *out_partition_lba)
 {
-    return check_iso_signature(device, partition_lba) ||
-           check_fat_signature(device, partition_lba);
+    uint64_t effective_lba = partition_lba;
+    bool prefer_whole_disk_iso =
+        requested_protocol == IO_PROTOCOL_TYPE_USB_MASS_STORAGE;
+
+    if (check_iso_signature(device, partition_lba, prefer_whole_disk_iso,
+                            &effective_lba) ||
+        check_fat_signature(device, partition_lba, &effective_lba)) {
+        if (out_partition_lba != NULL) {
+            *out_partition_lba = effective_lba;
+        }
+        return true;
+    }
+    return false;
 }
 
 static const block_device_t *block_device_probe_one(
         const block_device_t *device,
         uint64_t              partition_lba,
-        uint32_t             *out_device_index)
+        io_protocol_type_t    requested_protocol,
+        uint32_t             *out_device_index,
+        uint64_t             *out_partition_lba)
 {
     const block_device_t *saved_device    = g_current_block_device;
     io_protocol_type_t    saved_protocol  = g_current_protocol;
     uint64_t              saved_lba       = g_partition_lba;
     uint32_t              saved_dev_index = g_current_device_index;
 
-    if (!device || !device->init) return NULL;
+    if (!device || !device->init) {
+        return NULL;
+    }
     if (!device->init(0)) {
         return NULL;
     }
@@ -267,8 +326,11 @@ static const block_device_t *block_device_probe_one(
         if (device->select_device)
             device->select_device(d);
 
-        if (check_bootable_signature(device, partition_lba)) {
+        uint64_t effective_lba = partition_lba;
+        if (check_bootable_signature(device, partition_lba,
+                                     requested_protocol, &effective_lba)) {
             if (out_device_index) *out_device_index = d;
+            if (out_partition_lba) *out_partition_lba = effective_lba;
             if (saved_device) {
                 g_current_block_device = saved_device;
                 g_current_protocol     = saved_protocol;
@@ -294,12 +356,21 @@ static const block_device_t *block_device_probe_one(
 
 static const block_device_t *block_device_select_probe(
         uint64_t  partition_lba,
-        uint32_t *out_device_index)
+        io_protocol_type_t requested_protocol,
+        uint32_t *out_device_index,
+        uint64_t *out_partition_lba)
 {
     for (size_t i = 0; i < sizeof(g_block_devices) / sizeof(g_block_devices[0]); ++i) {
+        if (requested_protocol != IO_PROTOCOL_TYPE_NONE) {
+            if (g_block_devices[i].protocol == IO_PROTOCOL_TYPE_NONE ||
+                g_block_devices[i].protocol != requested_protocol) {
+                continue;
+            }
+        }
         const block_device_t *found =
             block_device_probe_one(&g_block_devices[i], partition_lba,
-                                   out_device_index);
+                                   requested_protocol, out_device_index,
+                                   out_partition_lba);
         if (found) return found;
     }
     return NULL;
@@ -324,7 +395,8 @@ static bool module_block_find_boot(uint32_t *out_device_index)
 static bool module_block_probe_transport(
         io_protocol_type_t requested_protocol,
         uint64_t           partition_lba,
-        uint32_t          *out_device_index)
+        uint32_t          *out_device_index,
+        uint64_t          *out_partition_lba)
 {
     uint32_t count = block_manager_get_device_count();
     for (uint32_t i = 0u; i < count; ++i) {
@@ -334,9 +406,23 @@ static bool module_block_probe_transport(
             !block_manager_select_device(i)) {
             continue;
         }
-        if (check_bootable_signature(&g_block_devices[0], partition_lba)) {
+        uint64_t effective_lba = partition_lba;
+        if (check_bootable_signature(&g_block_devices[0], partition_lba,
+                                     requested_protocol, &effective_lba)) {
             if (out_device_index != NULL) {
                 *out_device_index = i;
+            }
+            if (out_partition_lba != NULL) {
+                *out_partition_lba = effective_lba;
+            }
+            return true;
+        }
+        if (requested_protocol == IO_PROTOCOL_TYPE_USB_MASS_STORAGE) {
+            if (out_device_index != NULL) {
+                *out_device_index = i;
+            }
+            if (out_partition_lba != NULL) {
+                *out_partition_lba = 0u;
             }
             return true;
         }
@@ -347,25 +433,40 @@ static bool module_block_probe_transport(
 static const block_device_t *block_device_select(
         io_protocol_type_t requested_protocol,
         uint64_t           partition_lba,
-        uint32_t          *out_device_index)
+        uint32_t          *out_device_index,
+        uint64_t          *out_partition_lba)
 {
     const block_device_t *module_device = &g_block_devices[0];
     if (module_device->init != NULL && module_device->init(0u)) {
         uint32_t boot_index = 0u;
         if (module_block_find_boot(&boot_index)) {
-            if (!block_manager_select_device(boot_index) ||
-                !check_bootable_signature(module_device, partition_lba)) {
+            uint64_t effective_lba = partition_lba;
+            if (!block_manager_select_device(boot_index)) {
                 return NULL;
+            }
+
+            if (!check_bootable_signature(module_device, partition_lba,
+                                          requested_protocol,
+                                          &effective_lba)) {
+                if (requested_protocol == IO_PROTOCOL_TYPE_USB_MASS_STORAGE) {
+                    effective_lba = 0u;
+                } else {
+                    return NULL;
+                }
             }
             if (out_device_index != NULL) {
                 *out_device_index = boot_index;
+            }
+            if (out_partition_lba != NULL) {
+                *out_partition_lba = effective_lba;
             }
             return module_device;
         }
 
         if (requested_protocol != IO_PROTOCOL_TYPE_NONE &&
             module_block_probe_transport(requested_protocol, partition_lba,
-                                         out_device_index)) {
+                                         out_device_index,
+                                         out_partition_lba)) {
             return module_device;
         }
     }
@@ -375,12 +476,18 @@ static const block_device_t *block_device_select(
         if (device != NULL && device != module_device) {
             const block_device_t *found =
                 block_device_probe_one(device, partition_lba,
-                                       out_device_index);
-            if (found) return found;
+                                       requested_protocol, out_device_index,
+                                       out_partition_lba);
+            if (found) {
+                return found;
+            }
         }
     }
 
-    return block_device_select_probe(partition_lba, out_device_index);
+    const block_device_t *result =
+        block_device_select_probe(partition_lba, requested_protocol,
+                                  out_device_index, out_partition_lba);
+    return result;
 }
 
 static void apply_boot_device(const block_device_t *device,
@@ -415,15 +522,16 @@ bool disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type) {
         requested_protocol = IO_PROTOCOL_TYPE_VIRTIO_BLOCK;
 
     uint32_t found_index = 0;
+    uint64_t effective_lba = partition_lba;
     const block_device_t *device =
-        block_device_select(requested_protocol, partition_lba, &found_index);
+        block_device_select(requested_protocol, partition_lba, &found_index,
+                            &effective_lba);
 
     if (device) {
-        apply_boot_device(device, found_index, partition_lba);
+        apply_boot_device(device, found_index, effective_lba);
 
         if (device->select_device)
             device->select_device(found_index);
-
         return true;
     }
 

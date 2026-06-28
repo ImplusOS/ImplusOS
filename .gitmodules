@@ -10,3 +10,48 @@
 [submodule "Userland/Application/UserApps/doom/doomgeneric"]
 	path = Userland/Application/UserApps/doom/doomgeneric
 	url = https://github.com/ozkl/doomgeneric/
+[submodule "Userland/Application/UserApps/NetSurf/Source/netsurf"]
+	path = Userland/Application/UserApps/NetSurf/Source/netsurf
+	url = git://git.netsurf-browser.org/netsurf.git
+[submodule "Userland/Application/UserApps/NetSurf/netsurf-buildsystem"]
+	path = Userland/Application/UserApps/NetSurf/netsurf-buildsystem
+	url = https://github.com/pcwalton/netsurf-buildsystem
+[submodule "Vendor/Library/curl"]
+	path = Vendor/Library/curl
+	url = https://github.com/curl/curl.git
+[submodule "Vendor/Library/libcss"]
+	path = Vendor/Library/libcss
+	url = git://git.netsurf-browser.org/libcss.git
+[submodule "Vendor/Library/libdom"]
+	path = Vendor/Library/libdom
+	url = git://git.netsurf-browser.org/libdom.git
+[submodule "Vendor/Library/libhubbub"]
+	path = Vendor/Library/libhubbub
+	url = git://git.netsurf-browser.org/libhubbub.git
+[submodule "Vendor/Library/libnsbmp"]
+	path = Vendor/Library/libnsbmp
+	url = git://git.netsurf-browser.org/libnsbmp.git
+[submodule "Vendor/Library/libnsfb"]
+	path = Vendor/Library/libnsfb
+	url = git://git.netsurf-browser.org/libnsfb.git
+[submodule "Vendor/Library/libnsgif"]
+	path = Vendor/Library/libnsgif
+	url = git://git.netsurf-browser.org/libnsgif.git
+[submodule "Vendor/Library/libnsutils"]
+	path = Vendor/Library/libnsutils
+	url = git://git.netsurf-browser.org/libnsutils.git
+[submodule "Vendor/Library/libparserutils"]
+	path = Vendor/Library/libparserutils
+	url = git://git.netsurf-browser.org/libparserutils.git
+[submodule "Vendor/Library/libwapcaplet"]
+	path = Vendor/Library/libwapcaplet
+	url = git://git.netsurf-browser.org/libwapcaplet.git
+[submodule "Vendor/Library/mbedtls"]
+	path = Vendor/Library/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "Vendor/Library/mbedtls-2.28"]
+	path = Vendor/Library/mbedtls-2.28
+	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "Vendor/Library/mbedtls-3.6"]
+	path = Vendor/Library/mbedtls-3.6
+	url = https://github.com/Mbed-TLS/mbedtls.git

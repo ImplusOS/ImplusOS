@@ -26,6 +26,7 @@ COMMON_LIBRARY_OBJS := $(patsubst ../../../../Library/%.c,$(TOP_BUILD_DIR)/Libra
 
 COMMON_OBJS := $(COMMON_LIBS_DIR)/Syscalls.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/string.o \
+               $(COMMON_LIBS_DIR)/libc/I_libc/src/iconv.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/stdlib.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/errno.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/posix.o \
@@ -39,4 +40,4 @@ COMMON_OBJS := $(COMMON_LIBS_DIR)/Syscalls.o \
                $(COMMON_LIBS_DIR)/NetworkStack/DNS/DNS.o \
                $(COMMON_LIBRARY_OBJS)
 
-COMMON_DEPS := $(COMMON_OBJS:.o=.d)
+COMMON_DEPS :=

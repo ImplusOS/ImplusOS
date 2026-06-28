@@ -54,6 +54,7 @@ static const default_app_t default_apps[] = {
     {"Processes", "/Userland/UserApps/com_ImplusOS_procman/com_ImplusOS_procman.ELF", "PR"},
     {"Implus Store", "/Userland/UserApps/com_ImplusOS_ImplusStore/com_ImplusOS_ImplusStore.ELF", "ST"},
     {"Network", "/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF", "NW"},
+    {"NetSurf", "/Userland/UserApps/NetSurf/NetSurf.ELF", "NS"},
     {"Virtual Machine", "/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF", "VM"},
     {"Example", "/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF", "EX"},
     {"Settings", "/Userland/UserApps/com_ImplusOS_settings/com_ImplusOS_settings.ELF", "SE"},

@@ -22,7 +22,7 @@
 #define RECOVERY_MANIFEST_PATH      "/Recovery/MANIFEST.txt"
 #define RECOVERY_FONT_PATH          "/BootManager/Resource/Fonts/NotoSansJP-Regular.ttf"
 
-#define INSTALL_CHUNK_SECTORS 65536u
+#define INSTALL_CHUNK_SECTORS 2048u
 #define INSTALL_SECTOR_SIZE     512u
 
 #define PROGRESS_UPDATE_SECTORS 65536u
@@ -49,8 +49,7 @@
 #define C_SUBTEXT 0xFFA0A0A0u
 
 static stbtt_fontinfo g_font_info     = {0};
-static uint8_t        g_font_storage[RECOVERY_FONT_MAX_SIZE];
-static uint8_t       *g_font_data     = g_font_storage;
+static uint8_t       *g_font_data     = NULL;
 static uint32_t       g_font_data_size = 0;
 static bool           g_font_loaded   = false;
 
@@ -125,17 +124,22 @@ static int load_font_from_path(const char *path)
         return -1;
     }
 
-    g_font_data = g_font_storage;
+    uint8_t *font_data = (uint8_t *)malloc((size_t)stat.size);
+    if (!font_data) {
+        puts_serial("Error: cannot allocate font buffer\n");
+        return -1;
+    }
 
     int32_t fd = file_open(path, 0);
     if (fd < 0) {
+        free(font_data);
         puts_serial("Error: cannot open font\n");
         return -1;
     }
 
     uint32_t total = 0;
     while (total < stat.size) {
-        int64_t n = file_read(fd, g_font_data + total, stat.size - total);
+        int64_t n = file_read(fd, font_data + total, stat.size - total);
         if (n <= 0) {
             break;
         }
@@ -146,18 +150,21 @@ static int load_font_from_path(const char *path)
     if (total != stat.size) {
         puts_serial("Error: short font read\n");
         g_font_data_size = 0;
+        free(font_data);
         return -1;
     }
 
-    g_font_data_size = stat.size;
-
-    if (!stbtt_InitFont(&g_font_info, g_font_data,
-                        stbtt_GetFontOffsetForIndex(g_font_data, 0))) {
+    if (!stbtt_InitFont(&g_font_info, font_data,
+                        stbtt_GetFontOffsetForIndex(font_data, 0))) {
         puts_serial("Error: stbtt_InitFont failed\n");
         g_font_data_size = 0;
+        free(font_data);
         return -1;
     }
 
+    free(g_font_data);
+    g_font_data = font_data;
+    g_font_data_size = stat.size;
     g_font_loaded = true;
     puts_serial("Font loaded: ");
     puts_serial(path);
@@ -176,23 +183,31 @@ static int load_font_from_boot_info(void)
         return -1;
     }
 
-    g_font_data = g_font_storage;
+    uint8_t *font_data = (uint8_t *)malloc((size_t)size);
+    if (!font_data) {
+        puts_serial("Error: cannot allocate boot font buffer\n");
+        return -1;
+    }
 
-    int64_t copied = os_get_boot_font(g_font_data, (uint64_t)size);
+    int64_t copied = os_get_boot_font(font_data, (uint64_t)size);
     if (copied != size) {
         puts_serial("Error: cannot copy boot font\n");
         g_font_data_size = 0;
+        free(font_data);
         return -1;
     }
 
-    int offset = stbtt_GetFontOffsetForIndex(g_font_data, 0);
+    int offset = stbtt_GetFontOffsetForIndex(font_data, 0);
     if (offset < 0 ||
-        !stbtt_InitFont(&g_font_info, g_font_data, offset)) {
+        !stbtt_InitFont(&g_font_info, font_data, offset)) {
         puts_serial("Error: boot font is invalid\n");
         g_font_data_size = 0;
+        free(font_data);
         return -1;
     }
 
+    free(g_font_data);
+    g_font_data = font_data;
     g_font_data_size = (uint32_t)size;
     g_font_loaded = true;
     puts_serial("Font loaded: boot info\n");
@@ -576,8 +591,16 @@ static int install_image_to_disk(uint32_t disk_index)
         return -1;
     }
 
-    static uint8_t buffer[INSTALL_CHUNK_SECTORS * INSTALL_SECTOR_SIZE]
-        __attribute__((aligned(512)));
+    uint32_t max_chunk_bytes = INSTALL_CHUNK_SECTORS * INSTALL_SECTOR_SIZE;
+    uint8_t *buffer = (uint8_t *)malloc(max_chunk_bytes);
+    if (!buffer) {
+        file_close(fd);
+        draw_status_screen(C_RED, "Out of memory",
+                           "Recovery could not allocate the install buffer.",
+                           "Press 'r' to reboot");
+        puts_serial("Error: cannot allocate install buffer.\n");
+        return -1;
+    }
 
     uint32_t total_sectors   = (uint32_t)(stat.size / INSTALL_SECTOR_SIZE);
     uint32_t written_sectors = 0;
@@ -604,6 +627,7 @@ static int install_image_to_disk(uint32_t disk_index)
 
         int64_t n = file_read(fd, buffer, chunk_bytes);
         if (n != (int64_t)chunk_bytes) {
+            free(buffer);
             file_close(fd);
             draw_status_screen(C_RED, "Read error",
                                "Could not read from the install image. "
@@ -616,6 +640,7 @@ static int install_image_to_disk(uint32_t disk_index)
         int64_t status = os_raw_block_write(disk_index, written_sectors,
                                             buffer, chunk);
         if (status < 0) {
+            free(buffer);
             file_close(fd);
             puts_serial("Error: block write failed at sector ");
             uint64_to_str(written_sectors, buf); puts_serial(buf); puts_serial("\n");
@@ -663,6 +688,7 @@ static int install_image_to_disk(uint32_t disk_index)
         }
     }
 
+    free(buffer);
     file_close(fd);
     puts_serial("Installation complete.\n");
     return 0;

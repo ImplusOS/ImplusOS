@@ -47,6 +47,8 @@ static uint8_t g_usb_next_addr = 1;
 
 #define USB_HC_TABLE_SIZE 5u
 #define USB_MAX_TRACKED_ROOT_PORTS 32u
+#define USB_MAX_TRACKED_HUB_PORTS 16u
+#define USB_MAX_TRACKED_HUBS 16u
 
 typedef struct {
     bool connected;
@@ -70,6 +72,15 @@ typedef struct {
 } usb_root_port_state_t;
 
 static usb_root_port_state_t g_root_ports[USB_HC_TABLE_SIZE][USB_MAX_TRACKED_ROOT_PORTS];
+
+typedef struct {
+    bool connected;
+    uint8_t addr;
+} usb_hub_port_state_t;
+
+static usb_hub_port_state_t g_hub_ports[256][USB_MAX_TRACKED_HUB_PORTS];
+static uint8_t g_usb_hub_addrs[USB_MAX_TRACKED_HUBS];
+static uint8_t g_usb_hub_count = 0;
 
 usb_hc_type_t usb_get_hc_type(void) { return g_hc_type; }
 usb_hc_type_t usb_get_device_hc_type(uint8_t addr) { return g_dev_hc[addr]; }
@@ -170,6 +181,25 @@ static uint16_t usb_device_max_packet_size(uint8_t packet_size)
     return (packet_size == 9) ? 512 : packet_size;
 }
 
+static bool usb_get_configuration_value(uint8_t addr,
+                                        uint16_t max_packet_size,
+                                        uint8_t *out_config)
+{
+    if (out_config == NULL) return false;
+    usb_device_request_t req;
+    req.bmRequestType = USB_REQ_DIR_IN | USB_REQ_TYPE_STANDARD | USB_REQ_RCPT_DEVICE;
+    req.bRequest      = USB_REQ_GET_CONFIGURATION;
+    req.wValue        = 0;
+    req.wIndex        = 0;
+    req.wLength       = 1;
+    uint8_t value = 0;
+    if (!usb_control_transfer(addr, 0, max_packet_size, &req, &value)) {
+        return false;
+    }
+    *out_config = value;
+    return true;
+}
+
 static bool usb_hub_get_descriptor(uint8_t addr, uint16_t max_packet_size, usb_hub_descriptor_t *hub_desc)
 {
     usb_device_request_t req;
@@ -265,6 +295,8 @@ static bool usb_hub_reset_port(uint8_t addr, uint8_t port, uint16_t max_packet_s
 }
 
 static bool usb_enumerate_hub(uint8_t hub_addr, uint16_t max_packet_size, uint8_t *next_addr);
+static void usb_track_hub(uint8_t hub_addr);
+static void usb_rescan_known_hubs(uint8_t *next_addr);
 
 static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
                                  uint16_t max_packet_size, uint8_t *next_addr)
@@ -283,22 +315,30 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
         return false;
     }
 
-    if (port_hc == USB_HC_XHCI) {
-        uint16_t ep0_mps = usb_device_max_packet_size(desc.bMaxPacketSize0);
-        xhci_evaluate_ep0_mps(current_addr, ep0_mps);
-        max_packet_size = ep0_mps;
+    uint16_t detected_mps = usb_device_max_packet_size(desc.bMaxPacketSize0);
+    if (detected_mps == 0u || detected_mps > 512u) {
+        detected_mps = max_packet_size;
+    }
+    if (port_hc == USB_HC_XHCI &&
+        detected_mps != max_packet_size) {
+        if (xhci_evaluate_ep0_mps(current_addr, detected_mps)) {
+            max_packet_size = detected_mps;
+            usb_wait_ms(port_hc, 20);
+        }
     } else {
-        max_packet_size = usb_device_max_packet_size(desc.bMaxPacketSize0);
+        max_packet_size = detected_mps;
     }
     g_dev_ep0_mps[current_addr] = max_packet_size;
 
-    uint8_t conf_buf[256];
+    uint8_t conf_buf[2048];
     usb_device_request_t req;
     req.bmRequestType = USB_REQ_DIR_IN | USB_REQ_TYPE_STANDARD | USB_REQ_RCPT_DEVICE;
     req.bRequest      = USB_REQ_GET_DESCRIPTOR;
     req.wValue        = (USB_DESC_CONFIGURATION << 8) | 0;
     req.wIndex        = 0;
     req.wLength       = 9;
+    uint8_t config_value = 1;
+    bool config_header_ok = false;
 
     bool is_hub = (desc.bDeviceClass == 9);
     uint8_t current_iface = 0xFF;
@@ -308,6 +348,7 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
     uint8_t mass_ep_out = 0;
     uint16_t mass_ep_in_mps = 0;
     uint16_t mass_ep_out_mps = 0;
+    bool mass_bot_scsi = false;
 
     uint8_t kbd_iface = 0xFF;
     uint8_t kbd_ep_in = 0;
@@ -317,72 +358,128 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
     uint8_t mouse_ep_in = 0;
     uint16_t mouse_ep_mps = 0;
 
-    if (usb_control_transfer(current_addr, 0, max_packet_size, &req, conf_buf)) {
-        uint16_t total_len = usb_le16(&conf_buf[2]);
-        if (total_len > sizeof(conf_buf)) total_len = sizeof(conf_buf);
-        
-        req.wLength = total_len;
-        if (usb_control_transfer(current_addr, 0, max_packet_size, &req, conf_buf)) {
-            for (uint32_t pos = 0; pos + 2 <= total_len;) {
-                uint8_t len = conf_buf[pos];
-                uint8_t type = conf_buf[pos + 1];
-
-                if (len == 0 || pos + len > total_len) {
-                    break;
-                }
-
-                if (type == USB_DESC_INTERFACE && len >= 9) {
-                    current_iface = conf_buf[pos + 2];
-                    uint8_t iface_class = conf_buf[pos + 5];
-                    uint8_t iface_protocol = conf_buf[pos + 7];
-
-                    if (iface_class == 9) {
-                        is_hub = true;
-                    } else if (iface_class == 0x08) {
-                        mass_iface = current_iface;
-                    } else if (iface_class == 0x03) {
-                        if (iface_protocol == 1) {
-                            kbd_iface = current_iface;
-                        } else if (iface_protocol == 2) {
-                            mouse_iface = current_iface;
-                        }
-                    }
-                } else if (type == USB_DESC_ENDPOINT && len >= 7 && current_iface != 0xFF) {
-                    uint8_t ep_addr = conf_buf[pos + 2];
-                    uint8_t attributes = conf_buf[pos + 3];
-                    uint16_t mps = usb_le16(&conf_buf[pos + 4]);
-
-                    if (mass_iface != 0xFF && current_iface == mass_iface && (attributes & 0x03u) == 2) {
-                        if (ep_addr & 0x80u) {
-                            mass_ep_in = ep_addr & 0x7Fu;
-                            mass_ep_in_mps = mps;
-                        } else {
-                            mass_ep_out = ep_addr & 0x7Fu;
-                            mass_ep_out_mps = mps;
-                        }
-                    } else if (kbd_iface != 0xFF && current_iface == kbd_iface && (attributes & 0x03u) == 3 && (ep_addr & 0x80u)) {
-                        kbd_ep_in = ep_addr & 0x7Fu;
-                        kbd_ep_mps = mps;
-                    } else if (mouse_iface != 0xFF && current_iface == mouse_iface && (attributes & 0x03u) == 3 && (ep_addr & 0x80u)) {
-                        mouse_ep_in = ep_addr & 0x7Fu;
-                        mouse_ep_mps = mps;
-                    }
-                }
-
-                pos += len;
+    uint16_t total_len = 0u;
+    for (uint32_t retry = 0u; retry < 5u; ++retry) {
+            req.wLength = 9;
+            if (usb_control_transfer(current_addr, 0, max_packet_size, &req, conf_buf)) {
+                total_len = usb_le16(&conf_buf[2]);
+                if (total_len >= 9u) {
+                    config_header_ok = true;
+                    config_value = conf_buf[5];
+                break;
             }
         }
+        usb_wait_ms(port_hc, 50);
+    }
+
+    bool config_full_ok = false;
+    if (config_header_ok) {
+        if (total_len > sizeof(conf_buf)) total_len = sizeof(conf_buf);
+
+        for (uint32_t retry = 0u; retry < 5u; ++retry) {
+            req.wLength = total_len;
+            if (usb_control_transfer(current_addr, 0, max_packet_size, &req, conf_buf)) {
+                config_full_ok = true;
+                break;
+            }
+            usb_wait_ms(port_hc, 50);
+        }
+    }
+
+    if (config_full_ok) {
+        for (uint32_t pos = 0; pos + 2 <= total_len;) {
+            uint8_t len = conf_buf[pos];
+            uint8_t type = conf_buf[pos + 1];
+
+            if (len == 0 || pos + len > total_len) {
+                break;
+            }
+
+            if (type == USB_DESC_INTERFACE && len >= 9) {
+                current_iface = conf_buf[pos + 2];
+                uint8_t iface_class = conf_buf[pos + 5];
+                uint8_t iface_subclass = conf_buf[pos + 6];
+                uint8_t iface_protocol = conf_buf[pos + 7];
+                uint8_t effective_class =
+                    (iface_class != 0u) ? iface_class : desc.bDeviceClass;
+                uint8_t effective_subclass =
+                    (iface_subclass != 0u) ? iface_subclass : desc.bDeviceSubClass;
+                uint8_t effective_protocol =
+                    (iface_protocol != 0u) ? iface_protocol : desc.bDeviceProtocol;
+
+                if (effective_class == 9) {
+                    is_hub = true;
+                } else if (effective_class == 0x08 &&
+                           effective_subclass == 0x06) {
+                    mass_iface = current_iface;
+                    mass_bot_scsi =
+                        (effective_protocol == 0x50u || effective_protocol == 0x00u);
+                } else if (effective_class == 0x03) {
+                    if (effective_protocol == 1) {
+                        kbd_iface = current_iface;
+                    } else if (effective_protocol == 2) {
+                        mouse_iface = current_iface;
+                    }
+                }
+            } else if (type == USB_DESC_ENDPOINT && len >= 7 && current_iface != 0xFF) {
+                uint8_t ep_addr = conf_buf[pos + 2];
+                uint8_t attributes = conf_buf[pos + 3];
+                uint16_t mps = usb_le16(&conf_buf[pos + 4]);
+
+                if (mass_iface != 0xFF && current_iface == mass_iface && (attributes & 0x03u) == 2) {
+                    if (ep_addr & 0x80u) {
+                        mass_ep_in = ep_addr & 0x7Fu;
+                        mass_ep_in_mps = mps;
+                    } else {
+                        mass_ep_out = ep_addr & 0x7Fu;
+                        mass_ep_out_mps = mps;
+                    }
+                } else if (kbd_iface != 0xFF && current_iface == kbd_iface && (attributes & 0x03u) == 3 && (ep_addr & 0x80u)) {
+                    kbd_ep_in = ep_addr & 0x7Fu;
+                    kbd_ep_mps = mps;
+                } else if (mouse_iface != 0xFF && current_iface == mouse_iface && (attributes & 0x03u) == 3 && (ep_addr & 0x80u)) {
+                    mouse_ep_in = ep_addr & 0x7Fu;
+                    mouse_ep_mps = mps;
+                }
+            }
+
+            pos += len;
+        }
+    }
+
+    if (!config_header_ok || !config_full_ok) {
+        return false;
     }
 
     req.bmRequestType = USB_REQ_DIR_OUT | USB_REQ_TYPE_STANDARD | USB_REQ_RCPT_DEVICE;
     req.bRequest      = USB_REQ_SET_CONFIGURATION;
-    req.wValue        = conf_buf[5];
+    req.wValue        = config_value;
     req.wIndex        = 0;
     req.wLength       = 0;
-    if (usb_control_transfer(current_addr, 0, max_packet_size, &req, NULL)) {
-        if (mass_iface != 0xFF && mass_ep_in != 0 && mass_ep_out != 0) {
-            bot_add_device(current_addr, mass_iface, mass_ep_in, mass_ep_out, mass_ep_in_mps, mass_ep_out_mps);
+    bool configured = false;
+    for (uint32_t retry = 0u; retry < 5u; ++retry) {
+        if (usb_control_transfer(current_addr, 0, max_packet_size, &req, NULL)) {
+            configured = true;
+            break;
         }
+        usb_wait_ms(port_hc, 100u + retry * 100u);
+    }
+    if (!configured) {
+        uint8_t active_config = 0;
+        if (usb_get_configuration_value(current_addr, max_packet_size, &active_config) &&
+            active_config == config_value) {
+            configured = true;
+        }
+    }
+
+    if (mass_bot_scsi && mass_iface != 0xFF &&
+        mass_ep_in != 0 && mass_ep_out != 0) {
+        bot_add_device(current_addr, mass_iface, mass_ep_in, mass_ep_out, mass_ep_in_mps, mass_ep_out_mps);
+        usb_wait_ms(port_hc, configured ? 150u : 300u);
+    }
+
+    if (configured) {
+        usb_wait_ms(port_hc, 100u);
 
         if (kbd_iface != 0xFF && kbd_ep_in != 0) {
             g_hid_kbd_addr = current_addr;
@@ -430,6 +527,7 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
     }
 
     if (is_hub) {
+        usb_track_hub(current_addr);
         usb_enumerate_hub(current_addr, max_packet_size, next_addr);
     }
     return true;
@@ -437,6 +535,11 @@ static bool usb_enumerate_device(uint8_t current_addr, usb_hc_type_t port_hc,
 
 static bool usb_enumerate_hub_port(uint8_t hub_addr, uint8_t hub_port, uint16_t max_packet_size, uint8_t *next_addr)
 {
+    usb_hub_port_state_t *state = NULL;
+    if (hub_port != 0u && hub_port <= USB_MAX_TRACKED_HUB_PORTS) {
+        state = &g_hub_ports[hub_addr][hub_port - 1u];
+    }
+
     if (!usb_hub_power_on_port(hub_addr, hub_port, max_packet_size)) {
         return false;
     }
@@ -447,17 +550,29 @@ static bool usb_enumerate_hub_port(uint8_t hub_addr, uint8_t hub_port, uint16_t 
     }
 
     if ((status & USB_PORT_STATUS_CONNECTION) == 0) {
+        if (state != NULL) {
+            state->connected = false;
+            state->addr = 0u;
+        }
         return false;
+    }
+
+    if (state != NULL && state->connected) {
+        return true;
     }
 
     if (!usb_hub_reset_port(hub_addr, hub_port, max_packet_size)) {
         return false;
     }
 
-   if (!usb_hub_get_port_status(hub_addr, hub_port, max_packet_size, &status, &change)) {
+    if (!usb_hub_get_port_status(hub_addr, hub_port, max_packet_size, &status, &change)) {
         return false;
     }
     if ((status & USB_PORT_STATUS_CONNECTION) == 0) {
+        if (state != NULL) {
+            state->connected = false;
+            state->addr = 0u;
+        }
         return false;
     }
 
@@ -495,7 +610,20 @@ static bool usb_enumerate_hub_port(uint8_t hub_addr, uint8_t hub_port, uint16_t 
     g_dev_hc[current_addr] = g_dev_hc[hub_addr];
     g_dev_root_port[current_addr] = g_dev_root_port[hub_addr];
     g_dev_route_string[current_addr] = g_dev_route_string[0];
-    return usb_enumerate_device(current_addr, g_dev_hc[hub_addr], max_packet_size, next_addr);
+    if (!usb_enumerate_device(current_addr, g_dev_hc[hub_addr], max_packet_size, next_addr)) {
+        usb_hc_type_t hc = g_dev_hc[hub_addr];
+        g_dev_hc[current_addr] = USB_HC_NONE;
+        g_dev_ep0_mps[current_addr] = 0u;
+        if (hc == USB_HC_XHCI) {
+            xhci_disable_slot(current_addr);
+        }
+        return false;
+    }
+    if (state != NULL) {
+        state->connected = true;
+        state->addr = current_addr;
+    }
+    return true;
 }
 
 static bool usb_enumerate_hub(uint8_t hub_addr, uint16_t max_packet_size, uint8_t *next_addr)
@@ -514,6 +642,36 @@ static bool usb_enumerate_hub(uint8_t hub_addr, uint16_t max_packet_size, uint8_
         }
     }
     return true;
+}
+
+static void usb_track_hub(uint8_t hub_addr)
+{
+    if (hub_addr == 0u) {
+        return;
+    }
+    for (uint8_t i = 0u; i < g_usb_hub_count; ++i) {
+        if (g_usb_hub_addrs[i] == hub_addr) {
+            return;
+        }
+    }
+    if (g_usb_hub_count < USB_MAX_TRACKED_HUBS) {
+        g_usb_hub_addrs[g_usb_hub_count++] = hub_addr;
+    }
+}
+
+static void usb_rescan_known_hubs(uint8_t *next_addr)
+{
+    for (uint8_t i = 0u; i < g_usb_hub_count; ++i) {
+        uint8_t hub_addr = g_usb_hub_addrs[i];
+        uint16_t mps = g_dev_ep0_mps[hub_addr];
+        if (hub_addr == 0u || g_dev_hc[hub_addr] == USB_HC_NONE) {
+            continue;
+        }
+        if (mps == 0u) {
+            mps = 8u;
+        }
+        (void)usb_enumerate_hub(hub_addr, mps, next_addr);
+    }
 }
 
 static uint8_t usb_alloc_address(void)
@@ -625,6 +783,17 @@ static void usb_clear_root_port_states(void)
             g_root_ports[hc][port].mouse_device_id = 0u;
         }
     }
+
+    for (uint32_t addr = 0u; addr < 256u; ++addr) {
+        for (uint32_t port = 0u; port < USB_MAX_TRACKED_HUB_PORTS; ++port) {
+            g_hub_ports[addr][port].connected = false;
+            g_hub_ports[addr][port].addr = 0u;
+        }
+    }
+    for (uint32_t i = 0u; i < USB_MAX_TRACKED_HUBS; ++i) {
+        g_usb_hub_addrs[i] = 0u;
+    }
+    g_usb_hub_count = 0u;
 }
 
 static void usb_disconnect_root_device(usb_root_port_state_t *state)
@@ -760,9 +929,11 @@ static void usb_record_root_device(usb_root_port_state_t *state,
 static bool usb_enumerate_root_port(usb_hc_type_t hc, uint32_t port)
 {
     usb_root_port_state_t *state = usb_root_port_state(hc, port);
-    if (state == NULL ||
-        !usb_hc_port_valid(hc, port) ||
-        !usb_hc_port_connected(hc, port)) {
+    if (state == NULL || !usb_hc_port_valid(hc, port)) {
+        return false;
+    }
+
+    if (!usb_hc_port_connected(hc, port)) {
         return false;
     }
 
@@ -770,7 +941,7 @@ static bool usb_enumerate_root_port(usb_hc_type_t hc, uint32_t port)
         return false;
     }
 
-    usb_wait_ms(hc, 30);
+    usb_wait_ms(hc, 50);
     if (!usb_hc_port_connected(hc, port)) {
         return false;
     }
@@ -788,27 +959,21 @@ static bool usb_enumerate_root_port(usb_hc_type_t hc, uint32_t port)
         return false;
     }
 
-    usb_wait_ms(hc, 10);
+    usb_wait_ms(hc, 50);
     g_dev_hc[current_addr] = hc;
     g_dev_root_port[current_addr] = (uint8_t)(port + 1u);
     g_dev_route_string[current_addr] = 0u;
 
-    uint16_t ep0_mps = 64u;
-    usb_device_descriptor_t desc = {0};
-    if (usb_get_device_descriptor(current_addr, &desc)) {
-        ep0_mps = usb_device_max_packet_size(desc.bMaxPacketSize0);
-        if (hc == USB_HC_XHCI) {
-            xhci_evaluate_ep0_mps(current_addr, ep0_mps);
-        }
-    }
-
-    if (!usb_enumerate_device(current_addr, hc, ep0_mps, &g_usb_next_addr)) {
+    if (!usb_enumerate_device(current_addr, hc, 64u, &g_usb_next_addr)) {
         g_dev_hc[current_addr] = USB_HC_NONE;
         g_dev_ep0_mps[current_addr] = 0u;
+        if (hc == USB_HC_XHCI) {
+            xhci_disable_slot(current_addr);
+        }
         return false;
     }
 
-    usb_record_root_device(state, hc, port, current_addr, &desc);
+    usb_record_root_device(state, hc, port, current_addr, NULL);
     return true;
 }
 
@@ -816,7 +981,7 @@ extern bool xhci_is_ready(void);
 
 void usb_core_init(void)
 {
-    usb_wait_ms(g_hc_type, 20);
+    usb_wait_ms(g_hc_type, 500);
 
     g_usb_next_addr = 1u;
     g_mass_storage_addr = 0;
@@ -825,6 +990,7 @@ void usb_core_init(void)
     g_mass_storage_interface = 0;
     g_mass_storage_ep_in_mps = 0;
     g_mass_storage_ep_out_mps = 0;
+    bot_reset_devices();
 
     g_hid_kbd_addr = 0;
     g_hid_kbd_interface = 0;
@@ -848,20 +1014,34 @@ void usb_core_init(void)
 
     usb_hc_type_t hc_types[] = { USB_HC_XHCI, USB_HC_EHCI, USB_HC_OHCI, USB_HC_UHCI };
 
-    for (int t = 0; t < 4; t++) {
-        usb_hc_type_t cur_hc = hc_types[t];
-        uint32_t num_ports = usb_hc_port_count(cur_hc);
-
-        if (num_ports == 0) {
-            continue;
-        }
-        if (num_ports > USB_MAX_TRACKED_ROOT_PORTS) {
-            num_ports = USB_MAX_TRACKED_ROOT_PORTS;
+    for (int pass = 0; pass < 3; pass++) {
+        if (pass > 0) {
+            usb_wait_ms(g_hc_type, 150);
         }
 
-        for (uint32_t i = 0; i < num_ports; i++) {
-            (void)usb_enumerate_root_port(cur_hc, i);
+        for (int t = 0; t < 4; t++) {
+            usb_hc_type_t cur_hc = hc_types[t];
+            uint32_t num_ports = usb_hc_port_count(cur_hc);
+
+            if (num_ports == 0) {
+                continue;
+            }
+            if (num_ports > USB_MAX_TRACKED_ROOT_PORTS) {
+                num_ports = USB_MAX_TRACKED_ROOT_PORTS;
+            }
+
+            for (uint32_t i = 0; i < num_ports; i++) {
+                usb_root_port_state_t *state = usb_root_port_state(cur_hc, i);
+                if (state != NULL && state->connected) continue;
+                (void)usb_enumerate_root_port(cur_hc, i);
+            }
         }
+
+        if (g_usb_hub_count != 0u) {
+            usb_rescan_known_hubs(&g_usb_next_addr);
+        }
+
+        if (bot_get_device_count() != 0) break;
     }
 }
 
@@ -1061,13 +1241,29 @@ static void usb_master_init(void)
 
     usb_hid_init();
     usb_core_init();
-    bot_init();
 }
 
 static bool usb_storage_init(void)
 {
     usb_master_init();
-    return bot_init();
+
+    for (uint32_t attempt = 0u; attempt < 3u; ++attempt) {
+        if (attempt != 0u) {
+            usb_core_init();
+            usb_wait_ms(g_hc_type, 250u);
+        }
+        if (bot_get_device_count() != 0u) {
+            usb_wait_ms(g_hc_type, 250u);
+        }
+        bool ok = bot_init();
+        if (ok) {
+            return true;
+        }
+
+        usb_wait_ms(g_hc_type, 250u);
+    }
+
+    return false;
 }
 
 static bool usb_storage_is_ready(void)
@@ -1095,6 +1291,12 @@ static bool usb_storage_get_info(uint32_t device_index,
         out_info->flags |= DRIVER_BLOCK_FLAG_WRITABLE;
     }
     out_info->transport = DRIVER_BLOCK_TRANSPORT_USB;
+    if (xhci_is_ready()) {
+        out_info->identity_flags = DRIVER_BLOCK_IDENTITY_PCI_VALID;
+        out_info->pci_bus = g_xhci_pci_bus;
+        out_info->pci_device = g_xhci_pci_dev;
+        out_info->pci_function = g_xhci_pci_func;
+    }
     const char model[] = "USB Mass Storage";
     g_api->memcpy(out_info->model, model, sizeof(model));
     return true;

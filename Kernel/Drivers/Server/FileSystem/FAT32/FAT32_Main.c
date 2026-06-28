@@ -19,6 +19,7 @@ static const driver_binary_t *g_driver_api = NULL;
 #define disk_write          g_driver_api->hw.disk_write
 #define disk_get_partition_lba g_driver_api->hw.disk_get_partition_lba
 #define serial_write_string g_driver_api->dbg.write_string
+#define serial_write_uint32 g_driver_api->dbg.write_uint32
 
 typedef struct { volatile int locked; } spinlock_t;
 static inline void spinlock_init(spinlock_t *l)   { l->locked = 0; }
@@ -1395,6 +1396,20 @@ static bool fat32_lookup_entry_in_directory(uint32_t    dir_cluster,
         if (next < 2u || next >= 0x0FFFFFF8u) break;
         cluster = next;
     }
+    if (dir_cluster == bpb.root_cluster) {
+        uint32_t dump_lba = g_fat32_partition_lba + cluster_to_lba(bpb.root_cluster);
+        uint8_t *dump_buf = g_read_buffer;
+        if (disk_read(dump_lba, dump_buf, 1)) {
+            for (uint32_t i = 0u; i < 4u; ++i) {
+                const uint8_t *entry = dump_buf + i * 32u;
+                if (entry[0] == 0x00u || entry[0] == 0xE5u) continue;
+                if ((entry[11] & 0x0Fu) == 0x0Fu) continue;
+                if (entry[11] & 0x08u) continue;
+                char ename[13];
+                fat32_short_name_to_string(entry, ename);
+            }
+        }
+    }
     return false;
 }
 
@@ -1430,6 +1445,24 @@ static bool fat32_validate_bpb(void) {
     }
     if (data_start_lba() == 0u &&
         bpb.reserved_sectors + bpb.num_fats * bpb.fat_size_sectors > 0u) {
+        return false;
+    }
+    uint16_t boot_sig = (uint16_t)g_sector_buffer[510] |
+                        ((uint16_t)g_sector_buffer[511] << 8);
+    if (boot_sig != 0xAA55u) {
+        return false;
+    }
+    bool has_fat_string = false;
+    if (memcmp(g_sector_buffer + 82u, "FAT32   ", 8u) == 0) {
+        has_fat_string = true;
+    }
+    if (memcmp(g_sector_buffer + 54u, "FAT16   ", 8u) == 0) {
+        has_fat_string = true;
+    }
+    if (memcmp(g_sector_buffer + 54u, "FAT12   ", 8u) == 0) {
+        has_fat_string = true;
+    }
+    if (!has_fat_string) {
         return false;
     }
     return true;
@@ -1966,13 +1999,6 @@ static void _fat32_list_root_files(void) {
                 char short_name[13];
                 fat32_short_name_to_string(&g_sector_buffer[i], short_name);
 
-                if (lfn_valid && lfn_name[0] != '\0') {
-                    serial_write_string(lfn_name);
-                } else {
-                    serial_write_string(short_name);
-                }
-                serial_write_string("\r\n");
-
                 lfn_valid = 0;
                 memset(lfn_name, 0, sizeof(lfn_name));
             }
@@ -2210,6 +2236,7 @@ static const driver_module_descriptor_t g_fat32_module = {
 #undef memset
 #undef memcpy
 #undef serial_write_string
+#undef serial_write_uint32
 
 const driver_module_descriptor_t *driver_module_init(const driver_binary_t *api)
 {

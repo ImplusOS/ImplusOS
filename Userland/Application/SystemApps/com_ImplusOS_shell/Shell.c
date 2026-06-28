@@ -608,7 +608,7 @@ static int cmd_help(int argc, char **argv)
     shell_puts("  clear            Clear screen\n");
     shell_puts("  uname            Show system info\n");
     shell_puts("  uptime           Show uptime\n");
-    shell_puts("  Apps: editor, files, procman, store, nettest, vm, version\n");
+    shell_puts("  Apps: editor, files, procman, store, nettest, netprobe, netsurf, vm, version\n");
     shell_puts("  help             This help\n");
     shell_puts("  exit             Exit shell\n");
     return 0;
@@ -630,6 +630,8 @@ static const app_alias_t g_app_aliases[] = {
     {"store",   "/Userland/UserApps/com_ImplusOS_ImplusStore/com_ImplusOS_ImplusStore.ELF"},
     {"nettest", "/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF"},
     {"network", "/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF"},
+    {"netprobe", "/Userland/UserApps/com_ImplusOS_curlSocketProbe/com_ImplusOS_curlSocketProbe.ELF"},
+    {"netsurf", "/Userland/UserApps/NetSurf/NetSurf.ELF"},
     {"vm",      "/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF"},
 };
 

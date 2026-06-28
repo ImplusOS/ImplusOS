@@ -1,0 +1,13 @@
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+srcincludedir=@REPO_ROOT@/Vendor/Library/libpng
+buildincludedir=@REPO_ROOT@/Build/@ARCH@/Vendor/Library/libpng/include
+
+Name: libpng
+Description: ImplusOS staged libpng
+Version: 1.6.50
+Requires: zlib
+Libs: -L${libdir} -lpng
+Cflags: -I${srcincludedir} -I${buildincludedir}
+

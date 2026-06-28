@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include "Drivers/Module/DriverBinary.h"
 
 struct usb_device_request;
 
@@ -25,6 +26,8 @@ typedef struct xhci_trb {
 #define TRB_TYPE_CONFIG_ENDPOINT 12
 #define TRB_TYPE_EVALUATE_CTX    13
 #define TRB_TYPE_RESET_ENDPOINT  14
+#define TRB_TYPE_STOP_ENDPOINT   15
+#define TRB_TYPE_SET_TR_DEQUEUE  16
 #define TRB_TYPE_NO_OP_CMD       23
 
 #define TRB_CTRL_CYCLE  (1u << 0)
@@ -149,12 +152,17 @@ typedef struct {
     volatile uint16_t rsvd[3];
 } __attribute__((packed)) xhci_erst_entry_t;
 
+extern uint8_t g_xhci_pci_bus;
+extern uint8_t g_xhci_pci_dev;
+extern uint8_t g_xhci_pci_func;
+
 void xhci_init(void);
 
 bool xhci_submit_control(uint8_t addr, uint8_t endpoint, uint16_t max_packet_size,
                          struct usb_device_request *req, void *data);
 bool xhci_submit_bulk(uint8_t addr, uint8_t endpoint, uint16_t max_packet_size,
                       uint8_t pid, void *data, uint32_t length);
+uint32_t xhci_get_max_bulk_transfer_size(void);
 
 uint32_t xhci_get_num_ports(void);
 bool     xhci_reset_port(uint32_t port);
@@ -169,3 +177,4 @@ bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
                                      void *dma_buf, uint64_t dma_phys,
                                      uint16_t length);
 int  xhci_check_interrupt_event(uint8_t addr, uint8_t ep_num);
+void xhci_disable_slot(uint8_t addr);

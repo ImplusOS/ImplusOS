@@ -1,0 +1,11 @@
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: sdl
+Description: Minimal SDL 1.2 compatibility layer for ImplusOS
+Version: 1.2.15
+Libs: -L${libdir} -lSDL
+Cflags: -I${includedir}
+

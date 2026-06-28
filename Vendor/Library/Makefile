@@ -161,7 +161,7 @@ SDL_OBJS := \
 	$(SDL_LIBM_SRCS:%.c=$(SDL_BUILD_DIR)/%.o) \
 	$(SDL_PORT_SRCS:%.c=$(SDL_BUILD_DIR)/port/%.o)
 
-COMMON_CFLAGS := -ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -O2 -I$(REPO_ROOT)/libc/I_libc/include -Wno-error -include stddef.h
+COMMON_CFLAGS := -ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -Os -g0 -ffunction-sections -fdata-sections -I$(REPO_ROOT)/libc/I_libc/include -Wno-error -include stddef.h
 ZLIB_CFLAGS := $(COMMON_CFLAGS) -I. -Izlib -DNO_GZFILE_OPS
 LIBPNG_CFLAGS := $(COMMON_CFLAGS) -I$(PNG_CONFIG_DIR) -Ilibpng -Izlib
 SDL_CFLAGS := $(COMMON_CFLAGS) \
