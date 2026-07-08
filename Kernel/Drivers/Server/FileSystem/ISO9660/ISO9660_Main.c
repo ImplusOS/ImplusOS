@@ -114,12 +114,7 @@ static inline uint32_t iso9660_read_u32_both(const uint8_t *p) {
 static bool iso9660_read_sector(uint32_t lba, uint8_t *buffer) {
     uint64_t base = g_iso_partition_lba +
                     (uint64_t)lba * (ISO9660_SECTOR_SIZE / 512u);
-    for (uint32_t i = 0u; i < ISO9660_SECTOR_SIZE / 512u; ++i) {
-        if (!disk_read(base + i, buffer + i * 512u, 1u)) {
-            return false;
-        }
-    }
-    return true;
+    return disk_read(base, buffer, ISO9660_SECTOR_SIZE / 512u);
 }
 
 static void ucs2be_to_utf8(const uint8_t *src, uint32_t src_bytes,
@@ -542,13 +537,30 @@ static bool _iso9660_read_at(ISO9660_FILE *file, uint32_t offset,
                                uint8_t *buf, uint32_t size) {
     if (!file || !buf || offset > file->size) return false;
     if (size == 0u) return true;
-    if (offset + size > file->size) size = file->size - offset;
+    if (size > file->size - offset) size = file->size - offset;
+    if (size == 0u) return true;
 
     uint32_t bytes_done      = 0u;
     uint32_t current_extent  = file->extent + (offset / ISO9660_SECTOR_SIZE);
     uint32_t offset_in_sector= offset % ISO9660_SECTOR_SIZE;
 
     while (bytes_done < size) {
+        uint32_t remaining = size - bytes_done;
+        if (offset_in_sector == 0u && remaining >= ISO9660_SECTOR_SIZE) {
+            uint32_t full_sectors = remaining / ISO9660_SECTOR_SIZE;
+            uint64_t base = g_iso_partition_lba +
+                            (uint64_t)current_extent *
+                            (ISO9660_SECTOR_SIZE / 512u);
+            if (!disk_read(base,
+                           &buf[bytes_done],
+                           full_sectors * (ISO9660_SECTOR_SIZE / 512u))) {
+                return false;
+            }
+            bytes_done += full_sectors * ISO9660_SECTOR_SIZE;
+            current_extent += full_sectors;
+            continue;
+        }
+
         spinlock_lock(&g_iso_lock);
 
         bool read_ok = iso9660_read_sector(current_extent, g_iso_read_buffer);

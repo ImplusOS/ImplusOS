@@ -400,6 +400,13 @@ typedef struct __attribute__((packed)) {
     char     name[DISPLAY_MAX_MONITOR_NAME];
 } display_mode_info_t;
 
+typedef struct __attribute__((packed)) {
+    int32_t  x;
+    int32_t  y;
+    uint32_t w;
+    uint32_t h;
+} display_rect_t;
+
 typedef struct {
     const char *name;
     bool (*probe)(void);
@@ -410,6 +417,7 @@ typedef struct {
     void (*draw_pixel)(uint32_t x, uint32_t y, uint32_t color);
     void (*fill_rect)(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
     void (*present)(void);
+    void (*present_rects)(const display_rect_t *rects, uint32_t count);
     bool (*set_framebuffer)(const driver_boot_framebuffer_t *framebuffer);
     void *(*get_framebuffer)(void);
     uint32_t (*get_generation)(void);

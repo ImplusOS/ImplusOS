@@ -87,6 +87,7 @@ bool usb_submit_interrupt_in_async(uint8_t addr, uint8_t ep_num,
                                     void *dma_buf, uint64_t dma_phys,
                                     uint16_t length);
 int  usb_check_interrupt_event(uint8_t addr, uint8_t ep_num);
+bool usb_recover_interrupt_in(uint8_t addr, uint8_t ep_num);
 
 bool usb_submit_interrupt_in_sync(uint8_t addr, uint8_t endpoint,
                                    uint16_t max_packet_size,

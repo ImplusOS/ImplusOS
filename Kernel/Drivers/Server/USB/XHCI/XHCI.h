@@ -176,5 +176,9 @@ bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
                                      uint16_t max_packet_size,
                                      void *dma_buf, uint64_t dma_phys,
                                      uint16_t length);
+bool xhci_submit_interrupt_in_sync(uint8_t addr, uint8_t ep_num,
+                                   uint16_t max_packet_size,
+                                   void *data, uint16_t length);
 int  xhci_check_interrupt_event(uint8_t addr, uint8_t ep_num);
+bool xhci_recover_interrupt_endpoint(uint8_t addr, uint8_t ep_num);
 void xhci_disable_slot(uint8_t addr);

@@ -6,6 +6,15 @@
 
 typedef uint32_t window_id_t;
 
+typedef struct {
+    uint32_t x;
+    uint32_t y;
+    uint8_t buttons;
+    int8_t wheel;
+    uint8_t reserved[2];
+    uint64_t sequence;
+} window_pointer_state_t;
+
 window_id_t window_create(uint32_t width, uint32_t height, const char *title);
 window_id_t window_create_ex(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                              uint32_t bg_color, const char *title);
@@ -26,6 +35,7 @@ void window_set_bg_color(window_id_t wid, uint32_t color);
 void window_clear(window_id_t wid);
 int32_t window_get_wm_pid(void);
 int32_t window_register_service(void);
+int32_t window_get_pointer_state(window_pointer_state_t *state_out);
 int32_t window_input_keyboard_poll(input_keyboard_event_t *out);
 int32_t window_input_mouse_poll(input_mouse_event_t *out);
 int32_t window_input_keyboard_wait(input_keyboard_event_t *out);

@@ -1168,6 +1168,15 @@ int usb_check_interrupt_event(uint8_t addr, uint8_t ep_num)
     return -1;
 }
 
+bool usb_recover_interrupt_in(uint8_t addr, uint8_t ep_num)
+{
+    usb_hc_type_t hc = g_dev_hc[addr];
+    if (hc == USB_HC_NONE) hc = g_hc_type;
+    if (hc == USB_HC_XHCI)
+        return xhci_recover_interrupt_endpoint(addr, ep_num);
+    return false;
+}
+
 bool usb_submit_interrupt_in_sync(uint8_t addr, uint8_t endpoint,
                                    uint16_t max_packet_size,
                                    void *data, uint16_t length)
@@ -1181,7 +1190,8 @@ bool usb_submit_interrupt_in_sync(uint8_t addr, uint8_t endpoint,
     else if (hc == USB_HC_UHCI)
         return uhci_submit_interrupt_in(addr, endpoint, max_packet_size, data, length);
     else if (hc == USB_HC_XHCI) {
-        return xhci_submit_interrupt_in(addr, endpoint, max_packet_size, data, 0, length);
+        return xhci_submit_interrupt_in_sync(addr, endpoint, max_packet_size,
+                                             data, length);
     }
     return false;
 }

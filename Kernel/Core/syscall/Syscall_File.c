@@ -18,8 +18,9 @@ enum {
     FILE_MAX_DIR_HANDLE = FILE_MAX_DIR_HANDLE_CONFIG
 };
 
-#define FILE_IO_CHUNK_SIZE   (64U * 1024U)
+#define FILE_IO_CHUNK_SIZE   (128U * 1024U)
 #define FILE_READ_CACHE_SIZE 4096U
+#define FILE_READ_DIRECT_THRESHOLD FILE_READ_CACHE_SIZE
 #define FILE_SEEK_SET        0
 #define FILE_SEEK_CUR        1
 #define FILE_SEEK_END        2
@@ -331,30 +332,52 @@ int64_t syscall_file_read(int32_t fd, uint8_t *buffer, uint64_t len)
 
     while (read_total < to_read) {
         uint32_t cache_end = file->cache_offset + file->cache_size;
-        if (file->cache_valid == 0 || cursor < file->cache_offset || cursor >= cache_end) {
-            if (!open_file_cache_refill(file, cursor)) {
+        if (file->cache_valid != 0 &&
+            cursor >= file->cache_offset &&
+            cursor < cache_end) {
+            uint32_t cache_index = cursor - file->cache_offset;
+            uint32_t available = cache_end - cursor;
+            uint64_t remaining_request = to_read - read_total;
+            uint32_t chunk = available;
+            if (remaining_request < (uint64_t)chunk) {
+                chunk = (uint32_t)remaining_request;
+            }
+
+            memcpy(buffer + (size_t)read_total,
+                   file->cache_data + cache_index,
+                   (size_t)chunk);
+
+            read_total += (uint64_t)chunk;
+            cursor += chunk;
+            continue;
+        }
+
+        uint64_t remaining_request = to_read - read_total;
+        if (remaining_request >= FILE_READ_DIRECT_THRESHOLD) {
+            uint64_t chunk64 = remaining_request;
+            if (chunk64 > FILE_IO_CHUNK_SIZE) {
+                chunk64 = FILE_IO_CHUNK_SIZE;
+            }
+
+            uint32_t chunk = (uint32_t)chunk64;
+            if (!vfs_read_at(&file->file,
+                             cursor,
+                             buffer + (size_t)read_total,
+                             chunk)) {
                 return (int64_t)OS_STATUS_IO_ERROR;
             }
-            if (file->cache_size == 0) {
-                break;
-            }
-            cache_end = file->cache_offset + file->cache_size;
+            open_file_cache_invalidate(file);
+            read_total += (uint64_t)chunk;
+            cursor += chunk;
+            continue;
         }
 
-        uint32_t cache_index = cursor - file->cache_offset;
-        uint32_t available = cache_end - cursor;
-        uint64_t remaining_request = to_read - read_total;
-        uint32_t chunk = available;
-        if (remaining_request < (uint64_t)chunk) {
-            chunk = (uint32_t)remaining_request;
+        if (!open_file_cache_refill(file, cursor)) {
+            return (int64_t)OS_STATUS_IO_ERROR;
         }
-
-        memcpy(buffer + (size_t)read_total,
-               file->cache_data + cache_index,
-               (size_t)chunk);
-
-        read_total += (uint64_t)chunk;
-        cursor += chunk;
+        if (file->cache_size == 0) {
+            break;
+        }
     }
 
     file->offset = cursor;

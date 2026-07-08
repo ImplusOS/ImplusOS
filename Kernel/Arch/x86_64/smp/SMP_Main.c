@@ -8,6 +8,7 @@
 #include "Platform/interrupt/LAPIC.h"
 #include "MemoryManagement/Memory_Main.h"
 #include "Core/timer/Timer.h"
+#include "Core/process/ProcessManager.h"
 #include "cpu/IDT_Main.h"
 #include "cpu/GDT_Main.h"
 #include "Core/syscall/Syscall_Main.h"
@@ -133,6 +134,9 @@ void ap_entry_c(void)
 
     hal_cpu_enable_interrupts();
     while (1) {
+        if (process_run_next_on_current_cpu() != 0) {
+            continue;
+        }
         hal_cpu_halt();
     }
 }

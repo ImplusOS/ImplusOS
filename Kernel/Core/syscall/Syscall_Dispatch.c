@@ -58,10 +58,15 @@ typedef struct __attribute__((packed)) {
 #define SYSCALL_MAX_MEM_BYTES   (128ULL * 1024ULL * 1024ULL)
 #define SYSCALL_MAX_ALLOC_BYTES (128ULL * 1024ULL * 1024ULL)
 #define SYSCALL_UDP_MAX_RECV_BYTES (UDP_USER_HEADER_BYTES + 1472U)
+#define SYSCALL_MAX_DISPLAY_RECTS 128U
 #define SYSCALL_U32_MASK        0xFFFFFFFFULL
 #define WM_FILL_RECT_TRACE      0
 
 static int32_t g_audio_owner_pid = -1;
+
+extern int32_t kernel_boot_profile_count(void);
+extern int32_t kernel_boot_profile_get(int32_t index,
+                                       boot_profile_entry_t *entry_out);
 
 static const char k_decimal_digits[10] = "0123456789";
 
@@ -346,6 +351,8 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
         case SYSCALL_DISPLAY_GET_MONITOR_INFO:
         case SYSCALL_DISPLAY_GET_MONITOR_MODE_INFO:
         case SYSCALL_DISPLAY_SET_MONITOR_MODE:
+        case SYSCALL_DISPLAY_PRESENT_RECTS:
+        case SYSCALL_WINDOW_GET_POINTER_STATE:
             return PROCESS_CAP_DISPLAY;
 
         case SYSCALL_PROCESS_SIGNAL:
@@ -393,6 +400,9 @@ static process_capability_mask_t syscall_required_capability(uint64_t syscall_nu
         case SYSCALL_GETCWD:
         case SYSCALL_GET_PROC_COUNT:
         case SYSCALL_GET_PROC_INFO:
+        case SYSCALL_GET_PROC_PERF_INFO:
+        case SYSCALL_GET_BOOT_PROFILE_COUNT:
+        case SYSCALL_GET_BOOT_PROFILE_ENTRY:
         case SYSCALL_GET_DISK_COUNT:
         default:
             return 0;
@@ -411,6 +421,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
 
     (void)arg5;
     int32_t current_pid = current_pid_get();
+    process_perf_note_syscall(current_pid);
     
     int request_switch = 0;
 #if WM_FILL_RECT_TRACE
@@ -424,6 +435,7 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
     if (input_manager_check_poll()) {
         uint64_t poll_flags = irq_save_disable();
         input_manager_poll();
+        wm_kernel_drain_input();
         irq_restore(poll_flags);
     }
 
@@ -437,9 +449,15 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         driver_manager_hotplug_poll();
     }
 
-    if (num == SYSCALL_INPUT_READ_KEYBOARD || num == SYSCALL_INPUT_READ_MOUSE) {
+    if (num == SYSCALL_INPUT_READ_KEYBOARD ||
+        num == SYSCALL_INPUT_READ_MOUSE) {
         uint64_t poll_flags = irq_save_disable();
         input_manager_poll();
+        wm_kernel_drain_input();
+        irq_restore(poll_flags);
+    } else if (num == SYSCALL_WINDOW_GET_POINTER_STATE) {
+        uint64_t poll_flags = irq_save_disable();
+        wm_kernel_drain_input();
         irq_restore(poll_flags);
     }
 
@@ -1161,6 +1179,26 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             break;
         }
 
+        case SYSCALL_WINDOW_GET_POINTER_STATE: {
+            wm_kernel_pointer_state_t *state_out =
+                (wm_kernel_pointer_state_t *)(uintptr_t)arg1;
+            if (!user_buffer_ok(state_out,
+                                sizeof(wm_kernel_pointer_state_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_pointer_state_buffer");
+                break;
+            }
+            wm_kernel_pointer_state_t state = {0};
+            wm_kernel_get_pointer_state(&state);
+            if (copy_to_user(state_out, &state, sizeof(state)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_pointer_state_buffer");
+                break;
+            }
+            set_syscall_result(saved_rsp, 0);
+            break;
+        }
+
         case SYSCALL_DISPLAY_DRAW_PIXEL:
             driver_manager_display_draw_pixel((uint32_t)arg1,
                                               (uint32_t)arg2,
@@ -1179,8 +1217,64 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
 
         case SYSCALL_DISPLAY_PRESENT:
             driver_manager_display_present();
+            process_perf_note_display(
+                current_pid,
+                1u,
+                (uint64_t)driver_manager_display_width() *
+                (uint64_t)driver_manager_display_height() * 4ULL);
             set_syscall_result(saved_rsp, 0);
             break;
+
+        case SYSCALL_DISPLAY_PRESENT_RECTS: {
+            const display_rect_t *user_rects =
+                (const display_rect_t *)(uintptr_t)arg1;
+            uint32_t count = (uint32_t)arg2;
+            if (count == 0u) {
+                driver_manager_display_present();
+                process_perf_note_display(
+                    current_pid,
+                    1u,
+                    (uint64_t)driver_manager_display_width() *
+                    (uint64_t)driver_manager_display_height() * 4ULL);
+                set_syscall_result(saved_rsp, 0);
+                break;
+            }
+            if (count > SYSCALL_MAX_DISPLAY_RECTS ||
+                !user_buffer_ok(user_rects,
+                                (uint64_t)count * sizeof(display_rect_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_INVALID_ARG,
+                             "invalid_display_rects");
+                break;
+            }
+            display_rect_t rects[SYSCALL_MAX_DISPLAY_RECTS];
+            if (copy_from_user(rects, user_rects,
+                               (uint64_t)count * sizeof(display_rect_t)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_display_rects");
+                break;
+            }
+            uint64_t bytes = 0u;
+            uint32_t display_w = driver_manager_display_width();
+            uint32_t display_h = driver_manager_display_height();
+            for (uint32_t i = 0u; i < count; ++i) {
+                int64_t x0 = rects[i].x;
+                int64_t y0 = rects[i].y;
+                int64_t x1 = x0 + (int64_t)rects[i].w;
+                int64_t y1 = y0 + (int64_t)rects[i].h;
+                if (x0 < 0) x0 = 0;
+                if (y0 < 0) y0 = 0;
+                if (x1 > (int64_t)display_w) x1 = (int64_t)display_w;
+                if (y1 > (int64_t)display_h) y1 = (int64_t)display_h;
+                if (x1 > x0 && y1 > y0) {
+                    bytes += (uint64_t)(x1 - x0) *
+                             (uint64_t)(y1 - y0) * 4ULL;
+                }
+            }
+            driver_manager_display_present_rects(rects, count);
+            process_perf_note_display(current_pid, count, bytes);
+            set_syscall_result(saved_rsp, 0);
+            break;
+        }
 
         case SYSCALL_GET_DISPLAY_FRAMEBUFFER: {
             void *ptr = driver_manager_display_get_framebuffer();
@@ -1188,7 +1282,14 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 uint64_t cr3 = process_get_current_cr3();
                 uint32_t w = driver_manager_display_width();
                 uint32_t h = driver_manager_display_height();
-                uint64_t size = (uint64_t)w * (uint64_t)h * 4ULL;
+                uint32_t stride = w;
+                display_mode_info_t mode_info = {0};
+                if (driver_manager_display_get_monitor_mode_info(0u, 0u,
+                                                                  &mode_info) &&
+                    mode_info.stride >= w) {
+                    stride = mode_info.stride;
+                }
+                uint64_t size = (uint64_t)stride * (uint64_t)h * 4ULL;
                 uint64_t start = (uint64_t)(uintptr_t)ptr;
                 uint64_t end = start + size;
                 uint64_t aligned_start = start & ~4095ULL;
@@ -1354,8 +1455,8 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
 
         case SYSCALL_SLEEP: {
             uint64_t ms = arg1;
-            if (ms > 0) {
-                timer_apic_sleep_ms((uint32_t)ms);
+            if (ms > 0u && process_sleep_current_ms(ms) == 0) {
+                request_switch |= PROCESS_SCHEDULE_REQUEST_SWITCH;
             }
             set_syscall_result(saved_rsp, 0);
             break;
@@ -1363,9 +1464,9 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
 
         case SYSCALL_NANOSLEEP: {
             uint64_t ns = arg1;
-            uint64_t ms = (ns + 999999) / 1000000;
-            if (ms > 0) {
-                request_switch = 1;
+            uint64_t ms = (ns + 999999ULL) / 1000000ULL;
+            if (ms > 0u && process_sleep_current_ms(ms) == 0) {
+                request_switch |= PROCESS_SCHEDULE_REQUEST_SWITCH;
             }
             set_syscall_result(saved_rsp, 0);
             break;
@@ -1437,6 +1538,53 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             int32_t rc = process_get_full_info(query_pid, &info);
             if (rc == 0 && copy_to_user(info_out, &info, sizeof(info)) != 0u) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_info_buffer");
+                break;
+            }
+            set_syscall_i32(saved_rsp, rc);
+            break;
+        }
+
+        case SYSCALL_GET_PROC_PERF_INFO: {
+            int32_t query_pid = (int32_t)arg1;
+            process_perf_info_t *info_out =
+                (process_perf_info_t *)(uintptr_t)arg2;
+            if (!user_buffer_ok(info_out, sizeof(process_perf_info_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_perf_info_buffer");
+                break;
+            }
+            process_perf_info_t info = {0};
+            int32_t rc = process_get_perf_info(query_pid, &info);
+            if (rc == 0 &&
+                copy_to_user(info_out, &info, sizeof(info)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_perf_info_buffer");
+                break;
+            }
+            set_syscall_i32(saved_rsp, rc);
+            break;
+        }
+
+        case SYSCALL_GET_BOOT_PROFILE_COUNT: {
+            set_syscall_i32(saved_rsp, kernel_boot_profile_count());
+            break;
+        }
+
+        case SYSCALL_GET_BOOT_PROFILE_ENTRY: {
+            int32_t index = (int32_t)arg1;
+            boot_profile_entry_t *entry_out =
+                (boot_profile_entry_t *)(uintptr_t)arg2;
+            if (!user_buffer_ok(entry_out, sizeof(boot_profile_entry_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_boot_profile_buffer");
+                break;
+            }
+            boot_profile_entry_t entry = {0};
+            int32_t rc = kernel_boot_profile_get(index, &entry);
+            if (rc == 0 &&
+                copy_to_user(entry_out, &entry, sizeof(entry)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_boot_profile_buffer");
                 break;
             }
             set_syscall_i32(saved_rsp, rc);
@@ -2238,17 +2386,19 @@ pre_schedule:
     syscall_arch_disable_interrupts();
 
     if (process_timeslice_expired()) {
-        request_switch = 1;
+        request_switch |= PROCESS_SCHEDULE_REQUEST_SWITCH |
+                          PROCESS_SCHEDULE_REQUEST_INVOLUNTARY;
     }
 
     {
         uint64_t current_user_rsp = syscall_get_user_rsp();
         uint64_t next_user_rsp = current_user_rsp;
+        int32_t scheduled_from_pid = current_pid_get();
         uint64_t next_saved_rsp = process_schedule_on_syscall(saved_rsp,
                                                               current_user_rsp,
                                                               request_switch,
                                                               &next_user_rsp);
-        if (!request_switch) {
+        if (!request_switch && current_pid_get() == scheduled_from_pid) {
             next_saved_rsp = saved_rsp;
             next_user_rsp = current_user_rsp;
         }

@@ -58,6 +58,16 @@ static uint32_t *g_bg_cache = NULL;
 static int g_bg_cache_width = 0;
 static int g_bg_cache_height = 0;
 
+static void serial_write_i32(int32_t value)
+{
+    if (value < 0) {
+        serial_write_string("-");
+        serial_write_uint32((uint32_t)(-value));
+        return;
+    }
+    serial_write_uint32((uint32_t)value);
+}
+
 static int32_t spawn_with_fallbacks(const char *const *paths, uint32_t path_count) {
     if (!paths || path_count == 0) return -1;
     for (uint32_t i = 0; i < path_count; ++i) {
@@ -614,7 +624,7 @@ static int prompt_user_input(const char *title, const char *prompt,
         input_keyboard_event_t ev;
 
         if (input_read_keyboard(&ev) < 0) {
-            process_yield();
+            sleep_ms(10u);
             continue;
         }
 
@@ -1023,7 +1033,7 @@ void _start(void) {
             draw_text_centered("ログインに失敗しました。再起動してください。", 80, 20.0f, 0xFF8080);
             draw_present();
 
-            while (1) process_yield();
+            while (1) sleep_ms(1000u);
         }
     }
 
@@ -1041,7 +1051,10 @@ void _start(void) {
     static const char *const com_ImplusOS_windowmanager[] = {
         "/Userland/SystemApps/com_ImplusOS_windowmanager/com_ImplusOS_windowmanager.ELF",
     };
-    spawn_with_fallbacks(com_ImplusOS_windowmanager, 1);
+    int32_t wm_spawn_pid = spawn_with_fallbacks(com_ImplusOS_windowmanager, 1);
+    serial_write_string("[userland] wm spawn pid=");
+    serial_write_i32(wm_spawn_pid);
+    serial_write_string("\n");
     process_yield();
 
     int32_t wm_pid = -1;
@@ -1079,5 +1092,5 @@ void _start(void) {
     g_font_buffer = NULL;
     g_font_loaded = 0;
 
-    while (1) process_yield();
+    while (1) sleep_ms(1000u);
 }

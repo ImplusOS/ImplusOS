@@ -79,20 +79,31 @@ os_status_t ipc_send_message_from_pid(int32_t sender_pid,
     spinlock_unlock(&g_ipc_lock);
     irq_restore(irq_flags);
 
+    process_perf_note_ipc_send(sender_pid);
+    (void)process_wake_pid(target_pid);
     return OS_STATUS_OK;
 }
 
 os_status_t ipc_send_message(int32_t target_pid, const void *message, uint32_t size)
 {
+    int32_t sender_pid = process_get_current_pid();
     if (driver_framework_api_is_endpoint_pid(target_pid) != 0) {
-        return driver_framework_api_handle_ipc(process_get_current_pid(), message, size);
+        os_status_t status = driver_framework_api_handle_ipc(sender_pid, message, size);
+        if (status == OS_STATUS_OK) {
+            process_perf_note_ipc_send(sender_pid);
+        }
+        return status;
     }
 
     if (pnp_notifications_is_endpoint_pid(target_pid) != 0) {
-        return pnp_notifications_handle_ipc(process_get_current_pid(), message, size);
+        os_status_t status = pnp_notifications_handle_ipc(sender_pid, message, size);
+        if (status == OS_STATUS_OK) {
+            process_perf_note_ipc_send(sender_pid);
+        }
+        return status;
     }
 
-    return ipc_send_message_from_pid(process_get_current_pid(), target_pid, message, size);
+    return ipc_send_message_from_pid(sender_pid, target_pid, message, size);
 }
 
 os_status_t ipc_receive_message(ipc_message_t *out_message)
@@ -123,6 +134,7 @@ os_status_t ipc_receive_message(ipc_message_t *out_message)
     spinlock_unlock(&g_ipc_lock);
     irq_restore(irq_flags);
 
+    process_perf_note_ipc_recv(current_pid);
     return OS_STATUS_OK;
 }
 

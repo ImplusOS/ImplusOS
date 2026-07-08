@@ -11,12 +11,14 @@ extern const driver_binary_t *g_api;
 #define XHCI_MAX_PORTS      16
 #define XHCI_MAX_SLOTS      32
 #define CMD_RING_SIZE       64
-#define EVT_RING_SIZE       64
-#define TRANSFER_RING_SIZE  64
+#define EVT_RING_SIZE       256
+#define TRANSFER_RING_SIZE  128
 #define XHCI_CONTROL_TIMEOUT_MS 30000u
 #define XHCI_BULK_TIMEOUT_MS    30000u
 #define XHCI_BULK_MAX_TRANSFER_SIZE (1024u * 1024u)
 #define XHCI_NORMAL_TRB_MAX_LENGTH  65536u
+#define XHCI_STALE_COMPLETION_TRACE 0u
+#define XHCI_STALE_COMPLETION_DEBUG_LIMIT 8u
 
 static volatile xhci_cap_regs_t   *g_cap    = NULL;
 static volatile xhci_op_regs_t    *g_op     = NULL;
@@ -89,7 +91,17 @@ static uint64_t g_dev_ctx_phys[XHCI_MAX_SLOTS];
 static void    *g_inp_ctx[XHCI_MAX_SLOTS];
 static uint64_t g_inp_ctx_phys[XHCI_MAX_SLOTS];
 static uint8_t g_completion_flags[256][XHCI_MAX_EP_PER_SLOT];
+static uint8_t g_completion_error_count[256][XHCI_MAX_EP_PER_SLOT];
 static uint32_t g_completion_cc[256][XHCI_MAX_EP_PER_SLOT];
+static uint64_t g_completion_trb[256][XHCI_MAX_EP_PER_SLOT];
+static uint8_t g_completion_match_required[256][XHCI_MAX_EP_PER_SLOT];
+static uint32_t g_completion_stale_total = 0u;
+static uint32_t g_completion_stale_logged_total = 0u;
+static uint8_t g_completion_stale_last_slot = 0u;
+static uint8_t g_completion_stale_last_ep = 0u;
+static uint32_t g_completion_stale_last_cc = 0u;
+static uint32_t g_completion_stale_last_expected = 0u;
+static uint32_t g_completion_stale_last_actual = 0u;
 
 #define XHCI_DMA_BOUNCE_SIZE  XHCI_BULK_MAX_TRANSFER_SIZE
 static void    *g_dma_bounce     = NULL;
@@ -162,6 +174,87 @@ void xhci_delay_ms(uint32_t ms);
 static inline bool xhci_cc_success(uint32_t cc)
 {
     return cc == 1u || cc == 13u;
+}
+
+static void xhci_debug_string(const char *str)
+{
+    if (str == NULL || g_api == NULL) {
+        return;
+    }
+    if (g_api->dbg.write_string != NULL) {
+        g_api->dbg.write_string(str);
+    } else if (g_api->serial_write_string != NULL) {
+        g_api->serial_write_string(str);
+    }
+}
+
+static void xhci_debug_u32(uint32_t value)
+{
+    if (g_api == NULL) {
+        return;
+    }
+    if (g_api->dbg.write_uint32 != NULL) {
+        g_api->dbg.write_uint32(value);
+    } else if (g_api->serial_write_uint32 != NULL) {
+        g_api->serial_write_uint32(value);
+    }
+}
+
+static inline uint64_t xhci_event_trb_pointer(uint64_t value)
+{
+    return value & ~0xFULL;
+}
+
+static inline bool xhci_completion_trb_matches(uint64_t expected,
+                                               uint64_t actual)
+{
+    if (expected == 0u || actual == 0u) {
+        return false;
+    }
+    return xhci_event_trb_pointer(expected) ==
+           xhci_event_trb_pointer(actual);
+}
+
+static void xhci_note_stale_completion(uint8_t slot_id, uint8_t ep_idx,
+                                       uint32_t cc, uint64_t expected,
+                                       uint64_t actual)
+{
+    ++g_completion_stale_total;
+    g_completion_stale_last_slot = slot_id;
+    g_completion_stale_last_ep = ep_idx;
+    g_completion_stale_last_cc = cc;
+    g_completion_stale_last_expected = (uint32_t)expected;
+    g_completion_stale_last_actual = (uint32_t)actual;
+}
+
+static void xhci_maybe_log_stale_completion(void)
+{
+    uint32_t total = g_completion_stale_total;
+    if (total == g_completion_stale_logged_total) {
+        return;
+    }
+    if (XHCI_STALE_COMPLETION_TRACE == 0u) {
+        g_completion_stale_logged_total = total;
+        return;
+    }
+    if (g_completion_stale_logged_total >= XHCI_STALE_COMPLETION_DEBUG_LIMIT &&
+        (total & 0x7Fu) != 0u) {
+        return;
+    }
+    g_completion_stale_logged_total = total;
+    xhci_debug_string("[xhci] completion trb mismatch slot=");
+    xhci_debug_u32(g_completion_stale_last_slot);
+    xhci_debug_string(" ep=");
+    xhci_debug_u32(g_completion_stale_last_ep);
+    xhci_debug_string(" cc=");
+    xhci_debug_u32(g_completion_stale_last_cc);
+    xhci_debug_string(" exp=");
+    xhci_debug_u32(g_completion_stale_last_expected);
+    xhci_debug_string(" act=");
+    xhci_debug_u32(g_completion_stale_last_actual);
+    xhci_debug_string(" total=");
+    xhci_debug_u32(total);
+    xhci_debug_string("\n");
 }
 
 static inline uint64_t xhci_read_tsc(void);
@@ -252,7 +345,8 @@ static bool xhci_wait_for_usbcmd(uint32_t mask, uint32_t expected, uint32_t time
 #endif
 }
 
-static void xhci_store_completion(uint8_t slot_id, uint8_t ep_idx, uint32_t cc)
+static void xhci_store_completion(uint8_t slot_id, uint8_t ep_idx,
+                                  uint32_t cc, uint64_t trb_phys)
 {
     if (slot_id == 0 || slot_id > XHCI_MAX_SLOTS) return;
     if (ep_idx >= XHCI_MAX_EP_PER_SLOT) return;
@@ -268,7 +362,23 @@ static void xhci_store_completion(uint8_t slot_id, uint8_t ep_idx, uint32_t cc)
         }
     }
     if (addr == 0) return;
-    g_completion_flags[addr][ep_idx] = xhci_cc_success(cc) ? 1u : 2u;
+    uint64_t expected_trb = g_completion_trb[addr][ep_idx];
+    if (g_completion_match_required[addr][ep_idx] != 0u &&
+        !xhci_completion_trb_matches(expected_trb, trb_phys)) {
+        xhci_note_stale_completion(slot_id, ep_idx, cc,
+                                   expected_trb, trb_phys);
+    } else if (expected_trb != 0u && trb_phys != 0u &&
+               !xhci_completion_trb_matches(expected_trb, trb_phys)) {
+        xhci_note_stale_completion(slot_id, ep_idx, cc,
+                                   expected_trb, trb_phys);
+    }
+    if (xhci_cc_success(cc)) {
+        if (g_completion_flags[addr][ep_idx] != 0xFFu) {
+            ++g_completion_flags[addr][ep_idx];
+        }
+    } else if (g_completion_error_count[addr][ep_idx] != 0xFFu) {
+        ++g_completion_error_count[addr][ep_idx];
+    }
     g_completion_cc[addr][ep_idx] = cc;
 }
 
@@ -313,12 +423,23 @@ static uint8_t xhci_take_completion(uint8_t slot_id, uint8_t ep_idx, uint32_t *c
     uint8_t addr = g_addr_from_slot[slot_id];
     if (addr == 0) return 0;
 
-    uint8_t state = g_completion_flags[addr][ep_idx];
+    uint8_t state = 0u;
     if (cc_out != NULL) {
         *cc_out = g_completion_cc[addr][ep_idx];
     }
-    g_completion_flags[addr][ep_idx] = 0;
-    g_completion_cc[addr][ep_idx] = 0;
+    if (g_completion_flags[addr][ep_idx] > 0u) {
+        --g_completion_flags[addr][ep_idx];
+        state = 1u;
+    } else if (g_completion_error_count[addr][ep_idx] > 0u) {
+        --g_completion_error_count[addr][ep_idx];
+        state = 2u;
+    }
+    if (g_completion_flags[addr][ep_idx] == 0u &&
+        g_completion_error_count[addr][ep_idx] == 0u) {
+        g_completion_cc[addr][ep_idx] = 0u;
+        g_completion_trb[addr][ep_idx] = 0u;
+        g_completion_match_required[addr][ep_idx] = 0u;
+    }
     return state;
 }
 
@@ -608,6 +729,7 @@ static bool xhci_wait_event(uint32_t expected_type,
                 result = (state == 1u);
                 spinlock_unlock(&g_xhci_lock);
                 hal_cpu_restore_interrupts(rflags);
+                xhci_maybe_log_stale_completion();
                 return result;
             }
         } else if (expected_type == 33u) {
@@ -617,6 +739,7 @@ static bool xhci_wait_event(uint32_t expected_type,
                 g_cmd_ready = false;
                 spinlock_unlock(&g_xhci_lock);
                 hal_cpu_restore_interrupts(rflags);
+                xhci_maybe_log_stale_completion();
                 return result;
             }
         }
@@ -632,6 +755,7 @@ static bool xhci_wait_event(uint32_t expected_type,
             continue;
         }
 
+        uint64_t ev_param = trb->parameter;
         uint32_t trb_type = (trb->control >> 10) & 0x3Fu;
         
         uint32_t cc       = (trb->status  >> 24) & 0xFFu;
@@ -645,6 +769,18 @@ static bool xhci_wait_event(uint32_t expected_type,
         }
         if (match && expected_ep != 0 && trb_type == 32u) {
             if (ev_ep != expected_ep) match = 0;
+        }
+        if (match && trb_type == 32u &&
+            expected_slot != 0u && expected_ep != 0u) {
+            uint8_t addr = g_addr_from_slot[expected_slot];
+            if (addr != 0u &&
+                g_completion_match_required[addr][expected_ep] != 0u) {
+                uint64_t expected_trb = g_completion_trb[addr][expected_ep];
+                if (!xhci_completion_trb_matches(expected_trb, ev_param)) {
+                    xhci_note_stale_completion(ev_slot, ev_ep, cc,
+                                               expected_trb, ev_param);
+                }
+            }
         }
         
         g_evt_deq++;
@@ -660,7 +796,7 @@ static bool xhci_wait_event(uint32_t expected_type,
              
         if (!match) {
             if (trb_type == 32u) {
-                xhci_store_completion(ev_slot, ev_ep, cc);
+                xhci_store_completion(ev_slot, ev_ep, cc, ev_param);
             } else if (trb_type == 33u) {
                 g_cmd_cc = cc;
                 g_cmd_slot = ev_slot;
@@ -685,6 +821,7 @@ static bool xhci_wait_event(uint32_t expected_type,
     }
 
     hal_cpu_restore_interrupts(rflags);
+    xhci_maybe_log_stale_completion();
 
     return result;
 }
@@ -1021,14 +1158,16 @@ void xhci_init(void)
         g_cmd_ring_phys | 1u);
 
     g_evt_ring = (volatile xhci_trb_t *)
-                     xhci_dma_alloc(4096u, 4096u, &g_evt_ring_phys);
+                     xhci_dma_alloc(sizeof(xhci_trb_t) * EVT_RING_SIZE,
+                                    4096u, &g_evt_ring_phys);
     g_erst     = (volatile xhci_erst_entry_t *)
                      xhci_dma_alloc(4096u, 4096u, &g_erst_phys);
 
     if (!g_evt_ring || !g_erst) {
         return;
     }
-    g_api->memset((void *)g_evt_ring, 0, 4096);
+    g_api->memset((void *)g_evt_ring, 0,
+                  sizeof(xhci_trb_t) * EVT_RING_SIZE);
     g_api->memset((void *)g_erst,     0, 4096);
     hal_cpu_memory_barrier();
 
@@ -1064,7 +1203,19 @@ void xhci_init(void)
     g_api->memset(g_slot_map, 0, sizeof(g_slot_map));
     g_api->memset(g_addr_from_slot, 0, sizeof(g_addr_from_slot));
     g_api->memset(g_completion_flags, 0, sizeof(g_completion_flags));
+    g_api->memset(g_completion_error_count, 0,
+                  sizeof(g_completion_error_count));
     g_api->memset(g_completion_cc, 0, sizeof(g_completion_cc));
+    g_api->memset(g_completion_trb, 0, sizeof(g_completion_trb));
+    g_api->memset(g_completion_match_required, 0,
+                  sizeof(g_completion_match_required));
+    g_completion_stale_total = 0u;
+    g_completion_stale_logged_total = 0u;
+    g_completion_stale_last_slot = 0u;
+    g_completion_stale_last_ep = 0u;
+    g_completion_stale_last_cc = 0u;
+    g_completion_stale_last_expected = 0u;
+    g_completion_stale_last_actual = 0u;
     g_ready = true;
 }
 
@@ -1108,7 +1259,10 @@ void xhci_disable_slot(uint8_t addr)
     g_slot_map[addr] = 0;
     for (uint8_t ep = 0u; ep < XHCI_MAX_EP_PER_SLOT; ++ep) {
         g_completion_flags[addr][ep] = 0u;
+        g_completion_error_count[addr][ep] = 0u;
         g_completion_cc[addr][ep] = 0u;
+        g_completion_trb[addr][ep] = 0u;
+        g_completion_match_required[addr][ep] = 0u;
     }
 }
 
@@ -1345,14 +1499,24 @@ static bool xhci_recover_endpoint(uint8_t addr, uint8_t ep_idx)
 
     xhci_reset_xfer_ring(si, ep_idx);
     g_completion_flags[addr][ep_idx] = 0u;
+    g_completion_error_count[addr][ep_idx] = 0u;
     g_completion_cc[addr][ep_idx] = 0u;
+    g_completion_trb[addr][ep_idx] = 0u;
+    g_completion_match_required[addr][ep_idx] = 0u;
 
     bool deq_ok = xhci_set_tr_dequeue_command(slot_id, ep_idx,
                                               g_xfer[si][ep_idx].phys | 1u,
                                               &deq_cc);
-    if (g_api) {
-    }
     return deq_ok;
+}
+
+bool xhci_recover_interrupt_endpoint(uint8_t addr, uint8_t ep_num)
+{
+    uint8_t ep_idx = (uint8_t)(ep_num * 2u + 1u);
+    if (ep_idx == 0u || ep_idx >= XHCI_MAX_EP_PER_SLOT) {
+        return false;
+    }
+    return xhci_recover_endpoint(addr, ep_idx);
 }
 
 static uint64_t xhci_pack_setup_packet(const usb_device_request_t *setup)
@@ -1724,6 +1888,7 @@ bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
 
     uint8_t ep_idx = (uint8_t)(ep_num * 2u + 1u);
     if (ep_idx == 0 || ep_idx >= XHCI_MAX_EP_PER_SLOT) return false;
+    if (dma_phys == 0u || length == 0u) return false;
 
     if (!g_xfer[si][ep_idx].ring) {
         xhci_configure_ep(addr, ep_num | 0x80u, 3, max_packet_size, 6);
@@ -1738,6 +1903,12 @@ bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
     spinlock_lock(&g_xhci_lock);
 
     xhci_trb_t trb = {0};
+    uint64_t trb_phys = r->phys + (uint64_t)r->enq * sizeof(xhci_trb_t);
+    g_completion_flags[addr][ep_idx] = 0u;
+    g_completion_error_count[addr][ep_idx] = 0u;
+    g_completion_cc[addr][ep_idx] = 0u;
+    g_completion_trb[addr][ep_idx] = trb_phys;
+    g_completion_match_required[addr][ep_idx] = 1u;
     trb.parameter = dma_phys;
     trb.status    = (uint32_t)length |
                     (xhci_td_size_field((uint32_t)length, max_packet_size) << 17);
@@ -1750,6 +1921,67 @@ bool xhci_submit_interrupt_in(uint8_t addr, uint8_t ep_num,
     hal_cpu_restore_interrupts(rflags);
 
     return true;
+}
+
+bool xhci_submit_interrupt_in_sync(uint8_t addr, uint8_t ep_num,
+                                   uint16_t max_packet_size,
+                                   void *data, uint16_t length)
+{
+    if (!g_ready || data == NULL || length == 0u) return false;
+
+    uint8_t slot_id = g_slot_map[addr];
+    if (slot_id == 0) return false;
+
+    uint8_t ep_idx = (uint8_t)(ep_num * 2u + 1u);
+    if (ep_idx == 0 || ep_idx >= XHCI_MAX_EP_PER_SLOT) return false;
+
+    uint64_t dma_phys = 0u;
+    void *dma_buf = xhci_dma_alloc(length, 64u, &dma_phys);
+    if (dma_buf == NULL || dma_phys == 0u) {
+        if (dma_buf != NULL && g_api != NULL && g_api->dma_free != NULL) {
+            g_api->dma_free(dma_buf, length);
+        }
+        return false;
+    }
+
+    if (g_api != NULL && g_api->memset != NULL) {
+        g_api->memset(dma_buf, 0, length);
+    }
+
+    bool submitted = xhci_submit_interrupt_in(addr, ep_num, max_packet_size,
+                                              dma_buf, dma_phys, length);
+    if (!submitted) {
+        g_api->dma_free(dma_buf, length);
+        return false;
+    }
+
+    uint32_t cc = 0u;
+    bool ok = xhci_wait_event(32u, slot_id, ep_idx, &cc, 25u);
+    uint64_t clear_flags = hal_cpu_save_interrupts();
+    spinlock_lock(&g_xhci_lock);
+    g_completion_flags[addr][ep_idx] = 0u;
+    g_completion_error_count[addr][ep_idx] = 0u;
+    g_completion_cc[addr][ep_idx] = 0u;
+    g_completion_trb[addr][ep_idx] = 0u;
+    g_completion_match_required[addr][ep_idx] = 0u;
+    spinlock_unlock(&g_xhci_lock);
+    hal_cpu_restore_interrupts(clear_flags);
+    if (ok) {
+        if (g_api != NULL && g_api->memcpy != NULL) {
+            g_api->memcpy(data, dma_buf, length);
+        } else {
+            uint8_t *dst = (uint8_t *)data;
+            uint8_t *src = (uint8_t *)dma_buf;
+            for (uint16_t i = 0u; i < length; ++i) {
+                dst[i] = src[i];
+            }
+        }
+    } else {
+        (void)xhci_recover_endpoint(addr, ep_idx);
+    }
+
+    g_api->dma_free(dma_buf, length);
+    return ok;
 }
 
 static void xhci_drain_event_ring(void)
@@ -1767,6 +1999,7 @@ static void xhci_drain_event_ring(void)
             break;
         }
 
+        uint64_t ev_param = trb->parameter;
         uint32_t trb_type = (trb->control >> 10) & 0x3Fu;
         
         uint32_t cc       = (trb->status  >> 24) & 0xFFu;
@@ -1785,7 +2018,7 @@ static void xhci_drain_event_ring(void)
              (uint64_t)g_evt_deq * sizeof(xhci_trb_t)) | (1u << 3));
 
         if (trb_type == 32u) {
-            xhci_store_completion(ev_slot, ev_ep, cc);
+            xhci_store_completion(ev_slot, ev_ep, cc, ev_param);
         } else if (trb_type == 33u) {
             g_cmd_cc = cc;
             g_cmd_slot = ev_slot;
@@ -1797,6 +2030,7 @@ static void xhci_drain_event_ring(void)
 
     spinlock_unlock(&g_xhci_lock);
     hal_cpu_restore_interrupts(rflags);
+    xhci_maybe_log_stale_completion();
 }
 
 int xhci_check_interrupt_event(uint8_t addr, uint8_t ep_num)
@@ -1805,15 +2039,34 @@ int xhci_check_interrupt_event(uint8_t addr, uint8_t ep_num)
     if (g_slot_map[addr] == 0) return -1;
 
     xhci_drain_event_ring();
+    xhci_maybe_log_stale_completion();
 
     uint8_t ep_idx = (uint8_t)(ep_num * 2u + 1u);
     if (ep_idx == 0 || ep_idx >= XHCI_MAX_EP_PER_SLOT) return -1;
 
-    if (g_completion_flags[addr][ep_idx] == 1) {
-        g_completion_flags[addr][ep_idx] = 0;
+    uint8_t result = 0u;
+    uint64_t rflags = hal_cpu_save_interrupts();
+    spinlock_lock(&g_xhci_lock);
+    if (g_completion_flags[addr][ep_idx] > 0u) {
+        --g_completion_flags[addr][ep_idx];
+        result = 1u;
+    } else if (g_completion_error_count[addr][ep_idx] > 0u) {
+        --g_completion_error_count[addr][ep_idx];
+        result = 2u;
+    }
+    if (g_completion_flags[addr][ep_idx] == 0u &&
+        g_completion_error_count[addr][ep_idx] == 0u) {
+        g_completion_cc[addr][ep_idx] = 0u;
+        g_completion_trb[addr][ep_idx] = 0u;
+        g_completion_match_required[addr][ep_idx] = 0u;
+    }
+    spinlock_unlock(&g_xhci_lock);
+    hal_cpu_restore_interrupts(rflags);
+
+    if (result == 1u) {
         return 1;
-    } else if (g_completion_flags[addr][ep_idx] == 2) {
-        g_completion_flags[addr][ep_idx] = 0;
+    } else if (result == 2u) {
+        (void)xhci_recover_endpoint(addr, ep_idx);
         return -1;
     }
     return 0;

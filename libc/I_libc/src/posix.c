@@ -836,6 +836,10 @@ int scandir(const char* dirp, struct dirent*** namelist,
 
 int gettimeofday(struct timeval* tv, struct timezone* tz)
 {
+    static int initialized = 0;
+    static time_t base_realtime_sec = 0;
+    static uint64_t base_uptime_ms = 0;
+
     if (tz) {
         tz->tz_minuteswest = 0;
         tz->tz_dsttime = 0;
@@ -844,15 +848,23 @@ int gettimeofday(struct timeval* tv, struct timezone* tz)
         return 0;
     }
 
-    rtc_time_t rtc;
-    if (sys_get_rtc_time(&rtc) < 0) {
-        errno = EIO;
-        return -1;
+    uint64_t now_ms = get_uptime_ms();
+    if (!initialized) {
+        rtc_time_t rtc;
+        if (sys_get_rtc_time(&rtc) == 0) {
+            base_realtime_sec = (time_t)date_to_epoch_secs(
+                (int)rtc.year, (int)rtc.month, (int)rtc.day,
+                (int)rtc.hour, (int)rtc.minute, (int)rtc.second);
+        } else {
+            base_realtime_sec = 0;
+        }
+        base_uptime_ms = now_ms;
+        initialized = 1;
     }
-    tv->tv_sec = (time_t)date_to_epoch_secs(
-        (int)rtc.year, (int)rtc.month, (int)rtc.day,
-        (int)rtc.hour, (int)rtc.minute, (int)rtc.second);
-    tv->tv_usec = 0;
+
+    uint64_t elapsed_ms = now_ms - base_uptime_ms;
+    tv->tv_sec = base_realtime_sec + (time_t)(elapsed_ms / 1000ULL);
+    tv->tv_usec = (suseconds_t)((elapsed_ms % 1000ULL) * 1000ULL);
     return 0;
 }
 
@@ -2544,16 +2556,11 @@ int clock_gettime(clockid_t clk_id, struct timespec *tp)
         return 0;
     }
     if (clk_id == CLOCK_REALTIME) {
-        rtc_time_t rtc;
-        if (sys_get_rtc_time(&rtc) == 0) {
-            tp->tv_sec  = (time_t)date_to_epoch_secs(
-                (int)rtc.year, (int)rtc.month,  (int)rtc.day,
-                (int)rtc.hour, (int)rtc.minute, (int)rtc.second);
-            tp->tv_nsec = 0;
-            return 0;
-        }
-        errno = EIO;
-        return -1;
+        struct timeval tv;
+        if (gettimeofday(&tv, NULL) < 0) return -1;
+        tp->tv_sec = tv.tv_sec;
+        tp->tv_nsec = (long)tv.tv_usec * 1000L;
+        return 0;
     }
     errno = EINVAL;
     return -1;

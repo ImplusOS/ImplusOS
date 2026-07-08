@@ -67,6 +67,8 @@ typedef struct {
     char     name[64];
     uint8_t  state;
     uint64_t ticks;
+    uint64_t runtime_ns;
+    uint64_t display_bytes;
     uint64_t mem;
     double   cpu_usage;
 } proc_entry_t;
@@ -81,7 +83,9 @@ typedef struct { int x, y, w, h; } rect_t;
 static window_id_t  g_win            = 0;
 static proc_entry_t g_procs[MAX_PROCESSES];
 static uint64_t     g_last_ticks[MAX_PROCESSES];
+static uint64_t     g_last_runtime_ns[MAX_PROCESSES];
 static uint8_t      g_tick_initialized[MAX_PROCESSES];
+static uint8_t      g_runtime_initialized[MAX_PROCESSES];
 static int          g_proc_count     = 0;
 static int          g_selected_idx   = 0;
 static int          g_scroll_offset  = 0;
@@ -200,8 +204,26 @@ static void refresh_procs(void)
         entry->state = info.state;
         entry->ticks = info.total_ticks;
         entry->mem   = info.memory_usage;
+        entry->runtime_ns = 0u;
+        entry->display_bytes = 0u;
 
-        if (delta_ms > 0 && info.pid >= 0 && info.pid < MAX_PROCESSES
+        process_perf_info_t perf;
+        bool have_perf = get_process_perf_info(info.pid, &perf) == 0;
+        if (have_perf) {
+            entry->runtime_ns = perf.runtime_ns;
+            entry->display_bytes = perf.display_bytes;
+            entry->mem = perf.memory_usage;
+        }
+
+        if (have_perf && delta_ms > 0 && info.pid >= 0 &&
+                info.pid < MAX_PROCESSES &&
+                g_runtime_initialized[info.pid] &&
+                perf.runtime_ns >= g_last_runtime_ns[info.pid]) {
+            uint64_t diff_ns = perf.runtime_ns - g_last_runtime_ns[info.pid];
+            entry->cpu_usage =
+                (double)diff_ns * 100.0 / ((double)delta_ms * 1000000.0);
+            if (entry->cpu_usage > 999.9) entry->cpu_usage = 999.9;
+        } else if (delta_ms > 0 && info.pid >= 0 && info.pid < MAX_PROCESSES
                 && g_tick_initialized[info.pid]
                 && info.total_ticks >= g_last_ticks[info.pid]) {
             uint64_t diff = info.total_ticks - g_last_ticks[info.pid];
@@ -215,6 +237,10 @@ static void refresh_procs(void)
         if (info.pid >= 0 && info.pid < MAX_PROCESSES) {
             g_last_ticks[info.pid]       = info.total_ticks;
             g_tick_initialized[info.pid] = 1;
+            if (have_perf) {
+                g_last_runtime_ns[info.pid] = perf.runtime_ns;
+                g_runtime_initialized[info.pid] = 1;
+            }
         }
         actual_count++;
     }
@@ -695,9 +721,11 @@ void procman_main(void)
             needs_draw   = true;
         }
 
-        if (needs_draw) draw();
-
-        process_yield();
+        if (needs_draw) {
+            draw();
+        } else {
+            sleep_ms(10u);
+        }
     }
 }
 

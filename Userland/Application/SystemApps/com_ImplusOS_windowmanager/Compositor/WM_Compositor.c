@@ -8,14 +8,32 @@
 #include "../UI/WM_StartMenu.h"
 #include "../UI/WM_Taskbar.h"
 #include "../../../../../Userland/Syscalls.h"
+#include "../../../../../Userland/API/Serial.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+#define WM_RENDER_TRACE 0u
+#define WM_RENDER_DEBUG_LIMIT 8u
+
+static uint32_t g_render_debug_count = 0u;
+static uint64_t g_render_frame_count = 0u;
 
 static wm_rect_t display_bounds(const wm_state_t *state)
 {
     return (wm_rect_t){0, 0, state->compositor.framebuffer_width,
                        state->compositor.framebuffer_height};
+}
+
+static uint32_t display_stride_or_width(uint32_t width)
+{
+    display_mode_info_t mode;
+    memset(&mode, 0, sizeof(mode));
+    if (display_get_monitor_mode_info(0u, 0u, &mode) >= 0 &&
+        mode.stride >= width) {
+        return mode.stride;
+    }
+    return width;
 }
 
 static void flush_rect(wm_state_t *state, wm_rect_t rect);
@@ -32,6 +50,8 @@ bool wm_compositor_init(wm_state_t *state, uint32_t width, uint32_t height)
     if (!c->shadow || !c->background) { wm_compositor_destroy(c); return false; }
     c->framebuffer_width  = width;
     c->framebuffer_height = height;
+    c->framebuffer_stride = display_stride_or_width(width);
+    c->mapped_framebuffer = (uint32_t *)sys_get_display_framebuffer();
     c->buffer_bytes       = (uint32_t)bytes64;
     wm_region_reset(&c->damage);
     return true;
@@ -64,6 +84,8 @@ bool wm_compositor_resize(wm_state_t *state, uint32_t width, uint32_t height)
     c->background = background;
     c->framebuffer_width = width;
     c->framebuffer_height = height;
+    c->framebuffer_stride = display_stride_or_width(width);
+    c->mapped_framebuffer = (uint32_t *)sys_get_display_framebuffer();
     c->buffer_bytes = (uint32_t)bytes64;
     c->previous_cursor_x = 0u;
     c->previous_cursor_y = 0u;
@@ -78,6 +100,7 @@ void wm_compositor_destroy(wm_compositor_t *compositor)
     if (!compositor) return;
     free(compositor->shadow);
     free(compositor->background);
+    compositor->mapped_framebuffer = NULL;
     memset(compositor, 0, sizeof(*compositor));
 }
 
@@ -212,14 +235,39 @@ static void draw_cursor_on_shadow(wm_state_t *state)
     draw_cursor(state, &canvas);
 }
 
+static bool cursor_state_changed(const wm_state_t *state)
+{
+    if (!state) return false;
+    const wm_compositor_t *c = &state->compositor;
+    return c->previous_cursor_visible != state->scene.cursor_visible ||
+           c->previous_cursor_x       != state->scene.cursor_x       ||
+           c->previous_cursor_y       != state->scene.cursor_y       ||
+           c->previous_cursor_style   != state->scene.cursor_style;
+}
+
+static wm_rect_t cursor_damage_rect(uint32_t x, uint32_t y)
+{
+    return (wm_rect_t){(int32_t)x - 3,
+                       (int32_t)y - 3,
+                       WM_CURSOR_WIDTH + 12u,
+                       WM_CURSOR_HEIGHT + 12u};
+}
+
 static void flush_rect(wm_state_t *state, wm_rect_t rect)
 {
-    uint32_t *framebuffer = (uint32_t *)sys_get_display_framebuffer();
+    uint32_t *framebuffer = state->compositor.mapped_framebuffer;
     uint32_t width = state->compositor.framebuffer_width;
+    uint32_t stride = state->compositor.framebuffer_stride;
+    if (stride < width) stride = width;
     if (framebuffer) {
         for (uint32_t row = 0; row < rect.h; ++row) {
-            uint32_t off = (uint32_t)(rect.y+(int32_t)row)*width+(uint32_t)rect.x;
-            memcpy(&framebuffer[off], &state->compositor.shadow[off],
+            uint32_t src_off =
+                (uint32_t)(rect.y + (int32_t)row) * width +
+                (uint32_t)rect.x;
+            uint32_t dst_off =
+                (uint32_t)(rect.y + (int32_t)row) * stride +
+                (uint32_t)rect.x;
+            memcpy(&framebuffer[dst_off], &state->compositor.shadow[src_off],
                    (size_t)rect.w*sizeof(uint32_t));
         }
         return;
@@ -238,25 +286,27 @@ static void flush_rect(wm_state_t *state, wm_rect_t rect)
     }
 }
 
+static void remember_cursor_state(wm_state_t *state)
+{
+    state->compositor.previous_cursor_x       = state->scene.cursor_x;
+    state->compositor.previous_cursor_y       = state->scene.cursor_y;
+    state->compositor.previous_cursor_visible = state->scene.cursor_visible;
+    state->compositor.previous_cursor_style   = state->scene.cursor_style;
+}
+
 static void add_cursor_damage(wm_state_t *state)
 {
     wm_compositor_t *c = &state->compositor;
     wm_rect_t bounds = display_bounds(state);
-    bool changed = c->previous_cursor_visible != state->scene.cursor_visible ||
-                   c->previous_cursor_x       != state->scene.cursor_x       ||
-                   c->previous_cursor_y       != state->scene.cursor_y       ||
-                   c->previous_cursor_style   != state->scene.cursor_style;
-    if (!changed) return;
+    if (!cursor_state_changed(state)) return;
     if (c->previous_cursor_visible)
-        wm_region_add(&c->damage,
-            (wm_rect_t){(int32_t)c->previous_cursor_x-3,
-                        (int32_t)c->previous_cursor_y-3,
-                        WM_CURSOR_WIDTH+12u, WM_CURSOR_HEIGHT+12u}, bounds);
+        wm_region_add(&c->damage, cursor_damage_rect(c->previous_cursor_x,
+                                                     c->previous_cursor_y),
+                      bounds);
     if (state->scene.cursor_visible)
-        wm_region_add(&c->damage,
-            (wm_rect_t){(int32_t)state->scene.cursor_x-3,
-                        (int32_t)state->scene.cursor_y-3,
-                        WM_CURSOR_WIDTH+12u, WM_CURSOR_HEIGHT+12u}, bounds);
+        wm_region_add(&c->damage, cursor_damage_rect(state->scene.cursor_x,
+                                                     state->scene.cursor_y),
+                      bounds);
 }
 
 void wm_compositor_render(wm_state_t *state, uint64_t now_ms)
@@ -272,6 +322,29 @@ void wm_compositor_render(wm_state_t *state, uint64_t now_ms)
     uint32_t rect_count = damage.full ? 1u : damage.count;
     if (damage.full) rects[0] = full;
     else memcpy(rects, damage.rects, sizeof(wm_rect_t)*rect_count);
+
+    ++g_render_frame_count;
+    if (WM_RENDER_TRACE != 0u &&
+        (g_render_debug_count < WM_RENDER_DEBUG_LIMIT ||
+         (g_render_frame_count & 0x7FULL) == 0u)) {
+        bool summary = g_render_debug_count >= WM_RENDER_DEBUG_LIMIT;
+        if (!summary) {
+            ++g_render_debug_count;
+        }
+        serial_write_string(summary ?
+                            "[wm:render] summary rects=" :
+                            "[wm:render] rects=");
+        serial_write_uint32(rect_count);
+        serial_write_string(" full=");
+        serial_write_uint32(damage.full ? 1u : 0u);
+        serial_write_string(" cursor=");
+        serial_write_uint32(state->scene.cursor_x);
+        serial_write_string(",");
+        serial_write_uint32(state->scene.cursor_y);
+        serial_write_string(" frames=");
+        serial_write_uint32((uint32_t)g_render_frame_count);
+        serial_write_string("\n");
+    }
 
     /* Phase 1: Render scene content into shadow buffer */
     for (uint32_t i = 0; i < rect_count; ++i) {
@@ -290,20 +363,26 @@ void wm_compositor_render(wm_state_t *state, uint64_t now_ms)
         wm_notification_draw(state, &canvas, now_ms);
     }
 
-    /* Phase 2: Draw cursor into shadow buffer (not directly to FB) */
     draw_cursor_on_shadow(state);
 
-    /* Phase 3: Flush all damage rects to driver framebuffer */
+    /* Phase 2: Flush all damage rects to driver framebuffer */
+    display_rect_t present_rects[WM_MAX_DAMAGE_RECTS];
+    uint32_t present_count = 0u;
     for (uint32_t i = 0; i < rect_count; ++i) {
         wm_rect_t rect = wm_rect_intersection(rects[i], full);
         if (!rect.w || !rect.h) continue;
         flush_rect(state, rect);
+        if (present_count < WM_MAX_DAMAGE_RECTS) {
+            present_rects[present_count++] =
+                (display_rect_t){rect.x, rect.y, rect.w, rect.h};
+        }
     }
 
-    draw_present();
-    state->compositor.previous_cursor_x       = state->scene.cursor_x;
-    state->compositor.previous_cursor_y       = state->scene.cursor_y;
-    state->compositor.previous_cursor_visible = state->scene.cursor_visible;
-    state->compositor.previous_cursor_style   = state->scene.cursor_style;
+    if (damage.full) {
+        draw_present();
+    } else if (present_count != 0u) {
+        draw_present_rects(present_rects, present_count);
+    }
+    remember_cursor_state(state);
     reset_window_damage(state);
 }

@@ -5,6 +5,7 @@
 #include "Debug/serial/Serial.h"
 #include "Debug/printf/printf.h"
 #include "Drivers/Module/DriverManager.h"
+#include "Core/timer/Timer.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -73,6 +74,69 @@ static const block_device_t *g_detected_disks[IO_MAX_DISKS];
 static uint32_t              g_detected_disks_indices[IO_MAX_DISKS];
 static uint32_t              g_detected_disk_count  = 0;
 static bool                  g_disk_scan_done       = false;
+
+typedef struct {
+    const char *selected_name;
+    io_protocol_type_t selected_protocol;
+    io_protocol_type_t requested_protocol;
+    uint32_t selected_device_index;
+    uint64_t partition_lba;
+    uint64_t read_count;
+    uint64_t read_failures;
+    uint64_t read_sectors;
+    uint64_t read_latency_total_ns;
+    uint64_t read_latency_max_ns;
+    uint64_t signature_probe_count;
+    uint64_t signature_probe_success_count;
+    uint64_t last_probe_lba;
+    uint64_t last_effective_lba;
+    bool last_probe_success;
+} disk_io_debug_stats_t;
+
+static disk_io_debug_stats_t g_disk_debug_stats;
+
+static const char *io_protocol_name(io_protocol_type_t protocol)
+{
+    switch (protocol) {
+        case IO_PROTOCOL_TYPE_ATA:
+            return "ata";
+        case IO_PROTOCOL_TYPE_AHCI:
+            return "ahci";
+        case IO_PROTOCOL_TYPE_USB_MASS_STORAGE:
+            return "usb_ms";
+        case IO_PROTOCOL_TYPE_NVME:
+            return "nvme";
+        case IO_PROTOCOL_TYPE_VIRTIO_BLOCK:
+            return "virtio_blk";
+        case IO_PROTOCOL_TYPE_NONE:
+        default:
+            return "none";
+    }
+}
+
+static void disk_debug_reset(io_protocol_type_t requested_protocol,
+                             uint64_t partition_lba)
+{
+    memset(&g_disk_debug_stats, 0, sizeof(g_disk_debug_stats));
+    g_disk_debug_stats.requested_protocol = requested_protocol;
+    g_disk_debug_stats.selected_protocol = IO_PROTOCOL_TYPE_NONE;
+    g_disk_debug_stats.partition_lba = partition_lba;
+}
+
+static void disk_debug_note_probe(io_protocol_type_t requested_protocol,
+                                  uint64_t probe_lba,
+                                  uint64_t effective_lba,
+                                  bool success)
+{
+    g_disk_debug_stats.requested_protocol = requested_protocol;
+    g_disk_debug_stats.signature_probe_count++;
+    g_disk_debug_stats.last_probe_lba = probe_lba;
+    g_disk_debug_stats.last_effective_lba = effective_lba;
+    g_disk_debug_stats.last_probe_success = success;
+    if (success) {
+        g_disk_debug_stats.signature_probe_success_count++;
+    }
+}
 
 static bool detected_disk_append(const block_device_t *device, uint32_t dev_index) {
     if (!device || g_detected_disk_count >= IO_MAX_DISKS) return false;
@@ -287,6 +351,7 @@ static bool check_bootable_signature(const block_device_t *device,
     uint64_t effective_lba = partition_lba;
     bool prefer_whole_disk_iso =
         requested_protocol == IO_PROTOCOL_TYPE_USB_MASS_STORAGE;
+    bool found = false;
 
     if (check_iso_signature(device, partition_lba, prefer_whole_disk_iso,
                             &effective_lba) ||
@@ -294,9 +359,11 @@ static bool check_bootable_signature(const block_device_t *device,
         if (out_partition_lba != NULL) {
             *out_partition_lba = effective_lba;
         }
-        return true;
+        found = true;
     }
-    return false;
+    disk_debug_note_probe(requested_protocol, partition_lba, effective_lba,
+                          found);
+    return found;
 }
 
 static const block_device_t *block_device_probe_one(
@@ -498,6 +565,11 @@ static void apply_boot_device(const block_device_t *device,
     g_current_protocol     = device->protocol;
     g_current_device_index = dev_idx;
     g_partition_lba        = partition_lba;
+    g_disk_debug_stats.selected_name = device ? device->name : NULL;
+    g_disk_debug_stats.selected_protocol =
+        device ? device->protocol : IO_PROTOCOL_TYPE_NONE;
+    g_disk_debug_stats.selected_device_index = dev_idx;
+    g_disk_debug_stats.partition_lba = partition_lba;
     if (device->select_device)
         device->select_device(dev_idx);
 }
@@ -520,6 +592,8 @@ bool disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type) {
         requested_protocol = IO_PROTOCOL_TYPE_NVME;
     else if (boot_drive_type == BOOT_DRIVE_TYPE_VIRTIO)
         requested_protocol = IO_PROTOCOL_TYPE_VIRTIO_BLOCK;
+
+    disk_debug_reset(requested_protocol, partition_lba);
 
     uint32_t found_index = 0;
     uint64_t effective_lba = partition_lba;
@@ -545,7 +619,20 @@ bool disk_read(uint64_t lba, uint8_t *buffer, uint32_t sectors)
     if (g_current_block_device->select_device)
         g_current_block_device->select_device(g_current_device_index);
     if (g_current_block_device->read) {
-        return g_current_block_device->read(lba, buffer, sectors);
+        uint64_t start_ns = timer_monotonic_ns();
+        bool ok = g_current_block_device->read(lba, buffer, sectors);
+        uint64_t end_ns = timer_monotonic_ns();
+        uint64_t latency_ns = end_ns >= start_ns ? end_ns - start_ns : 0u;
+        g_disk_debug_stats.read_count++;
+        g_disk_debug_stats.read_sectors += sectors;
+        g_disk_debug_stats.read_latency_total_ns += latency_ns;
+        if (latency_ns > g_disk_debug_stats.read_latency_max_ns) {
+            g_disk_debug_stats.read_latency_max_ns = latency_ns;
+        }
+        if (!ok) {
+            g_disk_debug_stats.read_failures++;
+        }
+        return ok;
     }
     return false;
 }
@@ -571,6 +658,35 @@ io_protocol_type_t disk_io_get_protocol(void) {
 
 uint64_t disk_get_partition_lba(void) {
     return g_partition_lba;
+}
+
+void disk_io_debug_dump(const char *reason)
+{
+    const char *selected = g_disk_debug_stats.selected_name;
+    if (selected == NULL) {
+        selected = "none";
+    }
+    uint64_t avg_ns = g_disk_debug_stats.read_count != 0u ?
+        g_disk_debug_stats.read_latency_total_ns /
+            g_disk_debug_stats.read_count : 0u;
+    debug_printf(
+        "[disk:perf] reason=%s selected=%s protocol=%s requested=%s index=%u partition_lba=%llu reads=%llu sectors=%llu failures=%llu avg_read_us=%llu max_read_us=%llu probes=%llu probe_ok=%llu last_probe_lba=%llu last_effective_lba=%llu last_probe_ok=%u\n",
+        reason ? reason : "manual",
+        selected,
+        io_protocol_name(g_disk_debug_stats.selected_protocol),
+        io_protocol_name(g_disk_debug_stats.requested_protocol),
+        g_disk_debug_stats.selected_device_index,
+        (unsigned long long)g_disk_debug_stats.partition_lba,
+        (unsigned long long)g_disk_debug_stats.read_count,
+        (unsigned long long)g_disk_debug_stats.read_sectors,
+        (unsigned long long)g_disk_debug_stats.read_failures,
+        (unsigned long long)(avg_ns / 1000ULL),
+        (unsigned long long)(g_disk_debug_stats.read_latency_max_ns / 1000ULL),
+        (unsigned long long)g_disk_debug_stats.signature_probe_count,
+        (unsigned long long)g_disk_debug_stats.signature_probe_success_count,
+        (unsigned long long)g_disk_debug_stats.last_probe_lba,
+        (unsigned long long)g_disk_debug_stats.last_effective_lba,
+        g_disk_debug_stats.last_probe_success ? 1u : 0u);
 }
 
 static void disk_scan_devices(void) {

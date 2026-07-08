@@ -16,8 +16,15 @@ static uint32_t scheduler_cpu_id(void)
     return cpu;
 }
 
-static int scheduler_pid_on_other_cpu(int32_t pid, uint32_t current_cpu)
+static int scheduler_pid_running_on_other_cpu(const process_t *processes,
+                                              int32_t capacity,
+                                              int32_t pid,
+                                              uint32_t current_cpu)
 {
+    if (processes == 0 || pid < 0 || pid >= capacity ||
+        processes[pid].state != PROCESS_STATE_RUNNING) {
+        return 0;
+    }
     for (uint32_t cpu = 0; cpu < OS_CONFIG_SMP_MAX_CPUS; ++cpu) {
         if (cpu != current_cpu && g_current_pid_per_cpu[cpu] == pid) {
             return 1;
@@ -76,13 +83,15 @@ int32_t process_scheduler_pick_next(process_t *processes,
     for (int32_t step = 1; step <= capacity; ++step) {
         int32_t idx = (start + step) % capacity;
         if (processes[idx].state == PROCESS_STATE_READY &&
-            !scheduler_pid_on_other_cpu(idx, cpu)) {
+            !scheduler_pid_running_on_other_cpu(processes, capacity,
+                                                idx, cpu)) {
             return idx;
         }
     }
 
     if (current_pid >= 0 && current_pid < capacity &&
-        !scheduler_pid_on_other_cpu(current_pid, cpu) &&
+        !scheduler_pid_running_on_other_cpu(processes, capacity,
+                                            current_pid, cpu) &&
         (processes[current_pid].state == PROCESS_STATE_RUNNING ||
          processes[current_pid].state == PROCESS_STATE_READY)) {
         return current_pid;

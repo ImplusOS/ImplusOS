@@ -13,6 +13,7 @@ void display_draw_pixel(uint32_t x, uint32_t y, uint32_t color);
 uint32_t display_get_pixel(uint32_t x, uint32_t y);
 void display_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 void display_present(void);
+void display_present_rects(const display_rect_t *rects, uint32_t count);
 void *display_get_framebuffer(void);
 uint32_t display_generation(void);
 bool display_poll_config(void);

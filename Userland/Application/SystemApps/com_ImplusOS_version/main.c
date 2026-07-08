@@ -21,6 +21,6 @@ void _start(void) {
     }
 
     while (1) {
-        process_yield();
+        sleep_ms(1000u);
     }
 }

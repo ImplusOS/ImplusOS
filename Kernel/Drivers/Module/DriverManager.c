@@ -399,6 +399,11 @@ void driver_manager_display_present(void)
     display_manager_present();
 }
 
+void driver_manager_display_present_rects(const display_rect_t *rects, uint32_t count)
+{
+    display_manager_present_rects(rects, count);
+}
+
 void *driver_manager_display_get_framebuffer(void)
 {
     return display_manager_get_framebuffer();

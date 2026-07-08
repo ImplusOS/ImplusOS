@@ -26,7 +26,10 @@ static bool fat32_vfs_read_file(vfs_file_t *file, uint8_t *buffer) {
 
 static bool fat32_vfs_write_file(vfs_file_t *file, const uint8_t *buffer) {
     if (!file || !file->driver_data) return false;
-    return fat32_write_file((FAT32_FILE *)file->driver_data, buffer);
+    FAT32_FILE *fat_file = (FAT32_FILE *)file->driver_data;
+    bool ok = fat32_write_file(fat_file, buffer);
+    if (ok) file->size = fat_file->size;
+    return ok;
 }
 
 static bool fat32_vfs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer, uint32_t size) {
@@ -36,12 +39,18 @@ static bool fat32_vfs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer
 
 static bool fat32_vfs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size) {
     if (!file || !file->driver_data) return false;
-    return fat32_write_at((FAT32_FILE *)file->driver_data, offset, buffer, size);
+    FAT32_FILE *fat_file = (FAT32_FILE *)file->driver_data;
+    bool ok = fat32_write_at(fat_file, offset, buffer, size);
+    if (ok) file->size = fat_file->size;
+    return ok;
 }
 
 static bool fat32_vfs_truncate(vfs_file_t *file, uint32_t new_size) {
     if (!file || !file->driver_data) return false;
-    return fat32_truncate((FAT32_FILE *)file->driver_data, new_size);
+    FAT32_FILE *fat_file = (FAT32_FILE *)file->driver_data;
+    bool ok = fat32_truncate(fat_file, new_size);
+    if (ok) file->size = fat_file->size;
+    return ok;
 }
 
 static uint32_t fat32_vfs_get_file_size(vfs_file_t *file) {

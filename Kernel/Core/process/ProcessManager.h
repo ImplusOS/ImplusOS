@@ -38,6 +38,33 @@ typedef uint64_t process_capability_mask_t;
 #define PROCESS_CAP_DEFAULT_MASK \
     (PROCESS_CAP_SERIAL | PROCESS_CAP_PROCESS | PROCESS_CAP_FILE | PROCESS_CAP_MEMORY | PROCESS_CAP_INPUT | PROCESS_CAP_SIGNAL | PROCESS_CAP_IPC | PROCESS_CAP_NETWORK | PROCESS_CAP_DISPLAY)
 
+typedef struct {
+    int32_t pid;
+    int32_t parent_pid;
+    uint8_t state;
+    uint8_t reserved[7];
+    char name[64];
+    uint64_t runtime_ns;
+    uint64_t ready_wait_ns;
+    uint64_t max_ready_wait_ns;
+    uint64_t context_switches;
+    uint64_t voluntary_switches;
+    uint64_t involuntary_switches;
+    uint64_t syscalls;
+    uint64_t ipc_send;
+    uint64_t ipc_recv;
+    uint64_t block_count;
+    uint64_t wake_count;
+    uint64_t blocked_ns;
+    uint64_t display_present_calls;
+    uint64_t display_rects;
+    uint64_t display_bytes;
+    uint64_t memory_usage;
+} process_perf_info_t;
+
+#define PROCESS_SCHEDULE_REQUEST_SWITCH      1
+#define PROCESS_SCHEDULE_REQUEST_INVOLUNTARY 2
+
 void process_manager_init(void);
 int32_t process_register_boot_process(const char *path, uint64_t *entry_out);
 int32_t process_create_user(uint64_t entry);
@@ -99,10 +126,19 @@ int process_set_capabilities(int32_t pid, process_capability_mask_t capabilities
 int process_get_capabilities(int32_t pid, process_capability_mask_t *capabilities_out);
 void process_on_timer_tick(void);
 int  process_timeslice_expired(void);
+int process_run_next_on_current_cpu(void);
 int32_t current_pid_get(void);
 int process_is_alive(int32_t pid);
+int process_sleep_current_ms(uint64_t ms);
 int process_block_current(void);
 int process_wake_pid(int32_t pid);
 int32_t process_terminate(int32_t pid);
 int32_t process_get_full_info(int32_t pid, void *info_out);
+int32_t process_get_perf_info(int32_t pid, process_perf_info_t *info_out);
 int32_t process_get_capacity(void);
+void process_perf_note_syscall(int32_t pid);
+void process_perf_note_ipc_send(int32_t pid);
+void process_perf_note_ipc_recv(int32_t pid);
+void process_perf_note_display(int32_t pid, uint32_t rect_count, uint64_t bytes);
+void process_debug_dump_summary(const char *reason);
+void process_debug_dump_cpu_usage(const char *reason, uint64_t interval_ns);

@@ -43,10 +43,16 @@
 
 static BOOT_INFO g_boot_info_copy;
 
+#if OS_CONFIG_BOOT_FADE
 static uint32_t *g_fb_snapshot = NULL;
 static uint32_t g_fb_snapshot_pixels = 0;
+#endif
 static uint64_t g_boot_framebuffer_phys_base = 0;
 static uint64_t g_boot_framebuffer_phys_size = 0;
+
+#define KERNEL_BOOT_PROFILE_MAX 64u
+static boot_profile_entry_t g_boot_profile[KERNEL_BOOT_PROFILE_MAX];
+static uint32_t g_boot_profile_count = 0;
 
 __attribute__((aligned(16))) static uint8_t kernel_stack[0x40000];
 
@@ -75,6 +81,53 @@ static const char *kernel_boot_drive_type_name(uint32_t type)
 const BOOT_INFO *kernel_get_boot_info(void)
 {
     return &g_boot_info_copy;
+}
+
+static uint64_t boot_profile_begin(void)
+{
+    return timer_monotonic_ns();
+}
+
+static void boot_profile_end(const char *name, uint64_t start_ns)
+{
+    if (name == NULL || g_boot_profile_count >= KERNEL_BOOT_PROFILE_MAX) {
+        return;
+    }
+    uint64_t end_ns = timer_monotonic_ns();
+    boot_profile_entry_t *entry = &g_boot_profile[g_boot_profile_count++];
+    memset(entry, 0, sizeof(*entry));
+    strncpy(entry->name, name, sizeof(entry->name) - 1u);
+    entry->start_ns = start_ns;
+    entry->duration_ns = end_ns >= start_ns ? end_ns - start_ns : 0u;
+}
+
+int32_t kernel_boot_profile_count(void)
+{
+    return (int32_t)g_boot_profile_count;
+}
+
+int32_t kernel_boot_profile_get(int32_t index, boot_profile_entry_t *entry_out)
+{
+    if (entry_out == NULL || index < 0 ||
+        (uint32_t)index >= g_boot_profile_count) {
+        return -1;
+    }
+    *entry_out = g_boot_profile[index];
+    return 0;
+}
+
+static void boot_profile_dump(const char *reason)
+{
+    debug_printf("[boot:profile] reason=%s count=%u\n",
+                 reason ? reason : "manual", g_boot_profile_count);
+    for (uint32_t i = 0u; i < g_boot_profile_count; ++i) {
+        const boot_profile_entry_t *entry = &g_boot_profile[i];
+        debug_printf("[boot:profile] %02u name=%s start_us=%llu duration_us=%llu\n",
+                     i,
+                     entry->name,
+                     (unsigned long long)(entry->start_ns / 1000ULL),
+                     (unsigned long long)(entry->duration_ns / 1000ULL));
+    }
 }
 
 static inline void kernel_arch_halt(void)
@@ -176,9 +229,10 @@ bool all_fs_initialize(void)
     return true;
 }
 
+#if OS_CONFIG_BOOT_FADE
 static inline uint32_t alpha_blend(uint32_t dst, uint32_t src)
 {
-    uint8_t a  = (src >> 24) & 0xFF;
+    uint8_t a  = (uint8_t)((src >> 24) & 0xFFu);
 
     if (a == 255) {
         return src;
@@ -188,13 +242,13 @@ static inline uint32_t alpha_blend(uint32_t dst, uint32_t src)
         return dst;
     }
 
-    uint8_t sr = (src >> 16) & 0xFF;
-    uint8_t sg = (src >> 8)  & 0xFF;
-    uint8_t sb = (src >> 0)  & 0xFF;
+    uint8_t sr = (uint8_t)((src >> 16) & 0xFFu);
+    uint8_t sg = (uint8_t)((src >> 8)  & 0xFFu);
+    uint8_t sb = (uint8_t)((src >> 0)  & 0xFFu);
 
-    uint8_t dr = (dst >> 16) & 0xFF;
-    uint8_t dg = (dst >> 8)  & 0xFF;
-    uint8_t db = (dst >> 0)  & 0xFF;
+    uint8_t dr = (uint8_t)((dst >> 16) & 0xFFu);
+    uint8_t dg = (uint8_t)((dst >> 8)  & 0xFFu);
+    uint8_t db = (uint8_t)((dst >> 0)  & 0xFFu);
 
     uint8_t r = (uint8_t)((sr * a + dr * (255 - a)) / 255);
     uint8_t g = (uint8_t)((sg * a + dg * (255 - a)) / 255);
@@ -244,13 +298,14 @@ static void fb_clear(BOOT_INFO *bi, uint32_t color)
     }
 }
 
-void kernel_boot_screen_color(uint32_t color)
+static void kernel_boot_screen_color(uint32_t color)
 {
     if (g_boot_info_copy.FrameBufferBase == 0 || g_boot_info_copy.FrameBufferSize < 4) {
         return;
     }
     fb_clear(&g_boot_info_copy, color);
 }
+#endif
 
 static void load_spinner_timer(uint64_t tick)
 {
@@ -266,9 +321,12 @@ extern const timer_hal_t generic_timer_hal;
 
 static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
 {
+    uint64_t phase_ns = 0;
+
     load_bar_init(boot_info);
     timer_set_callback(load_spinner_timer);
 
+    phase_ns = boot_profile_begin();
 #ifdef PLATFORM_X86_64
     {
         const arch_ops_t *ops = arch_ops_get();
@@ -287,7 +345,9 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         }
     }
 #endif
+    boot_profile_end("cpu_tables", phase_ns);
 
+    phase_ns = boot_profile_begin();
     init_physical_memory(
         (void *)boot_info->MemoryMap,
         boot_info->MemoryMapSize,
@@ -298,12 +358,22 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         boot_info->FrameBufferBase,
         boot_info->FrameBufferSize
     );
+    boot_profile_end("pmm", phase_ns);
+
     serial_set_screen_mirror(NULL);
+    phase_ns = boot_profile_begin();
     init_paging();
     kernel_rebind_boot_framebuffer_after_paging(boot_info);
+    boot_profile_end("paging", phase_ns);
+
+    phase_ns = boot_profile_begin();
     memory_init();
+    boot_profile_end("heap", phase_ns);
+
+    phase_ns = boot_profile_begin();
     acpi_init(boot_info);
     platform_interrupts_configure(acpi_get_info());
+    boot_profile_end("acpi_interrupts", phase_ns);
 
     const timer_hal_t *timer = NULL;
 #ifdef PLATFORM_X86_64
@@ -311,9 +381,17 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
 #elif defined(PLATFORM_ARM64)
     timer = &generic_timer_hal;
 #endif
+    phase_ns = boot_profile_begin();
     timer_init(timer);
+    boot_profile_end("timer", phase_ns);
+
+    phase_ns = boot_profile_begin();
     syscall_init();
+    boot_profile_end("syscall", phase_ns);
+
+    phase_ns = boot_profile_begin();
     smp_init();
+    boot_profile_end("smp", phase_ns);
 
 #ifdef PLATFORM_X86_64
     {
@@ -334,11 +412,15 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     timer_switch_lapic();
 #endif
     timer_start_clock();
+    phase_ns = boot_profile_begin();
     driver_module_manager_init(boot_info);
+    boot_profile_end("driver_module_load", phase_ns);
+
+    phase_ns = boot_profile_begin();
     uint64_t driver_init_irq_flags = irq_save_disable();
-    driver_module_init_all();
+    driver_module_init_critical();
     irq_restore(driver_init_irq_flags);
-    audio_manager_init();
+    boot_profile_end("driver_module_critical", phase_ns);
 
     driver_boot_framebuffer_t boot_fb = {
         .addr = (void *)(uintptr_t)g_boot_framebuffer_phys_base,
@@ -349,33 +431,54 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         .bytes_per_pixel = 4
     };
     driver_select_set_boot_framebuffer(&boot_fb);
+    phase_ns = boot_profile_begin();
     input_manager_init();
+    boot_profile_end("input_init", phase_ns);
+
     block_manager_set_boot_identity(boot_info);
+    phase_ns = boot_profile_begin();
     bool disk_ok = disk_io_init(boot_info->PartitionStartLBA, boot_info->BootDriveType);
+    boot_profile_end("disk_io_init", phase_ns);
     if (!disk_ok) {
         kernel_panic("Disk Protocol initialization failed", "kernel_main");
     }
 
     bool fs_ready = false;
+    phase_ns = boot_profile_begin();
     if (all_fs_initialize()) {
         fs_ready = true;
     }
+    boot_profile_end("fs_init", phase_ns);
 
     if (!fs_ready) {
         kernel_panic("Filesystem initialization failed and diskless boot not enabled", "kernel_main");
     }
 
     serial_enable_file_logging("/Kernel.log");
+    phase_ns = boot_profile_begin();
     bool display_ready = driver_manager_display_init();
     bool debug_display_ready = debugger_display_init();
     serial_set_screen_mirror(NULL);
     wm_kernel_init();
+    boot_profile_end("display_init", phase_ns);
+
+    phase_ns = boot_profile_begin();
     process_manager_init();
+    boot_profile_end("process_manager", phase_ns);
+
+    phase_ns = boot_profile_begin();
     ipc_init();
     syscall_file_init();
-    network_stack_init();
+    boot_profile_end("kernel_services", phase_ns);
+
+#if OS_CONFIG_BOOT_FADE
     bool fb_snapshot_ok = fb_snapshot_create(boot_info);
+#else
+    bool fb_snapshot_ok = false;
+#endif
+    (void)fb_snapshot_ok;
     load_bar_finish();
+#if OS_CONFIG_BOOT_FADE
     for (int i = 0; i <= 10; i++) {
         timer_apic_sleep_ms(1);
         uint8_t alpha = (uint8_t)(i * 255 / 10);
@@ -384,8 +487,10 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
             0x000000;
         kernel_boot_screen_color(color);
     }
+#endif
 
     if (fs_ready) {
+        phase_ns = boot_profile_begin();
         static const uint8_t userland_elf_magic[4] = {0x7Fu, 'E', 'L', 'F'};
         if (!vfs_set_default_fs_for_file("/Userland/Userland.ELF",
                                          64u,
@@ -415,8 +520,23 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
             }
             kernel_panic(panic_msg, "kernel_main");
         }
+        boot_profile_end("userland_elf", phase_ns);
     }
 
+    phase_ns = boot_profile_begin();
+    uint64_t deferred_irq_flags = irq_save_disable();
+    driver_module_init_deferred();
+    irq_restore(deferred_irq_flags);
+    boot_profile_end("driver_module_deferred", phase_ns);
+
+    phase_ns = boot_profile_begin();
+    audio_manager_init();
+    network_stack_init();
+    boot_profile_end("audio_network_init", phase_ns);
+
+    boot_profile_dump("boot");
+    disk_io_debug_dump("boot");
+    process_debug_dump_summary("boot");
     timer_start_services();
     serial_set_screen_mirror(debug_putchar);
 

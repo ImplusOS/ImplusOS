@@ -21,6 +21,13 @@ typedef uint64_t EFI_PHYSICAL_ADDRESS;
 
 #define BOOT_STORAGE_IDENTITY_VERSION 1u
 #define BOOT_STORAGE_FLAG_PCI_VALID   (1u << 0)
+#define BOOT_PROFILE_NAME_MAX 32u
+
+typedef struct {
+    char name[BOOT_PROFILE_NAME_MAX];
+    uint64_t start_ns;
+    uint64_t duration_ns;
+} boot_profile_entry_t;
 
 typedef struct {
     UINT32 Type;

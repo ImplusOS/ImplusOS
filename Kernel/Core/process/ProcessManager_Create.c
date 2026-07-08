@@ -14,7 +14,9 @@
 #include "Core/syscall/Syscall_Main.h"
 #include "Core/syscall/Syscall_Futex.h"
 #include "Core/usercopy/Usercopy.h"
+#include "Core/timer/Timer.h"
 #include "interfaces/hal_cpu.h"
+#include "interfaces/arch_ops.h"
 #include "smp/SMP_Main.h"
 #include <string.h>
 #include "Debug/serial/Serial.h"
@@ -25,6 +27,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #define PROCESS_RFLAGS_DEFAULT 0x202ULL
 #define PROCESS_GUARD_PAGE_SIZE PAGE_SIZE
@@ -108,8 +111,12 @@ enum {
 
 static process_t *g_processes = NULL;
 static int32_t g_process_capacity = 0;
+static uint64_t *g_sleep_deadline_ns = NULL;
 static spinlock_t g_process_table_lock;
 static uint32_t g_timeslice_ticks = 4;
+static uint64_t g_cpu_usage_prev_runtime_ns[OS_CONFIG_PROCESS_MAX_COUNT_MAX];
+static uint64_t g_cpu_usage_prev_syscalls[OS_CONFIG_PROCESS_MAX_COUNT_MAX];
+static uint64_t g_cpu_usage_prev_display_bytes[OS_CONFIG_PROCESS_MAX_COUNT_MAX];
 
 static void initialize_fpu_state(uint8_t *fpu_state)
 {
@@ -199,6 +206,146 @@ static int process_table_ready(void)
     return g_processes != NULL && g_process_capacity > 0;
 }
 
+static void process_clear_sleep_deadline_for_proc_locked(const process_t *proc)
+{
+    if (g_sleep_deadline_ns == NULL || g_processes == NULL ||
+        proc == NULL || g_process_capacity <= 0) {
+        return;
+    }
+
+    uintptr_t base = (uintptr_t)g_processes;
+    uintptr_t end = base + (uintptr_t)g_process_capacity * sizeof(process_t);
+    uintptr_t value = (uintptr_t)proc;
+    if (value < base || value >= end) {
+        return;
+    }
+
+    uintptr_t offset = value - base;
+    if ((offset % sizeof(process_t)) != 0u) {
+        return;
+    }
+
+    size_t index = (size_t)(offset / sizeof(process_t));
+    g_sleep_deadline_ns[index] = 0u;
+}
+
+static uint64_t process_deadline_after_ns(uint64_t now_ns, uint64_t delay_ns)
+{
+    if (UINT64_MAX - now_ns < delay_ns) {
+        return UINT64_MAX;
+    }
+    return now_ns + delay_ns;
+}
+
+static uint64_t process_perf_now_ns(void)
+{
+    return timer_monotonic_ns();
+}
+
+static void process_perf_reset(process_t *proc)
+{
+    if (proc == NULL) {
+        return;
+    }
+    proc->runtime_ns = 0;
+    proc->ready_wait_ns = 0;
+    proc->max_ready_wait_ns = 0;
+    proc->context_switches = 0;
+    proc->voluntary_switches = 0;
+    proc->involuntary_switches = 0;
+    proc->syscalls = 0;
+    proc->ipc_send = 0;
+    proc->ipc_recv = 0;
+    proc->block_count = 0;
+    proc->wake_count = 0;
+    proc->blocked_ns = 0;
+    proc->display_present_calls = 0;
+    proc->display_rects = 0;
+    proc->display_bytes = 0;
+    proc->last_scheduled_ns = 0;
+    proc->ready_since_ns = 0;
+    proc->blocked_since_ns = 0;
+}
+
+static void process_perf_account_runtime_locked(process_t *proc, uint64_t now_ns)
+{
+    if (proc == NULL || proc->last_scheduled_ns == 0u) {
+        return;
+    }
+    if (now_ns >= proc->last_scheduled_ns) {
+        proc->runtime_ns += now_ns - proc->last_scheduled_ns;
+    }
+    proc->last_scheduled_ns = 0u;
+}
+
+static void process_perf_mark_ready_locked(process_t *proc, uint64_t now_ns)
+{
+    if (proc == NULL) {
+        return;
+    }
+    if (proc->ready_since_ns == 0u) {
+        proc->ready_since_ns = now_ns;
+    }
+}
+
+static void process_perf_prepare_run_locked(process_t *proc,
+                                            uint64_t now_ns,
+                                            int involuntary)
+{
+    if (proc == NULL) {
+        return;
+    }
+    if (proc->ready_since_ns != 0u && now_ns >= proc->ready_since_ns) {
+        uint64_t wait_ns = now_ns - proc->ready_since_ns;
+        proc->ready_wait_ns += wait_ns;
+        if (wait_ns > proc->max_ready_wait_ns) {
+            proc->max_ready_wait_ns = wait_ns;
+        }
+    }
+    proc->ready_since_ns = 0u;
+    proc->last_scheduled_ns = now_ns;
+    proc->context_switches++;
+    if (involuntary) {
+        proc->involuntary_switches++;
+    } else {
+        proc->voluntary_switches++;
+    }
+}
+
+static void process_wake_sleepers_locked(uint64_t now_ns)
+{
+    if (g_sleep_deadline_ns == NULL || !process_table_ready()) {
+        return;
+    }
+
+    for (int32_t i = 0; i < g_process_capacity; ++i) {
+        uint64_t deadline_ns = g_sleep_deadline_ns[i];
+        if (deadline_ns == 0u) {
+            continue;
+        }
+
+        process_t *proc = &g_processes[i];
+        if (proc->state != PROCESS_STATE_BLOCKED) {
+            g_sleep_deadline_ns[i] = 0u;
+            continue;
+        }
+        if (now_ns < deadline_ns) {
+            continue;
+        }
+
+        g_sleep_deadline_ns[i] = 0u;
+        if (proc->blocked_since_ns != 0u &&
+            now_ns >= proc->blocked_since_ns) {
+            proc->blocked_ns += now_ns - proc->blocked_since_ns;
+        }
+        proc->blocked_since_ns = 0u;
+        proc->wake_count++;
+        proc->state = PROCESS_STATE_READY;
+        process_perf_mark_ready_locked(proc, now_ns);
+        process_scheduler_request_reschedule();
+    }
+}
+
 static int is_valid_pid(int32_t pid)
 {
     return process_table_ready() && pid >= 0 && pid < g_process_capacity;
@@ -215,6 +362,8 @@ static void reset_process_slot(process_t *proc)
     if (proc == NULL) {
         return;
     }
+
+    process_clear_sleep_deadline_for_proc_locked(proc);
 
     proc->state = PROCESS_STATE_UNUSED;
     proc->is_thread = 0;
@@ -243,6 +392,7 @@ static void reset_process_slot(process_t *proc)
     proc->user_stack_guard_page = 0;
     proc->timeslice = 0;
     proc->total_ticks = 0;
+    process_perf_reset(proc);
     memset(proc->name, 0, sizeof(proc->name));
     memset(proc->launch_argument, 0, sizeof(proc->launch_argument));
     proc->parent_pid = -1;
@@ -446,6 +596,10 @@ static void process_deliver_pending_signals_locked(process_t *proc)
 static void release_process_table(void)
 {
     if (!process_table_ready()) {
+        if (g_sleep_deadline_ns != NULL) {
+            free(g_sleep_deadline_ns);
+            g_sleep_deadline_ns = NULL;
+        }
         return;
     }
 
@@ -458,6 +612,8 @@ static void release_process_table(void)
 
     free(g_processes);
     g_processes = NULL;
+    free(g_sleep_deadline_ns);
+    g_sleep_deadline_ns = NULL;
     g_process_capacity = 0;
     process_scheduler_init(g_timeslice_ticks);
 }
@@ -508,10 +664,13 @@ static void mark_process_runnable(process_t *proc, uint64_t entry, int32_t paren
         return;
     }
 
+    uint64_t now_ns = process_perf_now_ns();
     proc->entry = entry;
     proc->parent_pid = parent_pid;
     proc->timeslice = g_timeslice_ticks;
     proc->state = PROCESS_STATE_READY;
+    process_perf_mark_ready_locked(proc, now_ns);
+    process_scheduler_request_reschedule();
 }
 
 static int initialize_raw_user_stack(process_t *proc)
@@ -882,6 +1041,18 @@ void process_manager_init(void)
         halt_forever();
     }
 
+    uint64_t sleep_table_size_u64 =
+        (uint64_t)desired_capacity * (uint64_t)sizeof(uint64_t);
+    if (sleep_table_size_u64 == 0 || sleep_table_size_u64 > 0xFFFFFFFFULL) {
+        halt_forever();
+    }
+
+    g_sleep_deadline_ns = (uint64_t *)malloc((size_t)sleep_table_size_u64);
+    if (g_sleep_deadline_ns == NULL) {
+        halt_forever();
+    }
+    memset(g_sleep_deadline_ns, 0, (size_t)sleep_table_size_u64);
+
     g_process_capacity = desired_capacity;
     for (int32_t i = 0; i < g_process_capacity; ++i) {
         reset_process_slot(&g_processes[i]);
@@ -891,6 +1062,7 @@ void process_manager_init(void)
     g_processes[0].parent_pid = -1;
     g_processes[0].memory_owner_pid = 0;
     g_processes[0].capability_mask = PROCESS_CAP_DEFAULT_MASK;
+    g_processes[0].last_scheduled_ns = process_perf_now_ns();
 
     initialize_fpu_state(g_processes[0].fpu_state);
     g_processes[0].fs_base = 0;
@@ -1027,6 +1199,7 @@ static int32_t process_create_user_internal(uint64_t entry,
     proc->parent_pid = parent_pid;
     if (start_ready) {
         proc->state = PROCESS_STATE_READY;
+        process_perf_mark_ready_locked(proc, process_perf_now_ns());
     }
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -1191,6 +1364,7 @@ int32_t process_create_thread(uint64_t entry,
     thread->entry = entry;
     thread->timeslice = g_timeslice_ticks;
     thread->state = PROCESS_STATE_READY;
+    process_perf_mark_ready_locked(thread, process_perf_now_ns());
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return tid;
@@ -1425,6 +1599,7 @@ int32_t process_fork(void)
     child->parent_pid = parent_pid_saved;
     child->timeslice = g_timeslice_ticks;
     child->state = PROCESS_STATE_READY;
+    process_perf_mark_ready_locked(child, process_perf_now_ns());
 
     memcpy(child->name, parent->name, sizeof(child->name));
     memcpy(child->launch_argument, parent->launch_argument,
@@ -1652,6 +1827,7 @@ int32_t process_execve(const char *path, const char *const *argv,
     proc->entry = image_info.entry;
     proc->timeslice = g_timeslice_ticks;
     proc->state = PROCESS_STATE_READY;
+    proc->ready_since_ns = process_perf_now_ns();
     for (uint32_t i = 0; i < PROCESS_SIGNAL_MAX; ++i) {
         proc->signal_handlers[i] = 0;
     }
@@ -1703,6 +1879,8 @@ int32_t process_register_boot_process(const char *path, uint64_t *entry_out)
     proc->state = PROCESS_STATE_RUNNING;
     current_pid_set(pid);
     proc->timeslice = g_timeslice_ticks;
+    proc->ready_since_ns = 0u;
+    proc->last_scheduled_ns = process_perf_now_ns();
     process_scheduler_consume_reschedule();
     if (entry_out) {
         *entry_out = proc->entry;
@@ -1771,6 +1949,8 @@ int32_t process_register_boot_process_from_memory(const void *data, uint64_t siz
     proc->state = PROCESS_STATE_RUNNING;
     current_pid_set(pid);
     proc->timeslice = g_timeslice_ticks;
+    proc->ready_since_ns = 0u;
+    proc->last_scheduled_ns = process_perf_now_ns();
     process_scheduler_consume_reschedule();
     if (entry_out) {
         *entry_out = image_info.entry;
@@ -2020,6 +2200,9 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
 
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
+    uint64_t now_ns = process_perf_now_ns();
+    int do_switch = (request_switch & PROCESS_SCHEDULE_REQUEST_SWITCH) != 0;
+    int involuntary = (request_switch & PROCESS_SCHEDULE_REQUEST_INVOLUNTARY) != 0;
 
     if (!is_valid_pid(current_pid_get())) {
         spinlock_unlock(&g_process_table_lock);
@@ -2028,6 +2211,9 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
     }
 
     process_t *current = &g_processes[current_pid_get()];
+    if (do_switch) {
+        process_perf_account_runtime_locked(current, now_ns);
+    }
     if (current->state == PROCESS_STATE_RUNNING ||
         current->state == PROCESS_STATE_READY ||
         current->state == PROCESS_STATE_BLOCKED) {
@@ -2040,12 +2226,13 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         
         current->fs_base = rdmsr_fs_base();
 
-        if (original_state != PROCESS_STATE_BLOCKED) {
+        if (do_switch && original_state != PROCESS_STATE_BLOCKED) {
             current->state = PROCESS_STATE_READY;
+            process_perf_mark_ready_locked(current, now_ns);
         }
     }
 
-    if (!request_switch &&
+    if (!do_switch &&
         (current->state == PROCESS_STATE_RUNNING ||
          current->state == PROCESS_STATE_READY)) {
         process_deliver_pending_signals_locked(current);
@@ -2068,15 +2255,24 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
     int32_t next_pid = process_scheduler_pick_next(g_processes,
                                                    g_process_capacity,
                                                    current_pid_get());
-    if (next_pid < 0) {
+    while (next_pid < 0) {
         spinlock_unlock(&g_process_table_lock);
-        irq_restore(irq_flags);
-        halt_forever();
+        hal_cpu_enable_interrupts();
+        process_cpu_halt();
+        hal_cpu_disable_interrupts();
+        spinlock_lock(&g_process_table_lock);
+
+        now_ns = process_perf_now_ns();
+        process_wake_sleepers_locked(now_ns);
+        next_pid = process_scheduler_pick_next(g_processes,
+                                               g_process_capacity,
+                                               current_pid_get());
     }
 
     current_pid_set(next_pid);
     process_t *next = &g_processes[current_pid_get()];
     process_deliver_pending_signals_locked(next);
+    process_perf_prepare_run_locked(next, now_ns, involuntary);
     process_scheduler_prepare_run(next);
 
     uint64_t next_saved_rsp = next->saved_rsp;
@@ -2103,12 +2299,15 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
 
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
+    uint64_t now_ns = process_perf_now_ns();
 
     if (!is_valid_pid(current_pid_get())) {
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         halt_forever();
     }
+
+    process_perf_account_runtime_locked(&g_processes[current_pid_get()], now_ns);
 
     int32_t next_pid = process_scheduler_pick_next(g_processes,
                                                    g_process_capacity,
@@ -2122,6 +2321,7 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
     current_pid_set(next_pid);
     process_t *next = &g_processes[current_pid_get()];
     process_deliver_pending_signals_locked(next);
+    process_perf_prepare_run_locked(next, now_ns, 0);
     process_scheduler_prepare_run(next);
 
     uint64_t next_saved_rsp = next->saved_rsp;
@@ -2142,6 +2342,7 @@ void process_on_timer_tick(void)
 {
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
+    process_wake_sleepers_locked(process_perf_now_ns());
     process_scheduler_on_tick(g_processes, g_process_capacity);
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -2155,6 +2356,48 @@ int process_timeslice_expired(void)
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return pending;
+}
+
+int process_run_next_on_current_cpu(void)
+{
+    if (!process_table_ready()) {
+        return 0;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int32_t current_pid = current_pid_get();
+    int32_t next_pid = process_scheduler_pick_next(g_processes,
+                                                   g_process_capacity,
+                                                   current_pid);
+    if (next_pid < 0) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return 0;
+    }
+
+    current_pid_set(next_pid);
+    process_t *next = &g_processes[next_pid];
+    process_deliver_pending_signals_locked(next);
+    process_perf_prepare_run_locked(next, process_perf_now_ns(), 0);
+    process_scheduler_prepare_run(next);
+
+    uint64_t next_saved_rsp = next->saved_rsp;
+    uint64_t next_user_rsp = next->saved_user_rsp;
+    uint64_t next_cr3 = next->cr3;
+    process_fpu_restore(next->fpu_state);
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    activate_process_context(next);
+
+    const arch_ops_t *ops = arch_ops_get();
+    if (ops != NULL && ops->enter_user_mode != NULL) {
+        ops->enter_user_mode(next_saved_rsp, next_user_rsp, next_cr3);
+    }
+    return 0;
 }
 
 int process_user_buffer_is_valid(const void *ptr, uint64_t len)
@@ -2678,6 +2921,45 @@ int process_is_alive(int32_t pid)
     return alive;
 }
 
+int process_sleep_current_ms(uint64_t ms)
+{
+    if (ms == 0u) {
+        return 0;
+    }
+
+    uint64_t delay_ns;
+    if (ms > (UINT64_MAX / 1000000ULL)) {
+        delay_ns = UINT64_MAX;
+    } else {
+        delay_ns = ms * 1000000ULL;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int32_t pid = current_pid_get();
+    if (!is_valid_pid(pid) || g_sleep_deadline_ns == NULL ||
+        g_processes[pid].state == PROCESS_STATE_UNUSED ||
+        g_processes[pid].state == PROCESS_STATE_DEAD ||
+        g_processes[pid].state == PROCESS_STATE_ZOMBIE) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    uint64_t now_ns = process_perf_now_ns();
+    g_sleep_deadline_ns[pid] = process_deadline_after_ns(now_ns, delay_ns);
+    g_processes[pid].state = PROCESS_STATE_BLOCKED;
+    g_processes[pid].block_count++;
+    g_processes[pid].blocked_since_ns = now_ns;
+    g_processes[pid].ready_since_ns = 0u;
+    process_scheduler_request_reschedule();
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
 int process_block_current(void)
 {
     uint64_t irq_flags = irq_save_disable();
@@ -2693,7 +2975,14 @@ int process_block_current(void)
         return -1;
     }
 
+    uint64_t now_ns = process_perf_now_ns();
+    if (g_sleep_deadline_ns != NULL) {
+        g_sleep_deadline_ns[pid] = 0u;
+    }
     g_processes[pid].state = PROCESS_STATE_BLOCKED;
+    g_processes[pid].block_count++;
+    g_processes[pid].blocked_since_ns = now_ns;
+    g_processes[pid].ready_since_ns = 0u;
     process_scheduler_request_reschedule();
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -2711,8 +3000,20 @@ int process_wake_pid(int32_t pid)
         return -1;
     }
 
-    if (g_processes[pid].state == PROCESS_STATE_BLOCKED) {
-        g_processes[pid].state = PROCESS_STATE_READY;
+    process_t *proc = &g_processes[pid];
+    if (g_sleep_deadline_ns != NULL) {
+        g_sleep_deadline_ns[pid] = 0u;
+    }
+    if (proc->state == PROCESS_STATE_BLOCKED) {
+        uint64_t now_ns = process_perf_now_ns();
+        if (proc->blocked_since_ns != 0u && now_ns >= proc->blocked_since_ns) {
+            proc->blocked_ns += now_ns - proc->blocked_since_ns;
+        }
+        proc->blocked_since_ns = 0u;
+        proc->wake_count++;
+        proc->state = PROCESS_STATE_READY;
+        process_perf_mark_ready_locked(proc, now_ns);
+        process_scheduler_request_reschedule();
     }
 
     spinlock_unlock(&g_process_table_lock);
@@ -2882,6 +3183,324 @@ int32_t process_get_full_info(int32_t pid, void *info_out)
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return 0;
+}
+
+static uint64_t process_memory_usage_locked(const process_t *proc)
+{
+    if (proc == NULL) {
+        return 0;
+    }
+    uint64_t usage = 0;
+    if (proc->user_heap_cursor > proc->user_heap_base) {
+        usage += (proc->user_heap_cursor - proc->user_heap_base);
+    }
+    if (proc->user_stack_top > proc->user_stack_base) {
+        usage += (proc->user_stack_top - proc->user_stack_base);
+    }
+    return usage;
+}
+
+int32_t process_get_perf_info(int32_t pid, process_perf_info_t *info_out)
+{
+    if (info_out == NULL || pid < 0 || pid >= g_process_capacity) {
+        return -1;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    process_t *proc = &g_processes[pid];
+    if (proc->state == PROCESS_STATE_UNUSED) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    uint64_t now_ns = process_perf_now_ns();
+    uint64_t runtime_ns = proc->runtime_ns;
+    if (proc->state == PROCESS_STATE_RUNNING &&
+        proc->last_scheduled_ns != 0u &&
+        now_ns >= proc->last_scheduled_ns) {
+        runtime_ns += now_ns - proc->last_scheduled_ns;
+    }
+    uint64_t blocked_ns = proc->blocked_ns;
+    if (proc->state == PROCESS_STATE_BLOCKED &&
+        proc->blocked_since_ns != 0u &&
+        now_ns >= proc->blocked_since_ns) {
+        blocked_ns += now_ns - proc->blocked_since_ns;
+    }
+
+    memset(info_out, 0, sizeof(*info_out));
+    info_out->pid = pid;
+    info_out->parent_pid = proc->parent_pid;
+    info_out->state = proc->state;
+    memcpy(info_out->name, proc->name, sizeof(info_out->name));
+    info_out->runtime_ns = runtime_ns;
+    info_out->ready_wait_ns = proc->ready_wait_ns;
+    info_out->max_ready_wait_ns = proc->max_ready_wait_ns;
+    info_out->context_switches = proc->context_switches;
+    info_out->voluntary_switches = proc->voluntary_switches;
+    info_out->involuntary_switches = proc->involuntary_switches;
+    info_out->syscalls = proc->syscalls;
+    info_out->ipc_send = proc->ipc_send;
+    info_out->ipc_recv = proc->ipc_recv;
+    info_out->block_count = proc->block_count;
+    info_out->wake_count = proc->wake_count;
+    info_out->blocked_ns = blocked_ns;
+    info_out->display_present_calls = proc->display_present_calls;
+    info_out->display_rects = proc->display_rects;
+    info_out->display_bytes = proc->display_bytes;
+    info_out->memory_usage = process_memory_usage_locked(proc);
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+void process_perf_note_syscall(int32_t pid)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (is_valid_pid(pid)) {
+        g_processes[pid].syscalls++;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+}
+
+void process_perf_note_ipc_send(int32_t pid)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (is_valid_pid(pid)) {
+        g_processes[pid].ipc_send++;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+}
+
+void process_perf_note_ipc_recv(int32_t pid)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (is_valid_pid(pid)) {
+        g_processes[pid].ipc_recv++;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+}
+
+void process_perf_note_display(int32_t pid, uint32_t rect_count, uint64_t bytes)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (is_valid_pid(pid)) {
+        g_processes[pid].display_present_calls++;
+        g_processes[pid].display_rects += rect_count;
+        g_processes[pid].display_bytes += bytes;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+}
+
+void process_debug_dump_summary(const char *reason)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    uint64_t now_ns = process_perf_now_ns();
+    uint64_t total_runtime_ns = 0u;
+    uint64_t total_display_bytes = 0u;
+    int32_t top_pid = -1;
+    uint64_t top_runtime_ns = 0u;
+    char top_name[64];
+    top_name[0] = '\0';
+
+    for (int32_t i = 0; i < g_process_capacity; ++i) {
+        process_t *proc = &g_processes[i];
+        if (proc->state == PROCESS_STATE_UNUSED ||
+            proc->state == PROCESS_STATE_DEAD) {
+            continue;
+        }
+        uint64_t runtime_ns = proc->runtime_ns;
+        if (proc->state == PROCESS_STATE_RUNNING &&
+            proc->last_scheduled_ns != 0u &&
+            now_ns >= proc->last_scheduled_ns) {
+            runtime_ns += now_ns - proc->last_scheduled_ns;
+        }
+        total_runtime_ns += runtime_ns;
+        total_display_bytes += proc->display_bytes;
+        if (runtime_ns > top_runtime_ns) {
+            top_runtime_ns = runtime_ns;
+            top_pid = i;
+            memcpy(top_name, proc->name, sizeof(top_name));
+            top_name[sizeof(top_name) - 1u] = '\0';
+        }
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    char line[192];
+    snprintf(line, sizeof(line),
+             "[process:perf] reason=%s total_runtime_ms=%llu display_bytes=%llu top_pid=%d top_runtime_ms=%llu top=%s\n",
+             reason ? reason : "manual",
+             (unsigned long long)(total_runtime_ns / 1000000ULL),
+             (unsigned long long)total_display_bytes,
+             (int)top_pid,
+             (unsigned long long)(top_runtime_ns / 1000000ULL),
+             top_name);
+    serial_write_string(line);
+}
+
+void process_debug_dump_cpu_usage(const char *reason, uint64_t interval_ns)
+{
+    if (interval_ns == 0u) {
+        interval_ns = 1000000000ULL;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    uint64_t now_ns = process_perf_now_ns();
+    uint64_t total_delta_ns = 0u;
+    uint64_t total_syscall_delta = 0u;
+    uint64_t total_display_delta = 0u;
+    uint64_t top_delta_ns = 0u;
+    uint64_t top_user_delta_ns = 0u;
+    uint64_t top_user_syscall_delta = 0u;
+    uint64_t top_user_display_delta = 0u;
+    uint64_t top_syscall_count = 0u;
+    uint64_t top_syscall_runtime_delta = 0u;
+    uint64_t user_delta_ns = 0u;
+    uint64_t user_syscall_delta = 0u;
+    int32_t top_pid = -1;
+    int32_t top_user_pid = -1;
+    int32_t top_syscall_pid = -1;
+    char top_name[64];
+    char top_user_name[64];
+    char top_syscall_name[64];
+    top_name[0] = '\0';
+    top_user_name[0] = '\0';
+    top_syscall_name[0] = '\0';
+
+    int32_t capacity = g_process_capacity;
+    if (capacity > OS_CONFIG_PROCESS_MAX_COUNT_MAX) {
+        capacity = OS_CONFIG_PROCESS_MAX_COUNT_MAX;
+    }
+
+    for (int32_t i = 0; i < capacity; ++i) {
+        process_t *proc = &g_processes[i];
+        if (proc->state == PROCESS_STATE_UNUSED ||
+            proc->state == PROCESS_STATE_DEAD) {
+            g_cpu_usage_prev_runtime_ns[i] = 0u;
+            g_cpu_usage_prev_syscalls[i] = 0u;
+            g_cpu_usage_prev_display_bytes[i] = 0u;
+            continue;
+        }
+
+        uint64_t runtime_ns = proc->runtime_ns;
+        if (proc->state == PROCESS_STATE_RUNNING &&
+            proc->last_scheduled_ns != 0u &&
+            now_ns >= proc->last_scheduled_ns) {
+            runtime_ns += now_ns - proc->last_scheduled_ns;
+        }
+
+        uint64_t runtime_delta = 0u;
+        if (runtime_ns >= g_cpu_usage_prev_runtime_ns[i]) {
+            runtime_delta = runtime_ns - g_cpu_usage_prev_runtime_ns[i];
+        }
+        uint64_t syscall_delta = 0u;
+        if (proc->syscalls >= g_cpu_usage_prev_syscalls[i]) {
+            syscall_delta = proc->syscalls - g_cpu_usage_prev_syscalls[i];
+        }
+        uint64_t display_delta = 0u;
+        if (proc->display_bytes >= g_cpu_usage_prev_display_bytes[i]) {
+            display_delta = proc->display_bytes -
+                            g_cpu_usage_prev_display_bytes[i];
+        }
+
+        g_cpu_usage_prev_runtime_ns[i] = runtime_ns;
+        g_cpu_usage_prev_syscalls[i] = proc->syscalls;
+        g_cpu_usage_prev_display_bytes[i] = proc->display_bytes;
+
+        total_delta_ns += runtime_delta;
+        total_syscall_delta += syscall_delta;
+        total_display_delta += display_delta;
+        if (i != 0) {
+            user_delta_ns += runtime_delta;
+            user_syscall_delta += syscall_delta;
+            if (runtime_delta > top_user_delta_ns) {
+                top_user_delta_ns = runtime_delta;
+                top_user_syscall_delta = syscall_delta;
+                top_user_display_delta = display_delta;
+                top_user_pid = i;
+                memcpy(top_user_name, proc->name, sizeof(top_user_name));
+                top_user_name[sizeof(top_user_name) - 1u] = '\0';
+            }
+        }
+        if (runtime_delta > top_delta_ns) {
+            top_delta_ns = runtime_delta;
+            top_pid = i;
+            memcpy(top_name, proc->name, sizeof(top_name));
+            top_name[sizeof(top_name) - 1u] = '\0';
+        }
+        if (syscall_delta > top_syscall_count) {
+            top_syscall_count = syscall_delta;
+            top_syscall_runtime_delta = runtime_delta;
+            top_syscall_pid = i;
+            memcpy(top_syscall_name, proc->name, sizeof(top_syscall_name));
+            top_syscall_name[sizeof(top_syscall_name) - 1u] = '\0';
+        }
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    uint32_t cpu_count = smp_get_cpu_count();
+    if (cpu_count == 0u) {
+        cpu_count = 1u;
+    }
+    uint64_t denominator = interval_ns * (uint64_t)cpu_count;
+    if (denominator == 0u) {
+        denominator = interval_ns;
+    }
+    uint64_t total_cpu_x100 = (total_delta_ns * 10000ULL) / denominator;
+    uint64_t top_cpu_x100 = (top_delta_ns * 10000ULL) / denominator;
+    uint64_t user_cpu_x100 = (user_delta_ns * 10000ULL) / denominator;
+    uint64_t top_user_cpu_x100 =
+        (top_user_delta_ns * 10000ULL) / denominator;
+    uint64_t top_syscall_cpu_x100 =
+        (top_syscall_runtime_delta * 10000ULL) / denominator;
+
+    char line[384];
+    snprintf(line, sizeof(line),
+             "[cpu] reason=%s interval_ms=%llu cpus=%u total=%llu.%02llu%% user=%llu.%02llu%% syscalls=%llu user_syscalls=%llu display_kib=%llu top_pid=%d top=%s top_cpu=%llu.%02llu%% top_user_pid=%d top_user=%s top_user_cpu=%llu.%02llu%% top_user_syscalls=%llu top_user_display_kib=%llu syscall_pid=%d syscall_top=%s syscall_count=%llu syscall_cpu=%llu.%02llu%%\n",
+             reason ? reason : "periodic",
+             (unsigned long long)(interval_ns / 1000000ULL),
+             (unsigned int)cpu_count,
+             (unsigned long long)(total_cpu_x100 / 100ULL),
+             (unsigned long long)(total_cpu_x100 % 100ULL),
+             (unsigned long long)(user_cpu_x100 / 100ULL),
+             (unsigned long long)(user_cpu_x100 % 100ULL),
+             (unsigned long long)total_syscall_delta,
+             (unsigned long long)user_syscall_delta,
+             (unsigned long long)(total_display_delta / 1024ULL),
+             (int)top_pid,
+             top_name,
+             (unsigned long long)(top_cpu_x100 / 100ULL),
+             (unsigned long long)(top_cpu_x100 % 100ULL),
+             (int)top_user_pid,
+             top_user_name,
+             (unsigned long long)(top_user_cpu_x100 / 100ULL),
+             (unsigned long long)(top_user_cpu_x100 % 100ULL),
+             (unsigned long long)top_user_syscall_delta,
+             (unsigned long long)(top_user_display_delta / 1024ULL),
+             (int)top_syscall_pid,
+             top_syscall_name,
+             (unsigned long long)top_syscall_count,
+             (unsigned long long)(top_syscall_cpu_x100 / 100ULL),
+             (unsigned long long)(top_syscall_cpu_x100 % 100ULL));
+    serial_write_string(line);
 }
 
 int32_t process_get_capacity(void)

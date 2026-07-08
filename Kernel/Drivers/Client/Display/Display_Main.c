@@ -221,6 +221,22 @@ void display_present(void) {
     g_active_display_driver->present();
 }
 
+void display_present_rects(const display_rect_t *rects, uint32_t count) {
+    if (!display_is_ready()) {
+        return;
+    }
+
+    if (rects != NULL && count != 0u &&
+        g_active_display_driver->present_rects != NULL) {
+        g_active_display_driver->present_rects(rects, count);
+        return;
+    }
+
+    if (g_active_display_driver->present != NULL) {
+        g_active_display_driver->present();
+    }
+}
+
 void *display_get_framebuffer(void) {
     if (!display_is_ready() || g_active_display_driver->get_framebuffer == NULL) {
         return NULL;

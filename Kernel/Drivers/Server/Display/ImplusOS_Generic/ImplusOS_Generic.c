@@ -377,6 +377,72 @@ void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color
     }
 }
 
+static void copy_row_to_framebuffer(uint64_t pixel_index,
+                                    const uint8_t *src,
+                                    uint64_t row_bytes)
+{
+    uint64_t byte_offset = g_fb.map_offset_bytes + (pixel_index * sizeof(uint32_t));
+    uint64_t chunk_index = byte_offset / GENERIC_FB_MAP_GRANULE;
+
+    if (chunk_index >= g_fb.mapped_chunks) {
+        return;
+    }
+
+    uint64_t chunk_offset = byte_offset % GENERIC_FB_MAP_GRANULE;
+    uint8_t *dst = g_fb.mapped_bases[chunk_index] + chunk_offset;
+    uint64_t remaining_in_chunk = GENERIC_FB_MAP_GRANULE - chunk_offset;
+
+    if (row_bytes <= remaining_in_chunk) {
+        memcpy((void *)dst, (const void *)src, row_bytes);
+        return;
+    }
+
+    uint64_t part1 = remaining_in_chunk;
+    uint64_t part2 = row_bytes - part1;
+    memcpy((void *)dst, (const void *)src, part1);
+    if (chunk_index + 1 < g_fb.mapped_chunks) {
+        memcpy((void *)g_fb.mapped_bases[chunk_index + 1],
+               (const void *)(src + part1),
+               part2);
+    }
+}
+
+static bool clip_rect_to_framebuffer(const display_rect_t *input,
+                                     uint32_t *x_out,
+                                     uint32_t *y_out,
+                                     uint32_t *w_out,
+                                     uint32_t *h_out)
+{
+    if (input == NULL || input->w == 0u || input->h == 0u ||
+        g_fb.width == 0u || g_fb.height == 0u) {
+        return false;
+    }
+
+    int64_t x0 = input->x;
+    int64_t y0 = input->y;
+    int64_t x1 = x0 + (int64_t)input->w;
+    int64_t y1 = y0 + (int64_t)input->h;
+    if (x1 <= 0 || y1 <= 0 ||
+        x0 >= (int64_t)g_fb.width ||
+        y0 >= (int64_t)g_fb.height) {
+        return false;
+    }
+
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (int64_t)g_fb.width) x1 = (int64_t)g_fb.width;
+    if (y1 > (int64_t)g_fb.height) y1 = (int64_t)g_fb.height;
+    if (x1 <= x0 || y1 <= y0) {
+        return false;
+    }
+
+    *x_out = (uint32_t)x0;
+    *y_out = (uint32_t)y0;
+    *w_out = (uint32_t)(x1 - x0);
+    *h_out = (uint32_t)(y1 - y0);
+    return true;
+}
+
 void fb_present(void) {
     if (!g_ready || !g_double_buffer.buffer) {
         return;
@@ -388,28 +454,38 @@ void fb_present(void) {
 
     for (uint32_t y = 0; y < g_fb.height; ++y) {
         uint64_t pixel_index = (uint64_t)y * g_fb.pixels_per_scan_line;
-        uint64_t byte_offset = g_fb.map_offset_bytes + (pixel_index * sizeof(uint32_t));
-        uint64_t chunk_index = byte_offset / GENERIC_FB_MAP_GRANULE;
-        
-        if (chunk_index >= g_fb.mapped_chunks) {
+        uint8_t *src = src_bytes + (y * scan_line_bytes);
+        copy_row_to_framebuffer(pixel_index, src, row_bytes);
+    }
+}
+
+void fb_present_rects(const display_rect_t *rects, uint32_t count)
+{
+    if (!g_ready || !g_double_buffer.buffer || rects == NULL || count == 0u) {
+        fb_present();
+        return;
+    }
+
+    uint8_t *src_bytes = (uint8_t *)g_double_buffer.buffer;
+    uint64_t scan_line_bytes = (uint64_t)g_fb.pixels_per_scan_line * sizeof(uint32_t);
+
+    for (uint32_t i = 0u; i < count; ++i) {
+        uint32_t x = 0u;
+        uint32_t y = 0u;
+        uint32_t w = 0u;
+        uint32_t h = 0u;
+        if (!clip_rect_to_framebuffer(&rects[i], &x, &y, &w, &h)) {
             continue;
         }
 
-        uint64_t chunk_offset = byte_offset % GENERIC_FB_MAP_GRANULE;
-        uint8_t *dst = g_fb.mapped_bases[chunk_index] + chunk_offset;
-        uint8_t *src = src_bytes + (y * scan_line_bytes);
-        
-        uint64_t remaining_in_chunk = GENERIC_FB_MAP_GRANULE - chunk_offset;
-
-        if (row_bytes <= remaining_in_chunk) {
-            memcpy((void *)dst, (const void *)src, row_bytes);
-        } else {
-            uint64_t part1 = remaining_in_chunk;
-            uint64_t part2 = row_bytes - part1;
-            memcpy((void *)dst, (const void *)src, part1);
-            if (chunk_index + 1 < g_fb.mapped_chunks) {
-                memcpy((void *)g_fb.mapped_bases[chunk_index + 1], (const void *)(src + part1), part2);
-            }
+        uint64_t row_bytes = (uint64_t)w * sizeof(uint32_t);
+        for (uint32_t row = 0u; row < h; ++row) {
+            uint64_t pixel_index =
+                (uint64_t)(y + row) * g_fb.pixels_per_scan_line + x;
+            const uint8_t *src =
+                src_bytes + ((uint64_t)(y + row) * scan_line_bytes) +
+                ((uint64_t)x * sizeof(uint32_t));
+            copy_row_to_framebuffer(pixel_index, src, row_bytes);
         }
     }
 }
@@ -428,6 +504,7 @@ static const driver_display_t g_generic_fb_driver = {
     .draw_pixel = fb_draw_pixel,
     .fill_rect = fb_fill_rect,
     .present = fb_present,
+    .present_rects = fb_present_rects,
     .set_framebuffer = generic_fb_set,
     .get_framebuffer = generic_fb_get_framebuffer,
     .get_generation = fb_generation,

@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define WM_LARGE_WINDOW_ANIMATION_PIXELS 500000u
+
 static wm_rect_t screen_bounds(const wm_state_t *state)
 {
     return (wm_rect_t){0, 0, state->compositor.framebuffer_width,
@@ -180,6 +182,12 @@ static bool allocate_surface(wm_window_t *window, uint32_t width, uint32_t heigh
     return true;
 }
 
+static bool window_should_animate_show(wm_rect_t frame)
+{
+    uint64_t pixels = (uint64_t)frame.w * (uint64_t)frame.h;
+    return pixels < WM_LARGE_WINDOW_ANIMATION_PIXELS;
+}
+
 int32_t wm_scene_create_window(wm_state_t *state, int32_t owner_pid,
                                wm_rect_t frame, uint32_t background,
                                const char *title)
@@ -205,9 +213,10 @@ int32_t wm_scene_create_window(wm_state_t *state, int32_t owner_pid,
     window->bg_color = background | 0xFF000000u;
     window->visible = true;
     window->layer = WM_LAYER_NORMAL;
-    window->visual_alpha = 0.0f;
-    window->visual_scale = 0.92f;
-    window->visual_offset_y = 14.0f;
+    bool animate_show = window_should_animate_show(frame);
+    window->visual_alpha = animate_show ? 0.0f : 1.0f;
+    window->visual_scale = animate_show ? 0.92f : 1.0f;
+    window->visual_offset_y = animate_show ? 14.0f : 0.0f;
     if (title) strncpy(window->title, title, sizeof(window->title) - 1u);
     if (!allocate_surface(window, frame.w, frame.h, false)) {
         free(window);
@@ -217,7 +226,9 @@ int32_t wm_scene_create_window(wm_state_t *state, int32_t owner_pid,
     ++state->scene.window_count;
     layer_push_top(&state->scene, window, WM_LAYER_NORMAL);
     wm_scene_focus(state, window);
-    wm_animation_start(state, window, WM_TRANSITION_SHOW, 220u);
+    if (animate_show) {
+        wm_animation_start(state, window, WM_TRANSITION_SHOW, 220u);
+    }
     wm_window_mark_frame_damage(state, window);
     return (int32_t)id;
 }

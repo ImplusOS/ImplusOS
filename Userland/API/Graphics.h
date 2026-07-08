@@ -64,12 +64,20 @@ typedef struct __attribute__((packed)) {
     char     name[DISPLAY_MAX_MONITOR_NAME];
 } display_mode_info_t;
 
+typedef struct __attribute__((packed)) {
+    int32_t  x;
+    int32_t  y;
+    uint32_t w;
+    uint32_t h;
+} display_rect_t;
+
 int32_t graphics_init(uint32_t window_id);
 
 void draw_pixel(uint32_t x, uint32_t y, uint32_t color);
 void draw_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 uint32_t get_pixel(uint32_t x, uint32_t y);
 void draw_present(void);
+void draw_present_rects(const display_rect_t *rects, uint32_t count);
 
 uint32_t get_display_width(void);
 uint32_t get_display_height(void);

@@ -4,11 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <Unicode/CP932/CP932.h>
+#include <Unicode/UTF8/UTF8Codec.h>
+
 typedef enum {
     ICONV_ENC_UTF8,
     ICONV_ENC_ASCII,
     ICONV_ENC_LATIN1,
     ICONV_ENC_CP1252,
+    ICONV_ENC_CP932,
     ICONV_ENC_UCS4,
 } iconv_encoding_t;
 
@@ -101,6 +105,19 @@ static int iconv_parse_encoding(const char* name, iconv_encoding_t* enc)
         *enc = ICONV_ENC_CP1252;
         return 1;
     }
+    if (strcmp(normal, "cp932") == 0 ||
+        strcmp(normal, "windows31j") == 0 ||
+        strcmp(normal, "windows932") == 0 ||
+        strcmp(normal, "shiftjis") == 0 ||
+        strcmp(normal, "shiftjisx0213") == 0 ||
+        strcmp(normal, "sjis") == 0 ||
+        strcmp(normal, "mskanji") == 0 ||
+        strcmp(normal, "csshiftjis") == 0 ||
+        strcmp(normal, "xsjis") == 0 ||
+        strcmp(normal, "xcp932") == 0) {
+        *enc = ICONV_ENC_CP932;
+        return 1;
+    }
     if (strcmp(normal, "ucs4") == 0 ||
         strcmp(normal, "utf32") == 0 ||
         strcmp(normal, "iso10646ucs4") == 0) {
@@ -128,136 +145,40 @@ static int iconv_cp1252_from_unicode(uint32_t cp, unsigned char* out)
 static int iconv_read_utf8(const unsigned char* in, size_t len,
                            uint32_t* cp, size_t* used)
 {
-    unsigned char c0;
+    unicode_utf8_status_t status;
 
     if (len == 0) {
         errno = EINVAL;
         return 0;
     }
-    c0 = in[0];
-    if (c0 < 0x80) {
-        *cp = c0;
-        *used = 1;
+
+    status = unicode_utf8_decode_next(in, len, cp, used);
+    if (status == UNICODE_UTF8_OK) {
         return 1;
     }
-    if ((c0 & 0xE0) == 0xC0) {
-        if (len < 2) {
-            errno = EINVAL;
-            return 0;
-        }
-        if ((in[1] & 0xC0) != 0x80) {
-            errno = EILSEQ;
-            return 0;
-        }
-        *cp = ((uint32_t)(c0 & 0x1F) << 6) | (uint32_t)(in[1] & 0x3F);
-        if (*cp < 0x80) {
-            errno = EILSEQ;
-            return 0;
-        }
-        *used = 2;
-        return 1;
-    }
-    if ((c0 & 0xF0) == 0xE0) {
-        if (len < 3) {
-            errno = EINVAL;
-            return 0;
-        }
-        if ((in[1] & 0xC0) != 0x80 || (in[2] & 0xC0) != 0x80) {
-            errno = EILSEQ;
-            return 0;
-        }
-        *cp = ((uint32_t)(c0 & 0x0F) << 12) |
-              ((uint32_t)(in[1] & 0x3F) << 6) |
-              (uint32_t)(in[2] & 0x3F);
-        if (*cp < 0x800 || (*cp >= 0xD800 && *cp <= 0xDFFF)) {
-            errno = EILSEQ;
-            return 0;
-        }
-        *used = 3;
-        return 1;
-    }
-    if ((c0 & 0xF8) == 0xF0) {
-        if (len < 4) {
-            errno = EINVAL;
-            return 0;
-        }
-        if ((in[1] & 0xC0) != 0x80 ||
-            (in[2] & 0xC0) != 0x80 ||
-            (in[3] & 0xC0) != 0x80) {
-            errno = EILSEQ;
-            return 0;
-        }
-        *cp = ((uint32_t)(c0 & 0x07) << 18) |
-              ((uint32_t)(in[1] & 0x3F) << 12) |
-              ((uint32_t)(in[2] & 0x3F) << 6) |
-              (uint32_t)(in[3] & 0x3F);
-        if (*cp < 0x10000 || *cp > 0x10FFFF) {
-            errno = EILSEQ;
-            return 0;
-        }
-        *used = 4;
-        return 1;
-    }
-    errno = EILSEQ;
+
+    errno = (status == UNICODE_UTF8_ERR_INCOMPLETE) ? EINVAL : EILSEQ;
     return 0;
 }
 
 static int iconv_write_utf8(uint32_t cp, unsigned char* out,
                             size_t out_left, size_t* written)
 {
-    if (cp < 0x80) {
-        if (out_left < 1) {
-            errno = E2BIG;
-            return 0;
-        }
-        out[0] = (unsigned char)cp;
-        *written = 1;
+    unicode_utf8_status_t status;
+
+    status = unicode_utf8_encode(cp, out, out_left, written);
+    if (status == UNICODE_UTF8_OK) {
         return 1;
     }
-    if (cp < 0x800) {
-        if (out_left < 2) {
-            errno = E2BIG;
-            return 0;
-        }
-        out[0] = (unsigned char)(0xC0 | (cp >> 6));
-        out[1] = (unsigned char)(0x80 | (cp & 0x3F));
-        *written = 2;
-        return 1;
-    }
-    if (cp < 0x10000) {
-        if (cp >= 0xD800 && cp <= 0xDFFF) {
-            errno = EILSEQ;
-            return 0;
-        }
-        if (out_left < 3) {
-            errno = E2BIG;
-            return 0;
-        }
-        out[0] = (unsigned char)(0xE0 | (cp >> 12));
-        out[1] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
-        out[2] = (unsigned char)(0x80 | (cp & 0x3F));
-        *written = 3;
-        return 1;
-    }
-    if (cp <= 0x10FFFF) {
-        if (out_left < 4) {
-            errno = E2BIG;
-            return 0;
-        }
-        out[0] = (unsigned char)(0xF0 | (cp >> 18));
-        out[1] = (unsigned char)(0x80 | ((cp >> 12) & 0x3F));
-        out[2] = (unsigned char)(0x80 | ((cp >> 6) & 0x3F));
-        out[3] = (unsigned char)(0x80 | (cp & 0x3F));
-        *written = 4;
-        return 1;
-    }
-    errno = EILSEQ;
+    errno = (status == UNICODE_UTF8_ERR_NOSPACE) ? E2BIG : EILSEQ;
     return 0;
 }
 
 static int iconv_read_char(iconv_encoding_t enc, const unsigned char* in,
                            size_t len, uint32_t* cp, size_t* used)
 {
+    cp932_status_t cp932_status;
+
     if (len == 0) {
         errno = EINVAL;
         return 0;
@@ -283,6 +204,13 @@ static int iconv_read_char(iconv_encoding_t enc, const unsigned char* in,
               cp1252_to_unicode[in[0] - 0x80] : in[0];
         *used = 1;
         return 1;
+    case ICONV_ENC_CP932:
+        cp932_status = cp932_decode_next(in, len, cp, used);
+        if (cp932_status == CP932_OK) {
+            return 1;
+        }
+        errno = (cp932_status == CP932_ERR_INCOMPLETE) ? EINVAL : EILSEQ;
+        return 0;
     case ICONV_ENC_UCS4:
         if (len < 4) {
             errno = EINVAL;
@@ -304,6 +232,7 @@ static int iconv_write_char(iconv_encoding_t enc, uint32_t cp, int translit,
                             size_t* written)
 {
     unsigned char mapped;
+    cp932_status_t cp932_status;
 
     switch (enc) {
     case ICONV_ENC_UTF8:
@@ -351,6 +280,26 @@ static int iconv_write_char(iconv_encoding_t enc, uint32_t cp, int translit,
             return 0;
         }
         out[0] = mapped;
+        *written = 1;
+        return 1;
+    case ICONV_ENC_CP932:
+        cp932_status = cp932_encode(cp, out, out_left, written);
+        if (cp932_status == CP932_OK) {
+            return 1;
+        }
+        if (cp932_status == CP932_ERR_NOSPACE) {
+            errno = E2BIG;
+            return 0;
+        }
+        if (!translit) {
+            errno = EILSEQ;
+            return 0;
+        }
+        if (out_left < 1) {
+            errno = E2BIG;
+            return 0;
+        }
+        out[0] = '?';
         *written = 1;
         return 1;
     case ICONV_ENC_UCS4:
@@ -423,7 +372,7 @@ size_t iconv(iconv_t cd, char** inbuf, size_t* inbytesleft,
         uint32_t cp;
         size_t used = 0;
         size_t written = 0;
-        int translit_before = substitutions;
+        size_t translit_before = substitutions;
 
         if (!iconv_read_char(desc->from, in, in_left, &cp, &used)) {
             break;
@@ -436,7 +385,7 @@ size_t iconv(iconv_t cd, char** inbuf, size_t* inbytesleft,
             break;
         }
         if (desc->translit && cp == '?' && desc->from != desc->to) {
-            substitutions += (translit_before == (int)substitutions) ? 0u : 1u;
+            substitutions += (translit_before == substitutions) ? 0u : 1u;
         }
         in += used;
         in_left -= used;
@@ -464,4 +413,3 @@ int iconv_close(iconv_t cd)
     free((void*)cd);
     return 0;
 }
-

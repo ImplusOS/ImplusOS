@@ -219,6 +219,20 @@ static void shell_print_u32(uint32_t n)
     }
 }
 
+static void shell_print_u64(uint64_t n)
+{
+    char buf[24];
+    int i = 0;
+    if (n == 0) { buf[i++] = '0'; }
+    while (n > 0 && i < (int)sizeof(buf)) {
+        buf[i++] = '0' + (int)(n % 10u);
+        n /= 10u;
+    }
+    for (int j = i - 1; j >= 0; j--) {
+        shell_putchar(buf[j]);
+    }
+}
+
 static void shell_prompt(void)
 {
     if (g_win != 0) {
@@ -498,19 +512,54 @@ static int cmd_cp(int argc, char **argv)
 static int cmd_ps(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    shell_puts("  PID  PPID  STATE\n");
+    shell_puts("  PID  PPID  STATE    RUN_MS  SYSCALLS  DISP_KB\n");
     int32_t max = get_process_count();
     for (int32_t i = 0; i < max; i++) {
         process_info_t info;
         if (get_process_info(i, &info) == 0) {
+            process_perf_info_t perf;
+            int has_perf = get_process_perf_info(i, &perf) == 0;
             shell_puts("  ");
             shell_print_number(info.pid);
             shell_puts("    ");
             shell_print_number(info.parent_pid);
             shell_puts("    ");
             shell_puts(info.state ? "ALIVE" : "DEAD");
+            if (has_perf) {
+                shell_puts("    ");
+                shell_print_u64(perf.runtime_ns / 1000000ULL);
+                shell_puts("    ");
+                shell_print_u64(perf.syscalls);
+                shell_puts("    ");
+                shell_print_u64(perf.display_bytes / 1024ULL);
+            }
             shell_putchar('\n');
         }
+    }
+    return 0;
+}
+
+static int cmd_bootprofile(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    int32_t count = get_boot_profile_count();
+    if (count < 0) {
+        shell_puts("bootprofile: unavailable\n");
+        return 1;
+    }
+    shell_puts("  IDX  NAME                         DURATION_US\n");
+    for (int32_t i = 0; i < count; ++i) {
+        boot_profile_entry_t entry;
+        if (get_boot_profile_entry(i, &entry) != 0) {
+            continue;
+        }
+        shell_puts("  ");
+        shell_print_number(i);
+        shell_puts("    ");
+        shell_puts(entry.name);
+        shell_puts("    ");
+        shell_print_u64(entry.duration_ns / 1000ULL);
+        shell_putchar('\n');
     }
     return 0;
 }
@@ -605,6 +654,7 @@ static int cmd_help(int argc, char **argv)
     shell_puts("  touch <file>     Create empty file\n");
     shell_puts("  stat <path>      Show file info\n");
     shell_puts("  ps               List processes\n");
+    shell_puts("  bootprofile      Show boot timing\n");
     shell_puts("  clear            Clear screen\n");
     shell_puts("  uname            Show system info\n");
     shell_puts("  uptime           Show uptime\n");
@@ -647,7 +697,7 @@ static const char *find_app_alias(const char *name)
 
 static const char *const g_builtin_names[] = {
     "echo", "pwd", "cd", "ls", "cat", "mkdir", "rm", "cp", "touch",
-    "stat", "ps", "clear", "uname", "uptime", "help", "exit"
+    "stat", "ps", "bootprofile", "clear", "uname", "uptime", "help", "exit"
 };
 
 static int prefix_matches(const char *text, const char *prefix)
@@ -778,6 +828,7 @@ static int execute_builtin(int argc, char **argv)
     if (strcmp(argv[0], "touch") == 0)  return cmd_touch(argc, argv);
     if (strcmp(argv[0], "stat") == 0)   return cmd_stat(argc, argv);
     if (strcmp(argv[0], "ps") == 0)     return cmd_ps(argc, argv);
+    if (strcmp(argv[0], "bootprofile") == 0) return cmd_bootprofile(argc, argv);
     if (strcmp(argv[0], "clear") == 0)  return cmd_clear(argc, argv);
     if (strcmp(argv[0], "uname") == 0)  return cmd_uname(argc, argv);
     if (strcmp(argv[0], "uptime") == 0) return cmd_uptime(argc, argv);
@@ -802,7 +853,7 @@ static void execute_external(const char *path)
         int32_t ret = process_waitpid(pid, &status, 0);
         if (ret > 0) break;
         if (ret < 0) break;
-        process_yield();
+        sleep_ms(10u);
     }
 }
 
@@ -867,7 +918,7 @@ void _start(void)
 {
     g_win = window_create_ex(50, 50, 720, 480, 0xFF1E1E2E, "Terminal - ish");
     if (g_win == 0) {
-        while (1) process_yield();
+        while (1) sleep_ms(1000u);
     }
 
     window_subscribe_keyboard(g_win);
@@ -974,6 +1025,6 @@ void _start(void)
                 shell_putchar(c);
             }
         }
-        process_yield();
+        sleep_ms(10u);
     }
 }

@@ -256,8 +256,12 @@ static int keyboard_queue_pop(driver_keyboard_event_t *event_out)
 
 static void mouse_queue_push(const driver_mouse_event_t *event)
 {
-    if (event == NULL || g_mouse_count >= PS2_QUEUE_SIZE) {
+    if (event == NULL) {
         return;
+    }
+    if (g_mouse_count >= PS2_QUEUE_SIZE) {
+        g_mouse_tail = (g_mouse_tail + 1u) % PS2_QUEUE_SIZE;
+        --g_mouse_count;
     }
     g_mouse_queue[g_mouse_head] = *event;
     g_mouse_head = (g_mouse_head + 1u) % PS2_QUEUE_SIZE;

@@ -36,11 +36,65 @@ static int g_atexit_count = 0;
 typedef struct malloc_block {
     size_t size;
     int free;
+    int reserved;
     struct malloc_block *next;
+    uintptr_t padding;
 } malloc_block_t;
 
 static malloc_block_t *free_list = NULL;
 static volatile int malloc_lock_state;
+
+#define MALLOC_ALIGNMENT 16u
+#define MALLOC_PAGE_SIZE 4096u
+
+static size_t malloc_align(size_t size)
+{
+    return (size + (MALLOC_ALIGNMENT - 1u)) & ~((size_t)(MALLOC_ALIGNMENT - 1u));
+}
+
+static int malloc_blocks_adjacent(const malloc_block_t *left,
+                                  const malloc_block_t *right)
+{
+    const unsigned char *left_end;
+
+    if (left == NULL || right == NULL) {
+        return 0;
+    }
+
+    left_end = (const unsigned char *)(left + 1) + left->size;
+    return left_end == (const unsigned char *)right;
+}
+
+static void malloc_split_block(malloc_block_t *block, size_t size)
+{
+    malloc_block_t *remainder;
+    size_t remaining;
+
+    if (block->size < size + sizeof(*block) + MALLOC_ALIGNMENT) {
+        return;
+    }
+
+    remaining = block->size - size - sizeof(*block);
+    remainder = (malloc_block_t *)((unsigned char *)(block + 1) + size);
+    remainder->size = remaining;
+    remainder->free = 1;
+    remainder->reserved = 0;
+    remainder->padding = 0;
+    remainder->next = block->next;
+
+    block->size = size;
+    block->next = remainder;
+}
+
+static void malloc_coalesce_forward(malloc_block_t *block)
+{
+    while (malloc_blocks_adjacent(block, block->next) && block->next->free) {
+        malloc_block_t *next = block->next;
+
+        block->size += sizeof(*next) + next->size;
+        block->next = next->next;
+    }
+}
 
 static void malloc_lock(void)
 {
@@ -55,29 +109,39 @@ static void malloc_unlock(void)
 }
 
 void* malloc(size_t size) {
+    malloc_block_t *block;
+    size_t alloc_size;
+
     if (size == 0) return NULL;
-    size = (size + 15u) & ~((size_t)15u);
+    size = malloc_align(size);
     malloc_lock();
     malloc_block_t *curr = free_list;
     while (curr) {
         if (curr->free && curr->size >= size) {
+            malloc_split_block(curr, size);
             curr->free = 0;
             malloc_unlock();
             return (void*)(curr + 1);
         }
         curr = curr->next;
     }
-    size_t alloc_size = size + sizeof(malloc_block_t);
-    alloc_size = (alloc_size + 4095u) & ~((size_t)4095u);
-    malloc_block_t *block = (malloc_block_t*)syscall2(SYSCALL_USER_MMAP, alloc_size, 0);
+
+    alloc_size = malloc_align(size + sizeof(malloc_block_t));
+    alloc_size = (alloc_size + (MALLOC_PAGE_SIZE - 1u)) &
+        ~((size_t)(MALLOC_PAGE_SIZE - 1u));
+    block = (malloc_block_t*)syscall2(SYSCALL_USER_MMAP, alloc_size, 0);
     if (!block) {
         malloc_unlock();
         return NULL;
     }
     block->size = alloc_size - sizeof(malloc_block_t);
-    block->free = 0;
+    block->free = 1;
+    block->reserved = 0;
+    block->padding = 0;
     block->next = free_list;
     free_list = block;
+    malloc_split_block(block, size);
+    block->free = 0;
     malloc_unlock();
     return (void*)(block + 1);
 }
@@ -120,9 +184,26 @@ void* realloc(void* ptr, size_t size)
 
     block = (malloc_block_t*)ptr - 1;
     old_size = block->size;
+    size = malloc_align(size);
     if (old_size >= size) {
+        malloc_lock();
+        malloc_split_block(block, size);
+        malloc_unlock();
         return ptr;
     }
+
+    malloc_lock();
+    if (malloc_blocks_adjacent(block, block->next) && block->next->free &&
+        block->size + sizeof(*block) + block->next->size >= size) {
+        malloc_block_t *next = block->next;
+
+        block->size += sizeof(*next) + next->size;
+        block->next = next->next;
+        malloc_split_block(block, size);
+        malloc_unlock();
+        return ptr;
+    }
+    malloc_unlock();
 
     new_ptr = malloc(size);
     if (!new_ptr) {
@@ -142,10 +223,25 @@ void* realloc(void* ptr, size_t size)
 }
 
 void free(void* p) {
+    malloc_block_t *block;
+    malloc_block_t *curr;
+
     if (!p) return;
     malloc_lock();
-    malloc_block_t *block = (malloc_block_t*)p - 1;
+    block = (malloc_block_t*)p - 1;
     block->free = 1;
+    malloc_coalesce_forward(block);
+
+    curr = free_list;
+    while (curr != NULL) {
+        if (curr->next == block) {
+            if (curr->free && malloc_blocks_adjacent(curr, block)) {
+                malloc_coalesce_forward(curr);
+            }
+            break;
+        }
+        curr = curr->next;
+    }
     malloc_unlock();
 }
 

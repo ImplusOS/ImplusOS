@@ -9,6 +9,7 @@ PREFIX := $(REPO_ROOT)/Userland/Application/UserApps/NetSurf/Root
 VENDOR := $(REPO_ROOT)/Vendor/Library
 ZLIB_DIR := $(VENDOR)/zlib
 LIBPNG_DIR := $(VENDOR)/libpng
+LIBJPEG_DIR := $(VENDOR)/libjpeg
 MBEDTLS_DIR := $(VENDOR)/mbedtls-3.6
 CURL_DIR := $(VENDOR)/curl
 SDL12_DIR := $(REPO_ROOT)/Userland/Service/SDL12_Compat
@@ -29,6 +30,7 @@ NSSHARED := $(REPO_ROOT)/Userland/Application/UserApps/NetSurf/netsurf-buildsyst
 NETSURF_ROOT_STAMP := $(PREFIX)/.netsurf-root.stamp
 ZLIB_PKGCONFIG := $(PREFIX)/lib/pkgconfig/zlib.pc
 LIBPNG_PKGCONFIG := $(PREFIX)/lib/pkgconfig/libpng.pc
+LIBJPEG_PKGCONFIG := $(PREFIX)/lib/pkgconfig/libjpeg.pc
 MBEDTLS_BUILD_DIR := $(TOP_BUILD_DIR)/Userland/Service/NetSurf/mbedtls
 CURL_BUILD_DIR := $(TOP_BUILD_DIR)/Userland/Service/NetSurf/curl
 LIBM_BUILD_DIR := $(TOP_BUILD_DIR)/Userland/Service/NetSurf/libm
@@ -44,7 +46,13 @@ NS_CFLAGS := -ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -O2 \
 	-D_BSD_SOURCE -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200112L \
 	-Wno-unused-parameter -Wno-unused-function
 
-
+# NetSurf uses a small fixed fetcher pool on ImplusOS; libcurl's desktop-sized
+# default caches waste pages during early browser startup.
+CURL_CACHE_CFLAGS := \
+	-DCURL_SOCKET_HASH_TABLE_SIZE=53 \
+	-DCURL_CONNECTION_HASH_SIZE=17 \
+	-DCURL_DNS_HASH_SIZE=17 \
+	-DCURL_TLS_SESSION_SIZE=8
 
 NS_ARFLAGS := rcs
 NS_LDFLAGS := -L$(PREFIX)/lib
@@ -65,12 +73,15 @@ buildsystem:
 	$(MAKE) -C $(NSSHARED) install PREFIX=$(PREFIX)
 
 base_libs:
-	$(MAKE) -C $(VENDOR) ARCH=$(ARCH) TOP_BUILD_DIR=$(TOP_BUILD_DIR) $(TOP_BUILD_DIR)/Vendor/Library/libz.a $(TOP_BUILD_DIR)/Vendor/Library/libpng.a
+	$(MAKE) -C $(VENDOR) ARCH=$(ARCH) TOP_BUILD_DIR=$(TOP_BUILD_DIR) $(TOP_BUILD_DIR)/Vendor/Library/libz.a $(TOP_BUILD_DIR)/Vendor/Library/libpng.a $(TOP_BUILD_DIR)/Vendor/Library/libjpeg.a
 	@mkdir -p $(PREFIX)/include $(PREFIX)/lib $(PREFIX)/lib/pkgconfig
 	cp -R $(ZLIB_DIR)/zconf.h $(ZLIB_DIR)/zlib.h $(PREFIX)/include/
 	cp -R $(LIBPNG_DIR)/png.h $(LIBPNG_DIR)/pngconf.h $(TOP_BUILD_DIR)/Vendor/Library/libpng/include/pnglibconf.h $(PREFIX)/include/
+	cp -R $(LIBJPEG_DIR)/src/jpeglib.h $(LIBJPEG_DIR)/src/jmorecfg.h $(LIBJPEG_DIR)/src/jerror.h $(PREFIX)/include/
+	cp -R $(TOP_BUILD_DIR)/Vendor/Library/libjpeg/include/jconfig.h $(TOP_BUILD_DIR)/Vendor/Library/libjpeg/include/jconfigint.h $(TOP_BUILD_DIR)/Vendor/Library/libjpeg/include/jversion.h $(PREFIX)/include/
 	install -C -m 644 $(TOP_BUILD_DIR)/Vendor/Library/libz.a $(PREFIX)/lib/libz.a
 	install -C -m 644 $(TOP_BUILD_DIR)/Vendor/Library/libpng.a $(PREFIX)/lib/libpng.a
+	install -C -m 644 $(TOP_BUILD_DIR)/Vendor/Library/libjpeg.a $(PREFIX)/lib/libjpeg.a
 	sed -e 's|@PREFIX@|$(PREFIX)|g' \
 		-e 's|@REPO_ROOT@|$(REPO_ROOT)|g' \
 		-e 's|@ARCH@|$(ARCH)|g' \
@@ -79,6 +90,10 @@ base_libs:
 		-e 's|@REPO_ROOT@|$(REPO_ROOT)|g' \
 		-e 's|@ARCH@|$(ARCH)|g' \
 		pkgconfig/libpng.pc.in > $(LIBPNG_PKGCONFIG)
+	sed -e 's|@PREFIX@|$(PREFIX)|g' \
+		-e 's|@REPO_ROOT@|$(REPO_ROOT)|g' \
+		-e 's|@ARCH@|$(ARCH)|g' \
+		pkgconfig/libjpeg.pc.in > $(LIBJPEG_PKGCONFIG)
 
 mbedtls:
 	cmake -S $(MBEDTLS_DIR) -B $(MBEDTLS_BUILD_DIR) \
@@ -109,7 +124,7 @@ curl: mbedtls
 		-DCMAKE_FIND_ROOT_PATH=$(PREFIX) \
 		-DZLIB_INCLUDE_DIR=$(PREFIX)/include \
 		-DZLIB_LIBRARY=$(PREFIX)/lib/libz.a \
-		-DCMAKE_C_FLAGS="-ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -O2 -I$(REPO_ROOT)/libc/I_libc/include -I$(PREFIX)/include" \
+		-DCMAKE_C_FLAGS="-ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -O2 -I$(REPO_ROOT)/libc/I_libc/include -I$(PREFIX)/include $(CURL_CACHE_CFLAGS)" \
 		-DCMAKE_EXE_LINKER_FLAGS="-nostdlib -L$(PREFIX)/lib" \
 		-DBUILD_CURL_EXE=OFF \
 		-DBUILD_EXAMPLES=OFF \
@@ -117,6 +132,7 @@ curl: mbedtls
 		-DBUILD_MISC_DOCS=OFF \
 		-DBUILD_SHARED_LIBS=OFF \
 		-DBUILD_STATIC_LIBS=ON \
+		-DCURL_DISABLE_SOCKETPAIR=ON \
 		-DCURL_DISABLE_INSTALL=OFF \
 		-DENABLE_THREADED_RESOLVER=OFF \
 		-DCURL_USE_MBEDTLS=ON \
@@ -155,9 +171,10 @@ $(LIBM): $(LIBM_OBJ)
 	$(AR) rcs $@ $^
 
 licenses:
-	@mkdir -p $(LICENSE_DIR)/zlib $(LICENSE_DIR)/libpng $(LICENSE_DIR)/mbedtls $(LICENSE_DIR)/curl
+	@mkdir -p $(LICENSE_DIR)/zlib $(LICENSE_DIR)/libpng $(LICENSE_DIR)/libjpeg $(LICENSE_DIR)/mbedtls $(LICENSE_DIR)/curl
 	install -C -m 644 $(ZLIB_DIR)/LICENSE $(LICENSE_DIR)/zlib/LICENSE
 	install -C -m 644 $(LIBPNG_DIR)/LICENSE.md $(LICENSE_DIR)/libpng/LICENSE.md
+	install -C -m 644 $(LIBJPEG_DIR)/LICENSE.md $(LICENSE_DIR)/libjpeg/LICENSE.md
 	install -C -m 644 $(MBEDTLS_DIR)/LICENSE $(LICENSE_DIR)/mbedtls/LICENSE
 	install -C -m 644 $(CURL_DIR)/COPYING $(LICENSE_DIR)/curl/COPYING
 

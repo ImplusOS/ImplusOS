@@ -55,3 +55,6 @@
 [submodule "Vendor/Library/mbedtls-3.6"]
 	path = Vendor/Library/mbedtls-3.6
 	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "Vendor/Library/libjpeg"]
+	path = Vendor/Library/libjpeg
+	url = https://github.com/winlibs/libjpeg

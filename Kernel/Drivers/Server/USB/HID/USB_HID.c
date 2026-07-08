@@ -23,12 +23,21 @@ static inline void irq_restore(uint64_t flags) { hal_cpu_restore_interrupts(flag
 #else
 #include "Core/sync/Spinlock.h"
 #include "interfaces/hal_cpu.h"
+#include "Debug/serial/Serial.h"
 #endif
 
 #include "kernel/keycodes.h"
 #include "kernel/input_utils.h"
 
 #define USB_HID_QUEUE_SIZE 64
+#define USB_HID_MOUSE_TRACE 0u
+#define USB_HID_DEBUG_REPORT_LIMIT 32u
+#define USB_HID_ENABLE_IDLE_PENDING_RECOVER 0u
+#define USB_HID_PENDING_RECOVER_NS (250ULL * 1000ULL * 1000ULL)
+#define USB_HID_PENDING_RECOVER_POLLS 64u
+#define USB_HID_PENDING_RECOVER_MAX_NS (1000ULL * 1000ULL * 1000ULL)
+#define USB_HID_PENDING_RECOVER_MAX_POLLS 256u
+#define USB_HID_RECOVER_LOG_LIMIT 8u
 
 static const uint16_t hid_to_ps2_set1[256] = {
     [0x04] = KEY_A, [0x05] = KEY_B, [0x06] = KEY_C, [0x07] = KEY_D,
@@ -72,6 +81,9 @@ typedef struct {
     void     *dma_buf;
     uint64_t  dma_phys;
     bool      pending;
+    uint32_t  pending_polls;
+    uint64_t  pending_started_ns;
+    bool      recover_armed;
     uint8_t   hc_type;
 } usb_hid_device_t;
 
@@ -89,21 +101,213 @@ static spinlock_t g_mouse_lock = {0};
 static uint8_t  g_last_kbd_report[8] = {0};
 static uint8_t  g_last_mouse_buttons = 0;
 
-static uint32_t g_mouse_poll_count = 0;
+static uint32_t g_mouse_report_debug_count = 0;
+static uint32_t g_mouse_submit_debug_count = 0;
+static uint32_t g_mouse_completion_debug_count = 0;
+static uint32_t g_mouse_report_total = 0;
+static uint32_t g_mouse_drop_total = 0;
+static uint32_t g_mouse_completion_total = 0;
+static uint32_t g_mouse_error_total = 0;
+static uint32_t g_mouse_recover_total = 0;
+static uint32_t g_mouse_pending_report_baseline = 0;
+static uint32_t g_mouse_recover_polls = USB_HID_PENDING_RECOVER_POLLS;
+static uint64_t g_mouse_recover_ns = USB_HID_PENDING_RECOVER_NS;
 
 static uint32_t g_kbd_poll_timer = 0;
 static uint32_t g_mouse_poll_timer = 0;
 
 extern usb_hc_type_t usb_get_device_hc_type(uint8_t addr);
 
+static uint64_t hid_monotonic_ns(void)
+{
+#ifdef IMPLUS_DRIVER_MODULE
+    if (g_api != NULL && g_api->timer.monotonic_ns != NULL) {
+        return g_api->timer.monotonic_ns();
+    }
+    if (g_api != NULL && g_api->timer_ticks != NULL &&
+        g_api->timer_hz != NULL) {
+        uint32_t hz = g_api->timer_hz();
+        if (hz != 0u) {
+            uint64_t ticks = g_api->timer_ticks();
+            return (ticks / hz) * 1000000000ULL +
+                   ((ticks % hz) * 1000000000ULL) / hz;
+        }
+    }
+    return 0u;
+#else
+    extern uint64_t timer_monotonic_ns(void);
+    return timer_monotonic_ns();
+#endif
+}
+
+static void hid_mark_pending(usb_hid_device_t *dev)
+{
+    if (dev == NULL) {
+        return;
+    }
+    dev->pending = true;
+    dev->pending_polls = 0u;
+    dev->pending_started_ns = hid_monotonic_ns();
+}
+
+static void hid_clear_pending(usb_hid_device_t *dev)
+{
+    if (dev == NULL) {
+        return;
+    }
+    dev->pending = false;
+    dev->pending_polls = 0u;
+    dev->pending_started_ns = 0u;
+}
+
+static bool hid_pending_timed_out(const usb_hid_device_t *dev,
+                                  uint64_t recover_ns,
+                                  uint32_t recover_polls)
+{
+    if (dev == NULL) {
+        return false;
+    }
+
+    uint64_t now = hid_monotonic_ns();
+    if (now != 0u && dev->pending_started_ns != 0u &&
+        now >= dev->pending_started_ns &&
+        now - dev->pending_started_ns >= recover_ns) {
+        return true;
+    }
+    return dev->pending_polls >= recover_polls;
+}
+
+static bool hid_should_log_recover(uint32_t recover_total)
+{
+    return recover_total <= USB_HID_RECOVER_LOG_LIMIT ||
+           (recover_total & 0x1Fu) == 0u;
+}
+
+static void hid_reset_mouse_recover_interval(void)
+{
+    g_mouse_recover_polls = USB_HID_PENDING_RECOVER_POLLS;
+    g_mouse_recover_ns = USB_HID_PENDING_RECOVER_NS;
+}
+
+static void hid_backoff_mouse_recover_interval(void)
+{
+    if (g_mouse_recover_polls < USB_HID_PENDING_RECOVER_MAX_POLLS) {
+        g_mouse_recover_polls *= 2u;
+        if (g_mouse_recover_polls > USB_HID_PENDING_RECOVER_MAX_POLLS) {
+            g_mouse_recover_polls = USB_HID_PENDING_RECOVER_MAX_POLLS;
+        }
+    }
+    if (g_mouse_recover_ns < USB_HID_PENDING_RECOVER_MAX_NS) {
+        g_mouse_recover_ns *= 2ULL;
+        if (g_mouse_recover_ns > USB_HID_PENDING_RECOVER_MAX_NS) {
+            g_mouse_recover_ns = USB_HID_PENDING_RECOVER_MAX_NS;
+        }
+    }
+}
+
+static void hid_mark_mouse_pending(void)
+{
+    hid_mark_pending(&g_usd_mouse);
+    g_mouse_pending_report_baseline = g_mouse_report_total;
+    g_usd_mouse.recover_armed = true;
+}
+
+static void hid_debug_string(const char *str)
+{
+    if (str == NULL) {
+        return;
+    }
+#ifdef IMPLUS_DRIVER_MODULE
+    if (g_api != NULL && g_api->dbg.write_string != NULL) {
+        g_api->dbg.write_string(str);
+    } else if (g_api != NULL && g_api->serial_write_string != NULL) {
+        g_api->serial_write_string(str);
+    }
+#else
+    serial_write_string(str);
+#endif
+}
+
+static void hid_debug_u32(uint32_t value)
+{
+#ifdef IMPLUS_DRIVER_MODULE
+    if (g_api != NULL && g_api->dbg.write_uint32 != NULL) {
+        g_api->dbg.write_uint32(value);
+    } else if (g_api != NULL && g_api->serial_write_uint32 != NULL) {
+        g_api->serial_write_uint32(value);
+    }
+#else
+    serial_write_uint32(value);
+#endif
+}
+
+static void hid_debug_i32(int32_t value)
+{
+    if (value < 0) {
+        hid_debug_string("-");
+        hid_debug_u32((uint32_t)(-value));
+    } else {
+        hid_debug_u32((uint32_t)value);
+    }
+}
+
+static const char *hid_hc_name(uint8_t hc_type)
+{
+    switch ((usb_hc_type_t)hc_type) {
+        case USB_HC_OHCI: return "ohci";
+        case USB_HC_UHCI: return "uhci";
+        case USB_HC_EHCI: return "ehci";
+        case USB_HC_XHCI: return "xhci";
+        case USB_HC_NONE:
+        default: return "none";
+    }
+}
+
+static void hid_log_attached(const char *kind, const usb_hid_device_t *dev)
+{
+    if (kind == NULL || dev == NULL) {
+        return;
+    }
+
+    hid_debug_string("[usb:hid] ");
+    hid_debug_string(kind);
+    hid_debug_string(" attached addr=");
+    hid_debug_u32(dev->dev_addr);
+    hid_debug_string(" iface=");
+    hid_debug_u32(dev->interface);
+    hid_debug_string(" ep=");
+    hid_debug_u32(dev->ep_in);
+    hid_debug_string(" mps=");
+    hid_debug_u32(dev->mps);
+    hid_debug_string(" hc=");
+    hid_debug_string(hid_hc_name(dev->hc_type));
+    hid_debug_string("\n");
+}
+
 void usb_hid_init(void)
 {
     g_usd_kbd.valid     = false;
     g_usd_kbd.dma_buf   = NULL;
     g_usd_kbd.pending   = false;
+    g_usd_kbd.pending_polls = 0u;
+    g_usd_kbd.pending_started_ns = 0u;
+    g_usd_kbd.recover_armed = false;
     g_usd_mouse.valid   = false;
     g_usd_mouse.dma_buf = NULL;
     g_usd_mouse.pending = false;
+    g_usd_mouse.pending_polls = 0u;
+    g_usd_mouse.pending_started_ns = 0u;
+    g_usd_mouse.recover_armed = false;
+    g_mouse_report_debug_count = 0u;
+    g_mouse_submit_debug_count = 0u;
+    g_mouse_completion_debug_count = 0u;
+    g_mouse_report_total = 0u;
+    g_mouse_drop_total = 0u;
+    g_mouse_completion_total = 0u;
+    g_mouse_error_total = 0u;
+    g_mouse_recover_total = 0u;
+    g_mouse_pending_report_baseline = 0u;
+    hid_reset_mouse_recover_interval();
     
     spinlock_init(&g_kbd_lock);
     spinlock_init(&g_mouse_lock);
@@ -145,6 +349,10 @@ void usb_hid_add_keyboard(uint8_t dev_addr, uint8_t interface,
 
     g_usd_kbd.valid = true;
     g_usd_kbd.pending = false;
+    g_usd_kbd.pending_polls = 0u;
+    g_usd_kbd.pending_started_ns = 0u;
+    g_usd_kbd.recover_armed = false;
+    hid_log_attached("keyboard", &g_usd_kbd);
 }
 
 void usb_hid_add_mouse(uint8_t dev_addr, uint8_t interface,
@@ -166,6 +374,12 @@ void usb_hid_add_mouse(uint8_t dev_addr, uint8_t interface,
 
     g_usd_mouse.valid = true;
     g_usd_mouse.pending = false;
+    g_usd_mouse.pending_polls = 0u;
+    g_usd_mouse.pending_started_ns = 0u;
+    g_usd_mouse.recover_armed = false;
+    g_mouse_pending_report_baseline = 0u;
+    hid_reset_mouse_recover_interval();
+    hid_log_attached("mouse", &g_usd_mouse);
 }
 
 void usb_hid_remove_keyboard(uint8_t dev_addr)
@@ -178,6 +392,9 @@ void usb_hid_remove_keyboard(uint8_t dev_addr)
     spinlock_lock(&g_kbd_lock);
     g_usd_kbd.valid = false;
     g_usd_kbd.pending = false;
+    g_usd_kbd.pending_polls = 0u;
+    g_usd_kbd.pending_started_ns = 0u;
+    g_usd_kbd.recover_armed = false;
     g_kbd_head = 0;
     g_kbd_tail = 0;
     g_kbd_count = 0;
@@ -198,6 +415,11 @@ void usb_hid_remove_mouse(uint8_t dev_addr)
     spinlock_lock(&g_mouse_lock);
     g_usd_mouse.valid = false;
     g_usd_mouse.pending = false;
+    g_usd_mouse.pending_polls = 0u;
+    g_usd_mouse.pending_started_ns = 0u;
+    g_usd_mouse.recover_armed = false;
+    g_mouse_pending_report_baseline = 0u;
+    hid_reset_mouse_recover_interval();
     g_mouse_head = 0;
     g_mouse_tail = 0;
     g_mouse_count = 0;
@@ -322,7 +544,25 @@ static void process_mouse_report(uint8_t *report)
 {
     int8_t  dx      = (int8_t)report[1];
     int8_t  dy      = (int8_t)report[2];
-    uint8_t buttons = report[0];
+    uint8_t raw_buttons = report[0];
+    uint8_t buttons = raw_buttons & 0x07u;
+    uint32_t queued_count = 0u;
+    bool dropped_oldest = false;
+
+    if ((raw_buttons & 0xC0u) != 0u) {
+        if (USB_HID_MOUSE_TRACE != 0u &&
+            g_mouse_report_debug_count < USB_HID_DEBUG_REPORT_LIMIT) {
+            ++g_mouse_report_debug_count;
+            hid_debug_string("[usb:hid] mouse overflow report flags=");
+            hid_debug_u32(raw_buttons);
+            hid_debug_string(" dx=");
+            hid_debug_i32((int32_t)dx);
+            hid_debug_string(" dy=");
+            hid_debug_i32((int32_t)dy);
+            hid_debug_string("\n");
+        }
+        return;
+    }
 
     if (dx == 0 && dy == 0 && buttons == g_last_mouse_buttons) {
         return;
@@ -332,19 +572,48 @@ static void process_mouse_report(uint8_t *report)
     spinlock_lock(&g_mouse_lock);
 
     g_last_mouse_buttons = buttons;
+    ++g_mouse_report_total;
 
-    if (g_mouse_count < USB_HID_QUEUE_SIZE) {
-        driver_mouse_event_t evt = {0};
-        evt.x = (uint16_t)(int16_t)dx;
-        evt.y = (uint16_t)(int16_t)dy;
-        evt.buttons = buttons;
-        g_mouse_queue[g_mouse_head] = evt;
-        g_mouse_head = (g_mouse_head + 1) % USB_HID_QUEUE_SIZE;
-        g_mouse_count++;
+    if (g_mouse_count >= USB_HID_QUEUE_SIZE) {
+        g_mouse_tail = (g_mouse_tail + 1u) % USB_HID_QUEUE_SIZE;
+        --g_mouse_count;
+        ++g_mouse_drop_total;
+        dropped_oldest = true;
     }
+
+    driver_mouse_event_t evt = {0};
+    evt.x = (uint16_t)(int16_t)dx;
+    evt.y = (uint16_t)(int16_t)dy;
+    evt.buttons = buttons;
+    g_mouse_queue[g_mouse_head] = evt;
+    g_mouse_head = (g_mouse_head + 1u) % USB_HID_QUEUE_SIZE;
+    ++g_mouse_count;
+    queued_count = g_mouse_count;
     
     spinlock_unlock(&g_mouse_lock);
     irq_restore(flags);
+
+    if (USB_HID_MOUSE_TRACE != 0u &&
+        (g_mouse_report_debug_count < USB_HID_DEBUG_REPORT_LIMIT ||
+         (g_mouse_report_total & 0x7Fu) == 0u ||
+         dropped_oldest)) {
+        if (g_mouse_report_debug_count < USB_HID_DEBUG_REPORT_LIMIT) {
+            ++g_mouse_report_debug_count;
+        }
+        hid_debug_string("[usb:hid] mouse report dx=");
+        hid_debug_i32((int32_t)dx);
+        hid_debug_string(" dy=");
+        hid_debug_i32((int32_t)dy);
+        hid_debug_string(" buttons=");
+        hid_debug_u32(buttons);
+        hid_debug_string(" queued=");
+        hid_debug_u32(queued_count);
+        hid_debug_string(" reports=");
+        hid_debug_u32(g_mouse_report_total);
+        hid_debug_string(" dropped=");
+        hid_debug_u32(g_mouse_drop_total);
+        hid_debug_string("\n");
+    }
 }
 
 static void poll_mouse(void)
@@ -356,7 +625,18 @@ static void poll_mouse(void)
             if (usb_submit_interrupt_in_async(g_usd_mouse.dev_addr, g_usd_mouse.ep_in,
                                               g_usd_mouse.mps,
                                               g_usd_mouse.dma_buf, g_usd_mouse.dma_phys, 4)) {
-                g_usd_mouse.pending = true;
+                hid_mark_mouse_pending();
+            } else {
+                hid_clear_pending(&g_usd_mouse);
+                if (USB_HID_MOUSE_TRACE != 0u &&
+                    g_mouse_submit_debug_count < USB_HID_DEBUG_REPORT_LIMIT) {
+                    ++g_mouse_submit_debug_count;
+                    hid_debug_string("[usb:hid] mouse async submit failed addr=");
+                    hid_debug_u32(g_usd_mouse.dev_addr);
+                    hid_debug_string(" ep=");
+                    hid_debug_u32(g_usd_mouse.ep_in);
+                    hid_debug_string("\n");
+                }
             }
             return;
         }
@@ -364,15 +644,99 @@ static void poll_mouse(void)
         int event_code = usb_check_interrupt_event(g_usd_mouse.dev_addr, g_usd_mouse.ep_in);
         
         if (event_code != 0) {
+            uint32_t reports_before = g_mouse_report_total;
+            if (event_code > 0) {
+                ++g_mouse_completion_total;
+            } else {
+                ++g_mouse_error_total;
+            }
+            g_usd_mouse.pending_polls = 0u;
+            g_usd_mouse.pending_started_ns = 0u;
+
+            if (USB_HID_MOUSE_TRACE != 0u &&
+                (g_mouse_completion_debug_count < USB_HID_DEBUG_REPORT_LIMIT ||
+                 (g_mouse_completion_total & 0x7Fu) == 0u ||
+                 event_code < 0)) {
+                bool summary =
+                    g_mouse_completion_debug_count >= USB_HID_DEBUG_REPORT_LIMIT;
+                if (!summary) {
+                    ++g_mouse_completion_debug_count;
+                }
+                hid_debug_string(summary ?
+                                 "[usb:hid] mouse completion summary code=" :
+                                 "[usb:hid] mouse completion code=");
+                hid_debug_i32(event_code);
+                hid_debug_string(" total=");
+                hid_debug_u32(g_mouse_completion_total);
+                hid_debug_string(" errors=");
+                hid_debug_u32(g_mouse_error_total);
+                hid_debug_string(" recover=");
+                hid_debug_u32(g_mouse_recover_total);
+                hid_debug_string("\n");
+            }
             if (event_code > 0) {
                 process_mouse_report((uint8_t *)g_usd_mouse.dma_buf);
+            }
+            bool report_progress = g_mouse_report_total != reports_before;
+            if (report_progress) {
+                hid_reset_mouse_recover_interval();
             }
             if (usb_submit_interrupt_in_async(g_usd_mouse.dev_addr, g_usd_mouse.ep_in,
                                               g_usd_mouse.mps,
                                               g_usd_mouse.dma_buf, g_usd_mouse.dma_phys, 4)) {
-                g_usd_mouse.pending = true;
+                hid_mark_mouse_pending();
             } else {
-                g_usd_mouse.pending = false;
+                hid_clear_pending(&g_usd_mouse);
+                if (USB_HID_MOUSE_TRACE != 0u &&
+                    g_mouse_submit_debug_count < USB_HID_DEBUG_REPORT_LIMIT) {
+                    ++g_mouse_submit_debug_count;
+                    hid_debug_string("[usb:hid] mouse resubmit failed addr=");
+                    hid_debug_u32(g_usd_mouse.dev_addr);
+                    hid_debug_string(" ep=");
+                    hid_debug_u32(g_usd_mouse.ep_in);
+                    hid_debug_string("\n");
+                }
+            }
+        } else {
+            ++g_usd_mouse.pending_polls;
+            if (USB_HID_ENABLE_IDLE_PENDING_RECOVER != 0u &&
+                g_usd_mouse.recover_armed &&
+                hid_pending_timed_out(&g_usd_mouse,
+                                      g_mouse_recover_ns,
+                                      g_mouse_recover_polls)) {
+                ++g_mouse_recover_total;
+                if (hid_should_log_recover(g_mouse_recover_total)) {
+                    hid_debug_string("[usb:hid] mouse pending recover addr=");
+                    hid_debug_u32(g_usd_mouse.dev_addr);
+                    hid_debug_string(" ep=");
+                    hid_debug_u32(g_usd_mouse.ep_in);
+                    hid_debug_string(" polls=");
+                    hid_debug_u32(g_usd_mouse.pending_polls);
+                    hid_debug_string(" completions=");
+                    hid_debug_u32(g_mouse_completion_total);
+                    hid_debug_string(" reports=");
+                    hid_debug_u32(g_mouse_report_total);
+                    hid_debug_string(" recover=");
+                    hid_debug_u32(g_mouse_recover_total);
+                    hid_debug_string("\n");
+                }
+                (void)usb_recover_interrupt_in(g_usd_mouse.dev_addr,
+                                                g_usd_mouse.ep_in);
+                if (g_mouse_report_total == g_mouse_pending_report_baseline) {
+                    hid_backoff_mouse_recover_interval();
+                } else {
+                    hid_reset_mouse_recover_interval();
+                }
+                hid_clear_pending(&g_usd_mouse);
+                g_usd_mouse.recover_armed = false;
+                if (usb_submit_interrupt_in_async(g_usd_mouse.dev_addr,
+                                                  g_usd_mouse.ep_in,
+                                                  g_usd_mouse.mps,
+                                                  g_usd_mouse.dma_buf,
+                                                  g_usd_mouse.dma_phys,
+                                                  4)) {
+                    hid_mark_mouse_pending();
+                }
             }
         }
     } else {

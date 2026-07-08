@@ -42,6 +42,11 @@ void display_manager_present(void)
     display_present();
 }
 
+void display_manager_present_rects(const display_rect_t *rects, uint32_t count)
+{
+    display_present_rects(rects, count);
+}
+
 void *display_manager_get_framebuffer(void)
 {
     return display_get_framebuffer();

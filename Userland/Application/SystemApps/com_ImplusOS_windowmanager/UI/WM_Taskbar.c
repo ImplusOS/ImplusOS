@@ -15,6 +15,13 @@ static const char *day_names[] = {
     "Sun","Mon","Tue","Wed","Thu","Fri","Sat"
 };
 
+#define TB_LAUNCHER_W   48u
+#define TB_TRAY_W       80u
+#define TB_NOTIF_W      36u
+#define TB_CLOCK_W      128u
+#define TB_RIGHT_TOTAL  (TB_TRAY_W + TB_NOTIF_W + TB_CLOCK_W + 8u)
+#define TB_SEP_W        1u
+
 /* Simple day-of-week Tomohiko Sakamoto algorithm */
 static uint32_t day_of_week(uint32_t y, uint32_t m, uint32_t d)
 {
@@ -66,6 +73,29 @@ wm_rect_t wm_taskbar_rect(const wm_state_t *state)
     };
 }
 
+wm_rect_t wm_taskbar_clock_rect(const wm_state_t *state)
+{
+    wm_rect_t dock = wm_taskbar_rect(state);
+    if (dock.w == 0u || dock.h == 0u || dock.w <= TB_RIGHT_TOTAL) {
+        return (wm_rect_t){0, 0, 0, 0};
+    }
+
+    int32_t notif_x = (int32_t)dock.w - (int32_t)TB_RIGHT_TOTAL - 4 + 8 +
+                      (int32_t)TB_TRAY_W;
+    int32_t clock_x = notif_x + (int32_t)TB_NOTIF_W;
+    int32_t x = clock_x - 2;
+    uint32_t w = TB_CLOCK_W + 4u;
+    if (x < dock.x) {
+        uint32_t trim = (uint32_t)(dock.x - x);
+        x = dock.x;
+        w = w > trim ? w - trim : 0u;
+    }
+    if ((int64_t)x + (int64_t)w > (int64_t)dock.x + (int64_t)dock.w) {
+        w = (uint32_t)((int64_t)dock.x + (int64_t)dock.w - (int64_t)x);
+    }
+    return (wm_rect_t){x, dock.y, w, dock.h};
+}
+
 static bool cursor_in(const wm_state_t *state, wm_rect_t r)
 {
     int32_t cx = (int32_t)state->scene.cursor_x;
@@ -89,13 +119,6 @@ static uint32_t visible_window_count(const wm_state_t *state)
     }
     return count;
 }
-
-#define TB_LAUNCHER_W   48u
-#define TB_TRAY_W       80u
-#define TB_NOTIF_W      36u
-#define TB_CLOCK_W      128u
-#define TB_RIGHT_TOTAL  (TB_TRAY_W + TB_NOTIF_W + TB_CLOCK_W + 8u)
-#define TB_SEP_W        1u
 
 static void task_layout(const wm_state_t *state, wm_rect_t dock,
                         uint32_t *button_width, uint32_t *slot_count,

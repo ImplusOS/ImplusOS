@@ -8,6 +8,13 @@
 static const driver_input_t *g_drivers[INPUT_MAX_DRIVERS];
 static uint32_t g_driver_count = 0;
 static volatile uint32_t g_poll_pending = 0;
+static volatile uint32_t g_poll_active = 0;
+static uint32_t g_init_generation = 0;
+
+static void input_log_u32(uint32_t value)
+{
+    serial_write_uint32(value);
+}
 
 static void input_manager_add_driver(const driver_input_t *drv)
 {
@@ -29,10 +36,16 @@ static void input_manager_add_driver(const driver_input_t *drv)
 void input_manager_init(void)
 {
     g_driver_count = 0;
+    __atomic_store_n(&g_poll_active, 0u, __ATOMIC_RELEASE);
+    ++g_init_generation;
 
     for (uint32_t i = 0; i < INPUT_MAX_DRIVERS; ++i) {
         g_drivers[i] = 0;
     }
+
+    serial_write_string("[input] init generation=");
+    input_log_u32(g_init_generation);
+    serial_write_string("\n");
 
     for (uint32_t i = 0;; ++i) {
         const device_t *dev = device_registry_find_by_index(DEVICE_TYPE_INPUT, i);
@@ -41,6 +54,9 @@ void input_manager_init(void)
             break;
         }
 
+        serial_write_string("[input] add ps2/input driver index=");
+        input_log_u32(i);
+        serial_write_string("\n");
         input_manager_add_driver((const driver_input_t *)dev->ops);
     }
 
@@ -54,18 +70,32 @@ void input_manager_init(void)
 
         usb = (const usb_master_vtable_t *)dev->ops;
 
+        serial_write_string("[input] add usb input driver index=");
+        input_log_u32(i);
+        serial_write_string("\n");
         input_manager_add_driver(&usb->input);
     }
+
+    serial_write_string("[input] init complete drivers=");
+    input_log_u32(g_driver_count);
+    serial_write_string("\n");
 }
 
 void input_manager_poll(void)
 {
     __atomic_store_n(&g_poll_pending, 0u, __ATOMIC_RELEASE);
+    if (__atomic_exchange_n(&g_poll_active, 1u, __ATOMIC_ACQUIRE) != 0u) {
+        __atomic_store_n(&g_poll_pending, 1u, __ATOMIC_RELEASE);
+        return;
+    }
+
     for (uint32_t i = 0; i < g_driver_count; ++i) {
         if (g_drivers[i] != 0 && g_drivers[i]->poll != 0) {
             g_drivers[i]->poll();
         }
     }
+
+    __atomic_store_n(&g_poll_active, 0u, __ATOMIC_RELEASE);
 }
 
 int32_t input_manager_read_keyboard(driver_keyboard_event_t *out_event)

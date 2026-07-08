@@ -217,6 +217,8 @@ typedef struct {
     uint32_t *background;
     uint32_t framebuffer_width;
     uint32_t framebuffer_height;
+    uint32_t framebuffer_stride;
+    uint32_t *mapped_framebuffer;
     uint32_t buffer_bytes;
     wm_region_t damage;
     uint32_t previous_cursor_x;
@@ -270,6 +272,10 @@ typedef struct {
     uint32_t wallpaper_width;
     uint32_t wallpaper_height;
     wm_system_icons_t system_icons;
+    uint32_t system_icon_load_index;
+    uint32_t app_icon_load_index;
+    bool metadata_loaded;
+    bool icons_loaded;
     bool wallpaper_load_attempted;
 } wm_assets_t;
 
@@ -307,6 +313,10 @@ typedef struct {
     uint8_t previous_buttons;
     uint64_t last_title_click_ms;
     uint32_t last_title_click_window;
+    uint32_t last_hover_window_id;
+    wm_hit_zone_t last_hover_zone;
+    uint64_t last_pointer_frame_ms;
+    uint64_t last_kernel_pointer_sequence;
 } wm_input_state_t;
 
 typedef struct {

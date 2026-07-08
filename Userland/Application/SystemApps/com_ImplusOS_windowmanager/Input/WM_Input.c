@@ -8,8 +8,25 @@
 #include "../UI/WM_Notification.h"
 #include "../../../../../Userland/Syscalls.h"
 #include "../../../../../Userland/API/Process.h"
+#include "../../../../../Userland/API/Serial.h"
 
 #include <string.h>
+
+#define WM_INPUT_MOUSE_TRACE 0u
+#define WM_INPUT_MOUSE_DEBUG_LIMIT 8u
+
+typedef struct {
+    wm_msg_header_t header;
+    input_mouse_event_t event;
+    uint32_t absolute_x;
+    uint32_t absolute_y;
+    uint64_t sequence;
+} wm_mouse_event_message_t;
+
+static uint32_t g_wm_input_mouse_debug_count = 0u;
+static uint64_t g_wm_input_mouse_total = 0u;
+static uint32_t g_wm_pointer_poll_fail_debug_count = 0u;
+static uint64_t g_wm_pointer_poll_fail_total = 0u;
 
 static wm_rect_t screen_bounds(const wm_state_t *state)
 {
@@ -262,6 +279,16 @@ static void update_hover(wm_state_t *state)
     wm_hit_zone_t zone = WM_HIT_NONE;
     wm_window_t *hit = wm_scene_hit_test(state,
         (int32_t)state->scene.cursor_x, (int32_t)state->scene.cursor_y, &zone);
+    uint32_t hit_id = hit ? hit->id : 0u;
+    bool launcher_active = state->launcher_open;
+    if (state->input.last_hover_window_id == hit_id &&
+        state->input.last_hover_zone == zone &&
+        !launcher_active) {
+        if (!state->input.resizing) update_resize_cursor(state, zone);
+        return;
+    }
+    state->input.last_hover_window_id = hit_id;
+    state->input.last_hover_zone = zone;
     for (uint32_t id = 1u; id <= WM_MAX_WINDOWS; ++id) {
         wm_window_t *window = state->scene.id_table[id];
         if (!window) continue;
@@ -482,25 +509,73 @@ static void handle_window_click(wm_state_t *state, uint64_t now_ms)
     begin_pointer_action(state, window, zone);
 }
 
-void wm_input_handle_mouse(wm_state_t *state, const ipc_message_t *message)
+static void handle_mouse_event(wm_state_t *state,
+                               const input_mouse_event_t *event,
+                               bool absolute_position,
+                               uint32_t absolute_x,
+                               uint32_t absolute_y,
+                               uint64_t sequence)
 {
-    if (!state || !message ||
-        message->size < sizeof(wm_msg_header_t) + sizeof(input_mouse_event_t)) return;
-    const input_mouse_event_t *event =
-        (const input_mouse_event_t *)(message->data + sizeof(wm_msg_header_t));
-    int16_t delta_x = (int16_t)event->x;
-    int16_t delta_y = (int16_t)event->y;
-    int32_t x = (int32_t)state->scene.cursor_x + delta_x;
-    int32_t y = (int32_t)state->scene.cursor_y + delta_y;
+    if (!state || !event) return;
+    if (sequence != 0u &&
+        sequence <= state->input.last_kernel_pointer_sequence) {
+        return;
+    }
+
+    int32_t x;
+    int32_t y;
+    if (absolute_position) {
+        x = (int32_t)absolute_x;
+        y = (int32_t)absolute_y;
+    } else {
+        int16_t delta_x = (int16_t)event->x;
+        int16_t delta_y = (int16_t)event->y;
+        x = (int32_t)state->scene.cursor_x + delta_x;
+        y = (int32_t)state->scene.cursor_y + delta_y;
+    }
     if (x < 0) x = 0;
     if (y < 0) y = 0;
     if (x >= (int32_t)state->compositor.framebuffer_width)
         x = (int32_t)state->compositor.framebuffer_width - 1;
     if (y >= (int32_t)state->compositor.framebuffer_height)
         y = (int32_t)state->compositor.framebuffer_height - 1;
+    uint32_t old_x = state->scene.cursor_x;
+    uint32_t old_y = state->scene.cursor_y;
+    bool old_visible = state->scene.cursor_visible;
     state->scene.cursor_x = (uint32_t)x;
     state->scene.cursor_y = (uint32_t)y;
     state->scene.cursor_visible = true;
+    if (!old_visible || old_x != state->scene.cursor_x ||
+        old_y != state->scene.cursor_y) {
+        state->compositor.next_frame_ms = 0u;
+    }
+    if (sequence != 0u) {
+        state->input.last_kernel_pointer_sequence = sequence;
+    }
+    ++g_wm_input_mouse_total;
+
+    if (WM_INPUT_MOUSE_TRACE != 0u &&
+        (g_wm_input_mouse_debug_count < WM_INPUT_MOUSE_DEBUG_LIMIT ||
+         (g_wm_input_mouse_total & 0x7FULL) == 0u)) {
+        bool summary =
+            g_wm_input_mouse_debug_count >= WM_INPUT_MOUSE_DEBUG_LIMIT;
+        if (!summary) {
+            ++g_wm_input_mouse_debug_count;
+        }
+        serial_write_string(summary ?
+                            "[wm:input] mouse summary x=" :
+                            "[wm:input] mouse x=");
+        serial_write_uint32((uint32_t)x);
+        serial_write_string(" y=");
+        serial_write_uint32((uint32_t)y);
+        serial_write_string(" buttons=");
+        serial_write_uint32(event->buttons);
+        serial_write_string(" seq=");
+        serial_write_uint32((uint32_t)sequence);
+        serial_write_string(" total=");
+        serial_write_uint32((uint32_t)g_wm_input_mouse_total);
+        serial_write_string("\n");
+    }
 
     uint8_t buttons  = event->buttons;
     uint8_t previous = state->input.previous_buttons;
@@ -508,6 +583,28 @@ void wm_input_handle_mouse(wm_state_t *state, const ipc_message_t *message)
     bool left_held   = (buttons & 1u) != 0u;
     bool left_up     = (buttons & 1u) == 0u && (previous & 1u) != 0u;
     state->input.previous_buttons = buttons;
+
+    if (state->input.dragging && left_held) {
+        extern uint64_t get_uptime_ms(void);
+        uint64_t now_ms = get_uptime_ms();
+        if (now_ms - state->input.last_pointer_frame_ms >= 16u) {
+            state->input.last_pointer_frame_ms = now_ms;
+            update_drag(state);
+        }
+        route_mouse(state, event);
+        return;
+    }
+    if (state->input.resizing && left_held) {
+        extern uint64_t get_uptime_ms(void);
+        uint64_t now_ms = get_uptime_ms();
+        if (now_ms - state->input.last_pointer_frame_ms >= 16u) {
+            state->input.last_pointer_frame_ms = now_ms;
+            update_resize(state);
+        }
+        route_mouse(state, event);
+        return;
+    }
+
     update_taskbar_hover(state);
     update_hover(state);
 
@@ -523,16 +620,6 @@ void wm_input_handle_mouse(wm_state_t *state, const ipc_message_t *message)
             damage_ui(state); return;
         }
     }
-    if (state->input.dragging && left_held) {
-        update_drag(state);
-        route_mouse(state, event);
-        return;
-    }
-    if (state->input.resizing && left_held) {
-        update_resize(state);
-        route_mouse(state, event);
-        return;
-    }
     if (left_up) {
         wm_window_t *window = wm_scene_find(&state->scene, state->input.active_window_id);
         if (state->input.dragging && window) snap_window(state, window);
@@ -544,6 +631,7 @@ void wm_input_handle_mouse(wm_state_t *state, const ipc_message_t *message)
     bool consumed = false;
     if (left_down) {
         extern uint64_t get_uptime_ms(void);
+        state->input.last_pointer_frame_ms = get_uptime_ms();
         if (handle_taskbar_click(state)) {
             consumed = true;
         } else if (handle_notification_center_click(state)) {
@@ -556,4 +644,62 @@ void wm_input_handle_mouse(wm_state_t *state, const ipc_message_t *message)
     }
     if (!consumed && !state->launcher_open && !state->notification_center_open)
         route_mouse(state, event);
+}
+
+void wm_input_handle_mouse(wm_state_t *state, const ipc_message_t *message)
+{
+    if (!state || !message ||
+        message->size < sizeof(wm_msg_header_t) + sizeof(input_mouse_event_t)) return;
+    const input_mouse_event_t *event =
+        (const input_mouse_event_t *)(message->data + sizeof(wm_msg_header_t));
+
+    if (message->size >= sizeof(wm_mouse_event_message_t)) {
+        const wm_mouse_event_message_t *ext =
+            (const wm_mouse_event_message_t *)message->data;
+        handle_mouse_event(state, &ext->event, true,
+                           ext->absolute_x, ext->absolute_y,
+                           ext->sequence);
+        return;
+    }
+
+    handle_mouse_event(state, event, false, 0u, 0u, 0u);
+}
+
+bool wm_input_poll_kernel_pointer(wm_state_t *state)
+{
+    if (!state) return false;
+    window_pointer_state_t pointer;
+    if (window_get_pointer_state(&pointer) != 0) {
+        ++g_wm_pointer_poll_fail_total;
+        if (WM_INPUT_MOUSE_TRACE != 0u &&
+            (g_wm_pointer_poll_fail_debug_count < WM_INPUT_MOUSE_DEBUG_LIMIT ||
+             (g_wm_pointer_poll_fail_total & 0x7FULL) == 0u)) {
+            bool summary =
+                g_wm_pointer_poll_fail_debug_count >= WM_INPUT_MOUSE_DEBUG_LIMIT;
+            if (!summary) {
+                ++g_wm_pointer_poll_fail_debug_count;
+            }
+            serial_write_string(summary ?
+                                "[wm:input] pointer poll fail summary total=" :
+                                "[wm:input] pointer poll fail total=");
+            serial_write_uint32((uint32_t)g_wm_pointer_poll_fail_total);
+            serial_write_string("\n");
+        }
+        return false;
+    }
+
+    if (pointer.sequence == 0u ||
+        pointer.sequence == state->input.last_kernel_pointer_sequence) {
+        return false;
+    }
+
+    input_mouse_event_t event;
+    memset(&event, 0, sizeof(event));
+    event.x = (uint16_t)pointer.x;
+    event.y = (uint16_t)pointer.y;
+    event.buttons = pointer.buttons;
+    event.wheel = pointer.wheel;
+    handle_mouse_event(state, &event, true, pointer.x, pointer.y,
+                       pointer.sequence);
+    return true;
 }

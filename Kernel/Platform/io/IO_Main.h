@@ -73,6 +73,7 @@ bool disk_write(uint64_t lba, const uint8_t *buffer, uint32_t sectors);
 bool disk_io_is_working(void);
 io_protocol_type_t disk_io_get_protocol(void);
 uint64_t disk_get_partition_lba(void);
+void disk_io_debug_dump(const char *reason);
 uint32_t disk_get_count(void);
 bool disk_get_info(uint32_t index, io_disk_info_t *out_info);
 bool disk_raw_read(uint32_t index, uint64_t lba, uint8_t *buffer, uint32_t sectors);

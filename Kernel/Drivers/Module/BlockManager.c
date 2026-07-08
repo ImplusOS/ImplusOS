@@ -316,18 +316,46 @@ static bool block_manager_sector_io(uint32_t index, uint64_t sector_lba,
                                           sector_count);
     }
 
-    uint8_t *bounce = (uint8_t *)dma_alloc(info.logical_block_size, NULL);
-    if (bounce == NULL) {
-        return false;
-    }
+    uint8_t *bounce = NULL;
     bool ok = true;
     for (uint32_t done = 0u; done < sector_count;) {
         uint64_t sector = sector_lba + done;
         uint64_t block = sector / factor;
         uint32_t offset_sectors = (uint32_t)(sector % factor);
+        uint32_t remaining = sector_count - done;
+
+        if (offset_sectors == 0u && remaining >= factor) {
+            uint32_t blocks = remaining / factor;
+            if (read_buffer != NULL) {
+                ok = block_manager_read_blocks(
+                    index,
+                    block,
+                    read_buffer + (size_t)done * 512u,
+                    blocks);
+            } else {
+                ok = block_manager_write_blocks(
+                    index,
+                    block,
+                    write_buffer + (size_t)done * 512u,
+                    blocks);
+            }
+            if (!ok) {
+                break;
+            }
+            done += blocks * factor;
+            continue;
+        }
+
+        if (bounce == NULL) {
+            bounce = (uint8_t *)dma_alloc(info.logical_block_size, NULL);
+            if (bounce == NULL) {
+                return false;
+            }
+        }
+
         uint32_t chunk = factor - offset_sectors;
-        if (chunk > sector_count - done) {
-            chunk = sector_count - done;
+        if (chunk > remaining) {
+            chunk = remaining;
         }
         if (!block_manager_read_blocks(index, block, bounce, 1u)) {
             ok = false;
@@ -348,7 +376,9 @@ static bool block_manager_sector_io(uint32_t index, uint64_t sector_lba,
         }
         done += chunk;
     }
-    dma_free(bounce, info.logical_block_size);
+    if (bounce != NULL) {
+        dma_free(bounce, info.logical_block_size);
+    }
     return ok;
 }
 

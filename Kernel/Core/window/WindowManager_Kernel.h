@@ -36,9 +36,20 @@
 #define WM_GET_DISPLAY_INFO    51
 #define WM_GET_FOCUS           52
 
+typedef struct {
+    uint32_t x;
+    uint32_t y;
+    uint8_t buttons;
+    int8_t wheel;
+    uint8_t reserved[2];
+    uint64_t sequence;
+} wm_kernel_pointer_state_t;
+
 void wm_kernel_init(void);
 void wm_kernel_register_service(int32_t pid);
 void wm_kernel_on_timer(void);
+void wm_kernel_drain_input(void);
 int32_t wm_kernel_get_wm_service_pid(void);
 void wm_kernel_get_display_info(uint32_t *width, uint32_t *height);
+void wm_kernel_get_pointer_state(wm_kernel_pointer_state_t *state_out);
 bool wm_kernel_is_running(void);

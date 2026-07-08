@@ -492,6 +492,17 @@ int32_t window_get_wm_pid(void)
     return pid;
 }
 
+int32_t window_get_pointer_state(window_pointer_state_t *state_out)
+{
+    if (state_out == NULL) {
+        os_set_errno(EINVAL);
+        return -1;
+    }
+    return os_errno_from_i32_status((int32_t)syscall1(
+        SYSCALL_WINDOW_GET_POINTER_STATE,
+        (uint64_t)(uintptr_t)state_out));
+}
+
 window_id_t window_create(uint32_t width, uint32_t height, const char *title)
 {
     return window_create_ex(100, 100, width, height, 0xFF000000, title);
@@ -856,6 +867,25 @@ __attribute__((optimize("O2"))) void draw_present(void)
 {
     if (g_current_window_id == 0) {
         (void)syscall0(SYSCALL_DISPLAY_PRESENT);
+        return;
+    }
+
+    wm_msg_header_t hdr;
+    hdr.type = WM_UPDATE_COMPLETE;
+    hdr.window_id = g_current_window_id;
+    ipc_send_message(window_get_wm_pid(), &hdr, sizeof(hdr));
+}
+
+__attribute__((optimize("O2"))) void draw_present_rects(const display_rect_t *rects, uint32_t count)
+{
+    if (g_current_window_id == 0) {
+        if (rects != NULL && count != 0u) {
+            (void)syscall2(SYSCALL_DISPLAY_PRESENT_RECTS,
+                           (uint64_t)(uintptr_t)rects,
+                           (uint64_t)count);
+        } else {
+            (void)syscall0(SYSCALL_DISPLAY_PRESENT);
+        }
         return;
     }
 
@@ -1409,6 +1439,9 @@ int32_t tcp_get_state(int32_t conn_id)
 #define SYSCALL_GET_UPTIME_MS_NUM  119ULL
 #define SYSCALL_GET_PROC_COUNT_NUM 121ULL
 #define SYSCALL_GET_PROC_INFO_NUM  122ULL
+#define SYSCALL_GET_PROC_PERF_INFO_NUM 125ULL
+#define SYSCALL_GET_BOOT_PROFILE_COUNT_NUM 126ULL
+#define SYSCALL_GET_BOOT_PROFILE_ENTRY_NUM 127ULL
 #define SYSCALL_GET_RTC_TIME       140ULL
 #define SYSCALL_GET_TOTAL_MEMORY_NUM 253ULL
 #define SYSCALL_GET_USED_MEMORY_NUM  254ULL
@@ -1450,13 +1483,13 @@ int32_t process_getppid(void)
 void process_exit(int32_t status)
 {
     (void)syscall1(SYSCALL_PROCESS_EXIT_STATUS, (uint64_t)(int64_t)status);
-    while (1) { process_yield(); }
+    while (1) { sleep_ms(1000u); }
 }
 
 void system_shutdown(void)
 {
     (void)syscall0(SYSCALL_SYSTEM_SHUTDOWN);
-    while (1) { process_yield(); }
+    while (1) { sleep_ms(1000u); }
 }
 
 void system_shutdown_broadcast(void)
@@ -1467,7 +1500,7 @@ void system_shutdown_broadcast(void)
 void system_reboot(void)
 {
     (void)syscall0(SYSCALL_SYSTEM_REBOOT);
-    while (1) { process_yield(); }
+    while (1) { sleep_ms(1000u); }
 }
 
 void sleep_ms(uint64_t ms)
@@ -1499,6 +1532,27 @@ int32_t get_process_info(int32_t pid, process_info_t *info_out)
         (int32_t)syscall2(SYSCALL_GET_PROC_INFO_NUM,
                           (uint64_t)(int64_t)pid,
                           (uint64_t)(uintptr_t)info_out));
+}
+
+int32_t get_process_perf_info(int32_t pid, process_perf_info_t *info_out)
+{
+    return os_errno_from_i32_status(
+        (int32_t)syscall2(SYSCALL_GET_PROC_PERF_INFO_NUM,
+                          (uint64_t)(int64_t)pid,
+                          (uint64_t)(uintptr_t)info_out));
+}
+
+int32_t get_boot_profile_count(void)
+{
+    return (int32_t)syscall0(SYSCALL_GET_BOOT_PROFILE_COUNT_NUM);
+}
+
+int32_t get_boot_profile_entry(int32_t index, boot_profile_entry_t *entry_out)
+{
+    return os_errno_from_i32_status(
+        (int32_t)syscall2(SYSCALL_GET_BOOT_PROFILE_ENTRY_NUM,
+                          (uint64_t)(int64_t)index,
+                          (uint64_t)(uintptr_t)entry_out));
 }
 
 #define SYSCALL_FILE_PIPE_NUM  115ULL

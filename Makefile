@@ -5,7 +5,7 @@ SHELL := /bin/bash
 export MTOOLSRC := /dev/null
 
 .PHONY: all kernel app_build driver_build driver_stage recovery_build install_payload \
-        image image_livecd run_uefi_usb run_uefi_cdrom qemu_disks clean \
+        image image_livecd qemu_input_status run_uefi_usb run_uefi_cdrom qemu_disks clean \
         edk2_bootloader edk2_bootmanager vendor_libs
 
 ARCH ?= x86_64
@@ -124,6 +124,7 @@ USER_APP_DIRS := \
 	Userland/Application/UserApps/com_ImplusOS_vm \
 	Userland/Application/UserApps/com_ImplusOS_zlibTest \
 	Userland/Application/UserApps/com_ImplusOS_pngTest \
+	Userland/Application/UserApps/com_ImplusOS_jpegTest \
 	Userland/Application/UserApps/com_ImplusOS_sdlTest \
 	Userland/Application/UserApps/doom \
 	Userland/Application/UserApps/NetSurf \
@@ -197,6 +198,8 @@ USERLAND_CFLAGS := \
 	-IUserland/POSIX/include \
 	-ILibrary \
 	-IVendor \
+	-IVendor/Library/libjpeg/src \
+	-I$(BUILD_DIR)/Vendor/Library/libjpeg/include \
 	-fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
 	$(USERLAND_ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
@@ -469,55 +472,55 @@ QEMU_EXTRA ?=
 QEMU_DISK_SIZE ?= 128M
 QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
 QEMU_SYSTEM_X86_64 ?= qemu-system-x86_64
+QEMU_INPUT_DEVICES := \
+	-device qemu-xhci,id=xhci \
+	-device usb-kbd,bus=xhci.0 \
+	-device usb-mouse,bus=xhci.0
+QEMU_NET_DEVICES ?= \
+	-netdev user,id=net0 \
+	-device virtio-net-pci,netdev=net0
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE),accel=tcg \
-	-cpu Haswell-noTSX,vendor=GenuineIntel,kvm=on,+sse4.2,+aes,+xsave,+avx,+xsaveopt,+avx2,+fma,+bmi1,+bmi2 \
 	-smp 4,sockets=1,cores=4,threads=1 \
 	-m 8192 \
-	-device isa-applesmc,osk="$OSK" \
-	-smbios type=2 \
 	-device ich9-ahci,id=sata \
-	-device qemu-xhci,id=xhci,addr=14.0,p2=4,p3=4 \
-	-device usb-kbd,bus=xhci.0,port=1 \
-	-device usb-mouse,bus=xhci.0 \
-	-device ich9-usb-ehci1,id=ehci,addr=1d.7,multifunction=on \
-	-device ich9-usb-uhci1,id=uhci1,addr=1d.0,multifunction=on,masterbus=ehci.0,firstport=0 \
-	-device ich9-usb-uhci2,id=uhci2,addr=1d.1,multifunction=on,masterbus=ehci.0,firstport=2 \
-	-device ich9-usb-uhci3,id=uhci3,addr=1d.2,multifunction=on,masterbus=ehci.0,firstport=4 \
-	-netdev user,id=net0 \
-	-device e1000-82545em,netdev=net0 \
-	-device ich9-intel-hda \
-	-device hda-duplex \
-	-display cocoa \
+	$(QEMU_INPUT_DEVICES) \
+	$(QEMU_NET_DEVICES) \
+	-display $(QEMU_DISPLAY) \
 	-serial stdio \
 	$(QEMU_EXTRA)
 	
 QEMU_USB := \
-	-drive if=none,id=usbstick,file=$(LIVECD_IMAGE) \
+	-drive if=none,id=usbstick,format=raw,file=$(LIVECD_IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick,bootindex=0
 
 QEMU_DISK := \
-	-drive file=$(LIVECD_IMAGE),media=cdrom,format=raw,index=0,readonly=on \
 	-drive if=none,id=cdrom0,file=$(LIVECD_IMAGE),media=cdrom,format=raw \
-	-device ide-cd,drive=cdrom0,bus=ahci.2,bootindex=0
+	-device ide-cd,drive=cdrom0,bus=sata.0,bootindex=0
 
 qemu_disks:
 	@[ -f disk1.qcow2 ] || qemu-img create -f qcow2 disk1.qcow2 $(QEMU_DISK_SIZE)
 	@[ -f disk2.qcow2 ] || qemu-img create -f qcow2 disk2.qcow2 $(QEMU_DISK_SIZE)
 
-run_uefi_usb:
+qemu_input_status:
+	@set +x; \
+	echo "QEMU boot image: $(LIVECD_IMAGE)"; \
+	echo "QEMU input devices: $(QEMU_INPUT_DEVICES)"; \
+	echo "QEMU network devices: $(QEMU_NET_DEVICES)"
+
+run_uefi_usb: qemu_input_status
 	@if [ "$(ARCH)" = "arm64" ]; then \
-		qemu-system-aarch64 $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_USB); \
+		$(QEMU_SYSTEM_AARCH64) $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_USB); \
 	else \
-		qemu-system-x86_64 $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_USB); \
+		$(QEMU_SYSTEM_X86_64) $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_USB); \
 	fi
 
-run_uefi_cdrom:
+run_uefi_cdrom: qemu_input_status
 	@if [ "$(ARCH)" = "arm64" ]; then \
-		qemu-system-aarch64 $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_DISK); \
+		$(QEMU_SYSTEM_AARCH64) $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_DISK); \
 	else \
-		qemu-system-x86_64 $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_DISK); \
+		$(QEMU_SYSTEM_X86_64) $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_DISK); \
 	fi
 
 run_bios_cdrom:

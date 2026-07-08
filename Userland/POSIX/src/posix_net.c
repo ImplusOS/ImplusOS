@@ -155,6 +155,18 @@ int posix_socket(int domain, int type, int protocol)
         errno = EAFNOSUPPORT;
         return -1;
     }
+
+    int status_flags = 0;
+    int fd_flags = 0;
+    if ((type & SOCK_NONBLOCK) != 0) {
+        status_flags |= POSIX_SFL_NONBLOCK;
+        type &= ~SOCK_NONBLOCK;
+    }
+    if ((type & SOCK_CLOEXEC) != 0) {
+        fd_flags |= POSIX_FDF_CLOEXEC;
+        type &= ~SOCK_CLOEXEC;
+    }
+
     if (type != SOCK_STREAM || (protocol != 0 && protocol != IPPROTO_TCP)) {
         errno = EPROTONOSUPPORT;
         return -1;
@@ -164,7 +176,10 @@ int posix_socket(int domain, int type, int protocol)
         posix_set_errno_from_status((int64_t)fd);
         return -1;
     }
-    posix_fd_open((int)fd, POSIX_FD_TYPE_SOCKET, 0);
+    posix_fd_open((int)fd, POSIX_FD_TYPE_SOCKET, status_flags);
+    if (fd_flags != 0) {
+        (void)posix_fd_set_fdflags((int)fd, fd_flags);
+    }
     os_errno = 0;
     return (int)fd;
 }
@@ -207,14 +222,35 @@ int posix_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     }
     uint32_t ip   = posix_ntohl(in_addr->sin_addr.s_addr);
     uint16_t port = posix_ntohs(in_addr->sin_port);
+
+    posix_fd_entry_t *entry = posix_fd_entry(sockfd);
+    if (!entry || !entry->valid || entry->type != POSIX_FD_TYPE_SOCKET) {
+        errno = EBADF;
+        return -1;
+    }
+    bool nonblocking = (entry->status_flags & POSIX_SFL_NONBLOCK) != 0;
+
     int32_t r = socket_connect((int32_t)sockfd, ip, port);
     if (r < 0) {
         posix_set_errno_from_status((int64_t)r);
         return -1;
     }
+    socket_info_t info;
+    if (socket_get_info(sockfd, &info) < 0) {
+        errno = EIO;
+        return -1;
+    }
+    if (info.state == 4u) {
+        os_errno = 0;
+        return 0;
+    }
+    if (nonblocking) {
+        errno = EINPROGRESS;
+        return -1;
+    }
+
     uint64_t deadline = get_uptime_ms() + 10000u;
     for (;;) {
-        socket_info_t info;
         if (socket_get_info(sockfd, &info) < 0) {
             errno = EIO;
             return -1;
@@ -280,13 +316,32 @@ ssize_t posix_send(int sockfd, const void *buf, size_t len, int flags)
         errno = EINVAL;
         return -1;
     }
-    int32_t r = socket_send((int32_t)sockfd, buf, (uint32_t)len);
-    if (r < 0) {
-        posix_set_errno_from_status((int64_t)r);
+
+    posix_fd_entry_t *entry = posix_fd_entry(sockfd);
+    if (!entry || !entry->valid || entry->type != POSIX_FD_TYPE_SOCKET) {
+        errno = EBADF;
         return -1;
     }
-    os_errno = 0;
-    return (ssize_t)r;
+    bool nonblocking =
+        ((flags & MSG_DONTWAIT) != 0) ||
+        ((entry->status_flags & POSIX_SFL_NONBLOCK) != 0);
+
+    for (;;) {
+        int32_t r = socket_send((int32_t)sockfd, buf, (uint32_t)len);
+        if (r > 0 || len == 0u) {
+            os_errno = 0;
+            return (ssize_t)r;
+        }
+        if (r < 0) {
+            posix_set_errno_from_status((int64_t)r);
+            return -1;
+        }
+        if (nonblocking) {
+            errno = EAGAIN;
+            return -1;
+        }
+        sleep_ms(1u);
+    }
 }
 
  
@@ -301,23 +356,38 @@ ssize_t posix_recv(int sockfd, void *buf, size_t len, int flags)
         errno = EINVAL;
         return -1;
     }
-    int32_t r;
+
+    posix_fd_entry_t *entry = posix_fd_entry(sockfd);
+    if (!entry || !entry->valid || entry->type != POSIX_FD_TYPE_SOCKET) {
+        errno = EBADF;
+        return -1;
+    }
+    bool nonblocking =
+        ((flags & MSG_DONTWAIT) != 0) ||
+        ((entry->status_flags & POSIX_SFL_NONBLOCK) != 0);
+
     for (;;) {
-        r = socket_recv((int32_t)sockfd, buf, (uint32_t)len);
-        if (r != 0 || (flags & MSG_DONTWAIT) != 0) break;
+        int32_t r = socket_recv((int32_t)sockfd, buf, (uint32_t)len);
+        if (r > 0 || len == 0u) {
+            os_errno = 0;
+            return (ssize_t)r;
+        }
+        if (r < 0) {
+            posix_set_errno_from_status((int64_t)r);
+            return -1;
+        }
         socket_info_t info;
         if (socket_get_info(sockfd, &info) < 0 ||
             (info.state != 4u && info.state != 5u && info.state != 6u)) {
-            break;
+            os_errno = 0;
+            return 0;
+        }
+        if (nonblocking) {
+            errno = EAGAIN;
+            return -1;
         }
         sleep_ms(1u);
     }
-    if (r < 0) {
-        posix_set_errno_from_status((int64_t)r);
-        return -1;
-    }
-    os_errno = 0;
-    return (ssize_t)r;
 }
 
  

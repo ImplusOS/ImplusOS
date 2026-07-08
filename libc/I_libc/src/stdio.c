@@ -978,17 +978,36 @@ int vsnprintf(char* str, size_t size, const char* format, va_list ap) {
                 if (!left_align) pad_zero = 1;
                 f++;
             }
-            while (*f >= '0' && *f <= '9') {
-                width = width * 10 + (*f - '0');
+            if (*f == '*') {
+                width = va_arg(ap, int);
+                if (width < 0) {
+                    left_align = 1;
+                    pad_zero = 0;
+                    width = -width;
+                }
                 f++;
+            } else {
+                while (*f >= '0' && *f <= '9') {
+                    width = width * 10 + (*f - '0');
+                    f++;
+                }
             }
             if (*f == '.') {
                 have_precision = 1;
                 precision = 0;
                 f++;
-                while (*f >= '0' && *f <= '9') {
-                    precision = precision * 10 + (*f - '0');
+                if (*f == '*') {
+                    precision = va_arg(ap, int);
+                    if (precision < 0) {
+                        have_precision = 0;
+                        precision = -1;
+                    }
                     f++;
+                } else {
+                    while (*f >= '0' && *f <= '9') {
+                        precision = precision * 10 + (*f - '0');
+                        f++;
+                    }
                 }
             }
 

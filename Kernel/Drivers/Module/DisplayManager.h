@@ -13,6 +13,7 @@ void display_manager_draw_pixel(uint32_t x, uint32_t y, uint32_t color);
 uint32_t display_manager_get_pixel(uint32_t x, uint32_t y);
 void display_manager_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 void display_manager_present(void);
+void display_manager_present_rects(const display_rect_t *rects, uint32_t count);
 void *display_manager_get_framebuffer(void);
 uint32_t display_manager_generation(void);
 bool display_manager_poll_config(void);

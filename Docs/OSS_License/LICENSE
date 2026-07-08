@@ -63,6 +63,17 @@ Licensed under the libpng License
 See:
 https://www.libpng.org/pub/png/src/libpng-LICENSE.txt
 
+libjpeg-turbo
+
+Copyright (c) 1991-2026 The libjpeg-turbo Project and many others.
+
+Licensed under three compatible BSD-style licenses.
+See:
+https://github.com/winlibs/libjpeg/blob/master/LICENSE.md
+
+License file:
+Docs/OSS_License/LICENSEFILE/libjpeg
+
 SDL3
 
 Simple DirectMedia Layer (SDL) 3

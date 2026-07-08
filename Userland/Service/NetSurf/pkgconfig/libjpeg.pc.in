@@ -1,0 +1,12 @@
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+srcincludedir=@REPO_ROOT@/Vendor/Library/libjpeg/src
+buildincludedir=@REPO_ROOT@/Build/@ARCH@/Vendor/Library/libjpeg/include
+
+Name: libjpeg
+Description: ImplusOS staged libjpeg-turbo
+Version: 3.1.4
+Libs: -L${libdir} -ljpeg
+Cflags: -I${srcincludedir} -I${buildincludedir}
+

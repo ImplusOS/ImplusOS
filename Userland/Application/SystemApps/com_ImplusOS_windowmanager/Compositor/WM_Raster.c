@@ -244,6 +244,65 @@ static uint32_t bilinear_sample(const uint32_t *source, uint32_t source_width,
     return (alpha << 24u) | (red << 16u) | (green << 8u) | blue;
 }
 
+static bool wm_canvas_blit_scaled_fast(wm_canvas_t *canvas,
+                                       wm_rect_t destination,
+                                       const uint32_t *source,
+                                       uint32_t source_width,
+                                       uint32_t source_height)
+{
+    if (!canvas || !canvas->pixels || !source ||
+        destination.w == 0u || destination.h == 0u ||
+        source_width == 0u || source_height == 0u) {
+        return false;
+    }
+
+    wm_rect_t visible = wm_rect_intersection(destination, canvas->clip);
+    if (visible.w == 0u || visible.h == 0u) {
+        return true;
+    }
+
+    uint32_t *x_lut = (uint32_t *)malloc((size_t)visible.w * sizeof(uint32_t));
+    if (!x_lut) {
+        return false;
+    }
+
+    uint32_t denom_x = destination.w > 1u ? destination.w - 1u : 1u;
+    uint32_t denom_y = destination.h > 1u ? destination.h - 1u : 1u;
+    uint32_t max_source_x = source_width > 1u ? source_width - 1u : 0u;
+    uint32_t max_source_y = source_height > 1u ? source_height - 1u : 0u;
+    uint32_t first_local_x = (uint32_t)(visible.x - destination.x);
+
+    for (uint32_t col = 0u; col < visible.w; ++col) {
+        uint32_t local_x = first_local_x + col;
+        x_lut[col] = (uint32_t)(((uint64_t)local_x *
+                                 max_source_x * 256u) / denom_x);
+    }
+
+    uint32_t first_local_y = (uint32_t)(visible.y - destination.y);
+    for (uint32_t row = 0u; row < visible.h; ++row) {
+        uint32_t local_y = first_local_y + row;
+        uint32_t source_y_fp = (uint32_t)(((uint64_t)local_y *
+                                           max_source_y * 256u) / denom_y);
+        uint32_t *dst = &canvas->pixels[
+            (uint32_t)(visible.y + (int32_t)row) * canvas->stride +
+            (uint32_t)visible.x];
+        for (uint32_t col = 0u; col < visible.w; ++col) {
+            uint32_t color = bilinear_sample(source, source_width,
+                                             source_height, x_lut[col],
+                                             source_y_fp);
+            uint32_t alpha = color >> 24u;
+            if (alpha == 255u) {
+                dst[col] = color;
+            } else if (alpha != 0u) {
+                dst[col] = wm_color_blend(dst[col], color);
+            }
+        }
+    }
+
+    free(x_lut);
+    return true;
+}
+
 void wm_canvas_blit(wm_canvas_t *canvas, wm_rect_t destination,
                     const uint32_t *source, uint32_t source_width,
                     uint32_t source_height, uint32_t source_x,
@@ -301,6 +360,13 @@ void wm_canvas_blit_scaled(wm_canvas_t *canvas, wm_rect_t destination,
 {
     if (!canvas || !source || destination.w == 0u || destination.h == 0u ||
         source_width == 0u || source_height == 0u || opacity == 0u) return;
+
+    if (opacity == 255u && corner_radius == 0u &&
+        wm_canvas_blit_scaled_fast(canvas, destination, source,
+                                   source_width, source_height)) {
+        return;
+    }
+
     wm_rect_t visible = wm_rect_intersection(destination, canvas->clip);
     if (visible.w == 0u || visible.h == 0u) return;
     corner_radius = wm_min_u32(corner_radius,

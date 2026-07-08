@@ -50,7 +50,7 @@ void _start(void)
         "1024",
         "-h",
         "720",
-        "https://example.com/",
+        "http://example.com/",
         0
     };
 
@@ -65,6 +65,6 @@ void _start(void)
     int status = main(8, argv);
     process_exit(status);
     for (;;) {
-        process_yield();
+        sleep_ms(1000u);
     }
 }

@@ -310,6 +310,8 @@ typedef struct {
 
 static module_state_t g_modules[MAX_LOADED_FILES];
 static uint32_t g_module_count = 0;
+static uint8_t g_critical_init_done = 0u;
+static uint8_t g_deferred_init_done = 0u;
 
 static const driver_binary_t g_driver_api = {
     .version_major = DRIVER_API_VERSION_MAJOR,
@@ -469,6 +471,8 @@ void driver_module_manager_init(const BOOT_INFO *boot_info)
 {
     driver_manager_init();
     g_module_count = 0;
+    g_critical_init_done = 0u;
+    g_deferred_init_done = 0u;
 
     for (uint32_t i = 0; i < MAX_LOADED_FILES; ++i) {
         g_modules[i].present = 0u;
@@ -669,6 +673,23 @@ static bool driver_module_activate(module_state_t *state)
 
 bool driver_module_init_all(void)
 {
+    bool critical_ok = driver_module_init_critical();
+    bool deferred_ok = driver_module_init_deferred();
+    return critical_ok && deferred_ok;
+}
+
+static bool driver_module_kind_is_critical(device_type_t kind)
+{
+    return kind == DEVICE_TYPE_PCI ||
+           kind == DEVICE_TYPE_USB ||
+           kind == DEVICE_TYPE_BLOCK ||
+           kind == DEVICE_TYPE_FILESYSTEM ||
+           kind == DEVICE_TYPE_DISPLAY ||
+           kind == DEVICE_TYPE_INPUT;
+}
+
+static bool driver_module_prepare_all(void)
+{
     if (g_module_count == 0u) {
         return true;
     }
@@ -683,9 +704,22 @@ bool driver_module_init_all(void)
     }
 
     driver_module_sort();
+    return all_ok;
+}
+
+bool driver_module_init_critical(void)
+{
+    if (g_critical_init_done != 0u) {
+        return true;
+    }
+
+    bool all_ok = driver_module_prepare_all();
 
     for (uint32_t i = 0; i < g_module_count; ++i) {
         if (!g_modules[i].present) {
+            continue;
+        }
+        if (!driver_module_kind_is_critical(g_modules[i].kind)) {
             continue;
         }
         if (!driver_module_activate(&g_modules[i])) {
@@ -693,6 +727,31 @@ bool driver_module_init_all(void)
         }
     }
 
+    g_critical_init_done = 1u;
+    return all_ok;
+}
+
+bool driver_module_init_deferred(void)
+{
+    if (g_deferred_init_done != 0u) {
+        return true;
+    }
+
+    bool all_ok = driver_module_prepare_all();
+
+    for (uint32_t i = 0; i < g_module_count; ++i) {
+        if (!g_modules[i].present) {
+            continue;
+        }
+        if (driver_module_kind_is_critical(g_modules[i].kind)) {
+            continue;
+        }
+        if (!driver_module_activate(&g_modules[i])) {
+            all_ok = false;
+        }
+    }
+
+    g_deferred_init_done = 1u;
     return all_ok;
 }
 

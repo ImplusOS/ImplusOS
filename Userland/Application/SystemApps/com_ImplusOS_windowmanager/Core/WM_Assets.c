@@ -226,6 +226,18 @@ static bool load_app_icon(wm_assets_t *assets, uint32_t index)
 bool wm_assets_init(wm_assets_t *assets)
 {
     if (!assets) return false;
+    if (!wm_assets_init_metadata(assets)) return false;
+
+    while (wm_assets_load_next_icon(assets)) {
+    }
+
+    (void)wm_assets_reload_wallpaper(assets);
+    return true;
+}
+
+bool wm_assets_init_metadata(wm_assets_t *assets)
+{
+    if (!assets) return false;
     memset(assets, 0, sizeof(*assets));
     const char *registry =
         "/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Apps/apps.list";
@@ -233,17 +245,31 @@ bool wm_assets_init(wm_assets_t *assets)
         for (uint32_t i = 0; i < sizeof(default_apps) / sizeof(default_apps[0]); ++i)
             add_app(assets, default_apps[i].name, default_apps[i].path, default_apps[i].badge);
     }
+    assets->metadata_loaded = true;
+    return true;
+}
 
-    for (uint32_t i = 0; i < WM_SYSTEM_ICON_COUNT; ++i) {
-        const char *name = NULL;
-        wm_icon_image_t *icon = system_icon_at(assets, i, &name);
-        if (icon && name) load_system_icon(icon, name);
+bool wm_assets_load_next_icon(wm_assets_t *assets)
+{
+    if (!assets || !assets->metadata_loaded || assets->icons_loaded) {
+        return false;
     }
 
-    for (uint32_t i = 0; i < assets->app_count; ++i)
-        (void)load_app_icon(assets, i);
+    if (assets->system_icon_load_index < WM_SYSTEM_ICON_COUNT) {
+        uint32_t index = assets->system_icon_load_index++;
+        const char *name = NULL;
+        wm_icon_image_t *icon = system_icon_at(assets, index, &name);
+        if (icon && name) load_system_icon(icon, name);
+        return true;
+    }
 
-    (void)wm_assets_reload_wallpaper(assets);
+    if (assets->app_icon_load_index < assets->app_count) {
+        uint32_t index = assets->app_icon_load_index++;
+        (void)load_app_icon(assets, index);
+        return true;
+    }
+
+    assets->icons_loaded = true;
     return true;
 }
 
