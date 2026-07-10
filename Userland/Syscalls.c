@@ -1356,6 +1356,20 @@ int32_t window_set_icon_path(window_id_t wid, const char *path)
     os_strcpy_s(command.path, sizeof(command.path), path);
     return ipc_send_message(window_get_wm_pid(), &command, sizeof(command));
 }
+
+int32_t window_set_surface_opaque(window_id_t wid, bool opaque)
+{
+    if (wid == 0u) return WM_STATUS_INVALID_ARG;
+    struct {
+        wm_msg_header_t header;
+        bool opaque;
+    } command;
+    memset(&command, 0, sizeof(command));
+    command.header.type = WM_SET_WINDOW_SURFACE_OPAQUE;
+    command.header.window_id = wid;
+    command.opaque = opaque;
+    return ipc_send_message(window_get_wm_pid(), &command, sizeof(command));
+}
 bool udp_send(uint32_t dst_ipv4_addr,
               uint16_t src_port,
               uint16_t dst_port,
@@ -1712,6 +1726,7 @@ void *kvm_mmap(int32_t fd, uint64_t offset, uint64_t size)
 #define SYSCALL_RAW_BLOCK_READ    217ULL
 #define SYSCALL_RAW_BLOCK_WRITE   218ULL
 #define SYSCALL_GET_BOOT_FONT     219ULL
+#define SYSCALL_GET_CPU_USAGE     235ULL
 
 int64_t os_get_cpu_info(system_cpu_info_t *out_info)
 {
@@ -1719,6 +1734,14 @@ int64_t os_get_cpu_info(system_cpu_info_t *out_info)
         return -22;
     }
     return syscall1(SYSCALL_GET_CPU_INFO, (uint64_t)(uintptr_t)out_info);
+}
+
+int64_t os_get_cpu_usage(system_cpu_usage_t *out_usage)
+{
+    if (out_usage == NULL) {
+        return -22;
+    }
+    return syscall1(SYSCALL_GET_CPU_USAGE, (uint64_t)(uintptr_t)out_usage);
 }
 
 int64_t os_get_memory_info(system_memory_info_t *out_info)

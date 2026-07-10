@@ -34,6 +34,7 @@ typedef struct __attribute__((aligned(16))) {
     uint8_t  fpu_state[PROCESS_FPU_STATE_SIZE] __attribute__((aligned(16)));
 
     uint64_t fs_base;
+    uint64_t gs_base;
 
     uint64_t cr3;
     uint8_t *kernel_stack_base;
@@ -94,3 +95,6 @@ void process_scheduler_on_tick(process_t *processes, int32_t capacity);
 void process_scheduler_request_reschedule(void);
 int process_scheduler_consume_reschedule(void);
 void process_scheduler_prepare_run(process_t *proc);
+void process_scheduler_add_idle_ns(uint64_t ns);
+uint64_t process_scheduler_get_idle_ns(uint32_t cpu);
+uint32_t process_scheduler_max_cpus(void);

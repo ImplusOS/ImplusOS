@@ -82,7 +82,7 @@
 #endif
 
 #ifndef OS_CONFIG_SMP_MAX_CPUS
-#define OS_CONFIG_SMP_MAX_CPUS 2
+#define OS_CONFIG_SMP_MAX_CPUS 16
 #endif
 
 #ifndef OS_CONFIG_SMP_ENABLED

@@ -76,6 +76,21 @@ int lapic_is_present(void)
     return g_lapic_present;
 }
 
+void lapic_ap_init(void)
+{
+    if (!g_lapic_present) return;
+    uint64_t msr;
+    __asm__ volatile("rdmsr" : "=a"(((uint32_t *)&msr)[0]),
+                                "=d"(((uint32_t *)&msr)[1])
+                              : "c"((uint32_t)0x1BU));
+    msr |= (1ULL << 11);
+    __asm__ volatile("wrmsr" : : "a"(((uint32_t *)&msr)[0]),
+                                 "d"(((uint32_t *)&msr)[1]),
+                                 "c"((uint32_t)0x1BU)
+                               : "memory");
+    lapic_write(LAPIC_REG_SVR, 0xFFu | (1u << 8));
+}
+
 void lapic_eoi(void)
 {
     if (!g_lapic_present) return;

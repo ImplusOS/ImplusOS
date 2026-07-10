@@ -29,15 +29,12 @@ static void x86_64_disable_interrupts(void)
 
 static void x86_64_enter_user_mode(uint64_t saved_rsp, uint64_t user_rsp, uint64_t address_space)
 {
-    register uint64_t rdi __asm__("rdi") = saved_rsp;
-    register uint64_t rsi __asm__("rsi") = user_rsp;
-
     __asm__ volatile(
         "mov %[cr3], %%cr3 \n\t"
         "mov %[frame], %%rsp \n\t"
         "jmp syscall_enter_user_from_frame"
         :
-        : [frame] "r"(rdi),
+        : [frame] "D"(saved_rsp),
           [usrsp] "S"(user_rsp),
           [cr3] "a"(address_space)
         : "memory"

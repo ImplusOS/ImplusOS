@@ -14,6 +14,7 @@
 #define MAX_PROCESSES       256
 #define MAX_VISIBLE_ROWS    16
 #define REFRESH_INTERVAL_MS 1000
+#define MIN_DRAW_INTERVAL_MS 33
 
 #define MODE_PROCESSES   0
 #define MODE_PERFORMANCE 1
@@ -60,6 +61,7 @@ static const char *k_spawn_path =
     "/Userland/SystemApps/com_ImplusOS_shell/com_ImplusOS_shell.ELF";
 
 #define CPU_HISTORY_SIZE 100
+#define CPU_CORE_HISTORY_SIZE 100
 
 typedef struct {
     int32_t  pid;
@@ -78,6 +80,11 @@ typedef struct {
     int    write_idx;
 } cpu_history_t;
 
+typedef struct {
+    double core_values[CPU_CORE_HISTORY_SIZE];
+    int    write_idx;
+} cpu_core_history_t;
+
 typedef struct { int x, y, w, h; } rect_t;
 
 static window_id_t  g_win            = 0;
@@ -92,9 +99,19 @@ static int          g_scroll_offset  = 0;
 static uint64_t     g_total_mem      = 0;
 static uint64_t     g_used_mem       = 0;
 static uint64_t     g_last_update_ms = 0;
+static uint64_t     g_last_draw_ms   = 0;
 static char         g_status[128]    = {0};
 static int          g_display_mode   = MODE_PROCESSES;
 static cpu_history_t g_cpu_history   = {0};
+static int          g_core_count     = 1;
+static cpu_core_history_t g_core_history[OS_CPU_USAGE_MAX_CORES];
+static uint64_t     g_prev_idle_ns[OS_CPU_USAGE_MAX_CORES];
+static uint64_t     g_prev_wall_ns   = 0;
+static uint8_t      g_core_initialized = 0;
+
+static uint32_t    *g_fb      = NULL;
+static uint32_t     g_fb_w    = 0;
+static uint32_t     g_fb_h    = 0;
 
 static int g_mouse_x   = 0;
 static int g_mouse_y   = 0;
@@ -108,6 +125,22 @@ static int g_hover_btn = -1;
 static inline bool rect_contains(rect_t r, int x, int y)
 {
     return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+}
+
+static void fb_fill_rect(int x, int y, int w, int h, uint32_t color)
+{
+    if (!g_fb || w <= 0 || h <= 0) return;
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x + w; if ((uint32_t)x1 > g_fb_w) x1 = (int)g_fb_w;
+    int y1 = y + h; if ((uint32_t)y1 > g_fb_h) y1 = (int)g_fb_h;
+    if (x1 <= x0 || y1 <= y0) return;
+    for (int row = y0; row < y1; row++) {
+        uint32_t *line = g_fb + (uint32_t)row * g_fb_w;
+        for (int col = x0; col < x1; col++) {
+            line[col] = color;
+        }
+    }
 }
 
 static bool mouse_btn_pressed(uint8_t btn_mask)
@@ -178,6 +211,42 @@ static void update_cpu_history(double total_cpu)
 {
     g_cpu_history.cpu_values[g_cpu_history.write_idx] = total_cpu;
     g_cpu_history.write_idx = (g_cpu_history.write_idx + 1) % CPU_HISTORY_SIZE;
+}
+
+static void refresh_cpu_usage(void)
+{
+    system_cpu_usage_t usage;
+    if (os_get_cpu_usage(&usage) != 0) return;
+
+    if (usage.cpu_count == 0) usage.cpu_count = 1;
+    if (usage.cpu_count > OS_CPU_USAGE_MAX_CORES)
+        usage.cpu_count = OS_CPU_USAGE_MAX_CORES;
+    g_core_count = (int)usage.cpu_count;
+
+    uint64_t current_wall = usage.wall_ns;
+
+    if (g_core_initialized && g_prev_wall_ns != 0 &&
+        current_wall > g_prev_wall_ns) {
+        uint64_t wall_delta = current_wall - g_prev_wall_ns;
+        for (int i = 0; i < g_core_count; i++) {
+            uint64_t idle_delta = usage.idle_ns[i] - g_prev_idle_ns[i];
+            double usage_pct = 100.0;
+            if (idle_delta < wall_delta) {
+                usage_pct = 100.0 - ((double)idle_delta * 100.0 / (double)wall_delta);
+            }
+            if (usage_pct < 0.0) usage_pct = 0.0;
+            if (usage_pct > 100.0) usage_pct = 100.0;
+            g_core_history[i].core_values[g_core_history[i].write_idx] = usage_pct;
+            g_core_history[i].write_idx =
+                (g_core_history[i].write_idx + 1) % CPU_CORE_HISTORY_SIZE;
+        }
+    }
+
+    g_prev_wall_ns = current_wall;
+    for (int i = 0; i < g_core_count; i++) {
+        g_prev_idle_ns[i] = usage.idle_ns[i];
+    }
+    g_core_initialized = 1;
 }
 
 static void refresh_procs(void)
@@ -252,6 +321,7 @@ static void refresh_procs(void)
 
     if (sum_cpu > 100.0) sum_cpu = 100.0;
     update_cpu_history(sum_cpu);
+    refresh_cpu_usage();
     sort_procs();
 
     if (g_proc_count == 0) {
@@ -306,11 +376,11 @@ static void draw_button(int idx, const char *label,
 {
     rect_t r  = btn_rect(idx);
     uint32_t bg = (g_hover_btn == idx) ? hov_color : base_color;
-    draw_fill_rect(r.x, r.y, r.w, r.h, bg);
-    draw_fill_rect(r.x, r.y,           r.w, 1,   COLOR_BTN_BORDER);
-    draw_fill_rect(r.x, r.y + r.h - 1, r.w, 1,   COLOR_BTN_BORDER);
-    draw_fill_rect(r.x, r.y,           1,   r.h,  COLOR_BTN_BORDER);
-    draw_fill_rect(r.x + r.w - 1, r.y, 1,   r.h,  COLOR_BTN_BORDER);
+    fb_fill_rect(r.x, r.y, r.w, r.h, bg);
+    fb_fill_rect(r.x, r.y,           r.w, 1,   COLOR_BTN_BORDER);
+    fb_fill_rect(r.x, r.y + r.h - 1, r.w, 1,   COLOR_BTN_BORDER);
+    fb_fill_rect(r.x, r.y,           1,   r.h,  COLOR_BTN_BORDER);
+    fb_fill_rect(r.x + r.w - 1, r.y, 1,   r.h,  COLOR_BTN_BORDER);
     int tx = r.x + (r.w - (int)(strlen(label) * 7)) / 2;
     int ty = r.y + 5;
     window_draw_text(g_win, tx, ty, label, COLOR_TEXT, 13.0f);
@@ -324,17 +394,17 @@ static void draw_tabs(void)
         int tx = 10 + i * TAB_W + 10;
         window_draw_text(g_win, tx, TAB_Y + 8, tabs[i], color, 14.0f);
         if (g_display_mode == i)
-            draw_fill_rect(10 + i * TAB_W, TAB_Y + TAB_H - 2,
+            fb_fill_rect(10 + i * TAB_W, TAB_Y + TAB_H - 2,
                            TAB_W - 20, 2, COLOR_ACCENT);
     }
 }
 
 static void draw_cpu_graph(int x, int y, int width, int height)
 {
-    draw_fill_rect(x, y, width, height, COLOR_GRAPH_BG);
+    fb_fill_rect(x, y, width, height, COLOR_GRAPH_BG);
     for (int i = 1; i <= 4; i++) {
         int gy = y + (height * i) / 5;
-        draw_fill_rect(x, gy, width, 1, 0xFF333333);
+        fb_fill_rect(x, gy, width, 1, 0xFF333333);
     }
     for (int i = 0; i < CPU_HISTORY_SIZE; i++) {
         int idx = (g_cpu_history.write_idx + i) % CPU_HISTORY_SIZE;
@@ -343,15 +413,15 @@ static void draw_cpu_graph(int x, int y, int width, int height)
         int gy = y + height - (int)((val / 100.0) * height);
         if (gy < y)          gy = y;
         if (gy >= y + height) gy = y + height - 1;
-        draw_fill_rect(gx, gy,     3, 3,                    COLOR_GRAPH_LINE);
-        draw_fill_rect(gx, gy + 3, 3, y + height - gy - 3,  0x4003DAC6);
+        fb_fill_rect(gx, gy,     3, 3,                    COLOR_GRAPH_LINE);
+        fb_fill_rect(gx, gy + 3, 3, y + height - gy - 3,  0x4003DAC6);
     }
 }
 
 static void draw_processes(void)
 {
     char buf[128];
-    draw_fill_rect(0, HEADER_Y - 2, WIN_W, 1, 0xFF2A2A2A);
+    fb_fill_rect(0, HEADER_Y - 2, WIN_W, 1, 0xFF2A2A2A);
 
     window_draw_text(g_win,  20, HEADER_Y, "PID",   COLOR_ACCENT, 14.0f);
     window_draw_text(g_win,  80, HEADER_Y, "PPID",  COLOR_ACCENT, 14.0f);
@@ -370,9 +440,9 @@ static void draw_processes(void)
         int           y        = ROW_START_Y + row * ROW_H;
 
         if (selected)
-            draw_fill_rect(0, y, WIN_W, ROW_H, COLOR_SEL_BG);
+            fb_fill_rect(0, y, WIN_W, ROW_H, COLOR_SEL_BG);
         else if (hovered)
-            draw_fill_rect(0, y, WIN_W, ROW_H, 0xFF1A1A1A);
+            fb_fill_rect(0, y, WIN_W, ROW_H, 0xFF1A1A1A);
 
         uint32_t tc = selected ? COLOR_ACCENT : COLOR_TEXT;
 
@@ -408,24 +478,49 @@ static void draw_performance(void)
 {
     char buf[128];
     window_draw_text(g_win, 20, 60, "CPU Usage History", COLOR_ACCENT, 14.0f);
-    draw_cpu_graph(20, 80, 560, 150);
+    draw_cpu_graph(20, 80, 560, 120);
+
+    int core_y = 220;
+    for (int i = 0; i < g_core_count && i < OS_CPU_USAGE_MAX_CORES; i++) {
+        int idx = (g_core_history[i].write_idx - 1 + CPU_CORE_HISTORY_SIZE)
+                  % CPU_CORE_HISTORY_SIZE;
+        double usage = g_core_history[i].core_values[idx];
+        char pct_str[16];
+        format_double(usage, pct_str, sizeof(pct_str));
+
+        snprintf(buf, sizeof(buf), "CPU%d:  %s%%", i, pct_str);
+        window_draw_text(g_win, 30, core_y, buf, COLOR_TEXT, 14.0f);
+
+        fb_fill_rect(130, core_y + 2, 420, 16, COLOR_GRAPH_BG);
+        int bar_w = (int)(usage / 100.0 * 420.0);
+        if (bar_w > 420) bar_w = 420;
+        uint32_t bar_color = usage > 80.0 ? COLOR_WARN :
+                             (usage > 50.0 ? 0xFFFAAA5A : COLOR_GOOD);
+        fb_fill_rect(130, core_y + 2, bar_w, 16, bar_color);
+
+        if (bar_w < 420) {
+            fb_fill_rect(130 + bar_w, core_y + 2, 1, 16, 0xFF444444);
+        }
+
+        core_y += 24;
+    }
 
     char used_str[64], total_str[64];
     format_memory(g_used_mem,  used_str,  sizeof(used_str));
     format_memory(g_total_mem, total_str, sizeof(total_str));
 
     snprintf(buf, sizeof(buf), "Memory Usage: %s / %s", used_str, total_str);
-    window_draw_text(g_win, 20, 250, buf, COLOR_TEXT, 14.0f);
+    window_draw_text(g_win, 20, core_y + 10, buf, COLOR_TEXT, 14.0f);
 
-    draw_fill_rect(20, 280, 560, 20, COLOR_GRAPH_BG);
+    fb_fill_rect(20, core_y + 30, 560, 18, COLOR_GRAPH_BG);
     int mem_bar_w = (g_total_mem > 0)
         ? (int)(((double)g_used_mem / (double)g_total_mem) * 560.0) : 0;
     if (mem_bar_w > 560) mem_bar_w = 560;
-    draw_fill_rect(20, 280, mem_bar_w, 20, COLOR_GOOD);
+    fb_fill_rect(20, core_y + 30, mem_bar_w, 18, COLOR_GOOD);
 
     snprintf(buf, sizeof(buf), "Running Processes: %d / %d slots",
              g_proc_count, MAX_PROCESSES);
-    window_draw_text(g_win, 20, 320, buf, COLOR_TEXT, 14.0f);
+    window_draw_text(g_win, 20, core_y + 60, buf, COLOR_TEXT, 14.0f);
 }
 
 static void draw_hardware(void)
@@ -440,8 +535,8 @@ static void draw_hardware(void)
         window_draw_text(g_win, 20,  90, buf, COLOR_TEXT, 14.0f);
         snprintf(buf, sizeof(buf), "CPU Brand: %s", cpu_info.brand);
         window_draw_text(g_win, 20, 110, buf, COLOR_TEXT, 14.0f);
-        snprintf(buf, sizeof(buf), "Cores: %d Physical / %d Logical",
-                 cpu_info.physical_cores, cpu_info.logical_cores);
+        snprintf(buf, sizeof(buf), "Cores: %d Physical / %d Logical / %d Online",
+                 cpu_info.physical_cores, cpu_info.logical_cores, g_core_count);
         window_draw_text(g_win, 20, 130, buf, COLOR_TEXT, 14.0f);
     }
 
@@ -475,9 +570,8 @@ static void draw_hardware(void)
 
 static void draw(void)
 {
-    window_clear(g_win);
-    draw_fill_rect(0, 0, WIN_W, WIN_H, COLOR_BG);
-    draw_fill_rect(0, TAB_Y + TAB_H, WIN_W, 1, 0xFF2A2A2A);
+    fb_fill_rect(0, 0, WIN_W, WIN_H, COLOR_BG);
+    fb_fill_rect(0, TAB_Y + TAB_H, WIN_W, 1, 0xFF2A2A2A);
 
     draw_tabs();
 
@@ -506,6 +600,7 @@ static void draw(void)
             "[1-3] Tabs  [R] Refresh  [Q] Quit",
             COLOR_DEAD, 11.0f);
 
+    window_damage(g_win, 0, 0, WIN_W, WIN_H);
 }
 
 static void update_hover(void)
@@ -629,8 +724,15 @@ void procman_main(void)
     window_subscribe_mouse(g_win);
     graphics_init(g_win);
 
+    g_fb = window_get_backing_store(g_win, &g_fb_w, &g_fb_h);
+    if (g_fb) {
+        fb_fill_rect(0, 0, WIN_W, WIN_H, COLOR_BG);
+        window_damage(g_win, 0, 0, WIN_W, WIN_H);
+    }
+
     refresh_procs();
     set_status("Ready");
+    g_last_draw_ms = get_uptime_ms();
     draw();
 
     uint64_t last_refresh = get_uptime_ms();
@@ -721,9 +823,10 @@ void procman_main(void)
             needs_draw   = true;
         }
 
-        if (needs_draw) {
+        if (needs_draw && now - g_last_draw_ms >= MIN_DRAW_INTERVAL_MS) {
+            g_last_draw_ms = now;
             draw();
-        } else {
+        } else if (!needs_draw) {
             sleep_ms(10u);
         }
     }

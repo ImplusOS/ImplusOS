@@ -7,6 +7,7 @@
 #include "Platform/interrupt/LAPIC.h"
 #include "Platform/interrupt/Interrupts.h"
 #include "Debug/serial/Serial.h"
+#include "interfaces/hal_cpu.h"
 
 #define PIT_CHANNEL0_DATA 0x40
 #define PIT_COMMAND       0x43
@@ -15,6 +16,7 @@
 static uint32_t g_timer_hz = 0;
 static void (*g_timer_callback)(void) = NULL;
 static volatile uint64_t g_ticks = 0;
+static uint32_t g_lapic_timer_initial = 0;
 
 static void pit_set_frequency(uint32_t hz) {
     if (hz == 0) return;
@@ -37,7 +39,7 @@ static void pit_set_frequency(uint32_t hz) {
 }
 
 static void lapic_timer_handler(void) {
-    g_ticks++;
+    __atomic_fetch_add(&g_ticks, 1u, __ATOMIC_RELAXED);
     if (g_timer_callback) {
         g_timer_callback();
     }
@@ -105,8 +107,16 @@ static void lapic_switch_to_local(void) {
         return;
     }
     uint32_t initial = elapsed / 10u;
+    g_lapic_timer_initial = initial;
     platform_interrupts_mask_pit();
     (void)lapic_timer_start(VECTOR_TIMER, initial, 1, 16u);
+}
+
+void lapic_timer_ap_init(void) {
+    while (__atomic_load_n(&g_lapic_timer_initial, __ATOMIC_ACQUIRE) == 0u) {
+        hal_cpu_pause();
+    }
+    (void)lapic_timer_start(VECTOR_TIMER, g_lapic_timer_initial, 1, 16u);
 }
 
 const timer_hal_t lapic_timer_hal = {

@@ -35,6 +35,15 @@ static uint16_t g_mouse_x;
 static uint16_t g_mouse_y;
 static sdl12_timer_t g_timers[SDL12_MAX_TIMERS];
 static SDL_TimerID g_next_timer_id = 1;
+static bool g_surface_opaque = false;
+
+static bool g_dirty_active = false;
+static Sint32 g_dirty_x1 = 0;
+static Sint32 g_dirty_y1 = 0;
+static Sint32 g_dirty_x2 = 0;
+static Sint32 g_dirty_y2 = 0;
+static uint64_t g_dirty_last_flush_ms = 0u;
+static void flush_dirty_rect(void);
 
 static void sdl12_set_error(const char *msg)
 {
@@ -354,6 +363,9 @@ void SDL_Quit(void)
     g_queue_head = 0;
     g_queue_tail = 0;
     g_mouse_buttons = 0;
+    g_surface_opaque = false;
+    g_dirty_active = false;
+    g_dirty_last_flush_ms = 0u;
 }
 
 static void setup_format(int bpp)
@@ -392,6 +404,7 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags)
         }
         (void)window_subscribe_keyboard(g_window);
         (void)window_subscribe_mouse(g_window);
+        g_surface_opaque = window_set_surface_opaque(g_window, true) >= 0;
         window_show(g_window);
         window_raise(g_window);
         window_set_focus(g_window);
@@ -514,6 +527,29 @@ int SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect,
     return 0;
 }
 
+
+
+#define SDL12_FLUSH_INTERVAL_MS 16u  /* ~60 fps cap */
+
+static void flush_dirty_rect(void)
+{
+    if (!g_dirty_active || g_window == 0) {
+        return;
+    }
+    uint64_t now = get_uptime_ms();
+    if (now - g_dirty_last_flush_ms < SDL12_FLUSH_INTERVAL_MS) {
+        /* Not yet time for next frame — keep accumulating */
+        return;
+    }
+    if (g_dirty_x2 > g_dirty_x1 && g_dirty_y2 > g_dirty_y1) {
+        Uint32 w = (Uint32)(g_dirty_x2 - g_dirty_x1);
+        Uint32 h = (Uint32)(g_dirty_y2 - g_dirty_y1);
+        window_damage(g_window, (uint32_t)g_dirty_x1, (uint32_t)g_dirty_y1, w, h);
+    }
+    g_dirty_active = false;
+    g_dirty_last_flush_ms = now;
+}
+
 void SDL_UpdateRect(SDL_Surface *screen, Sint32 x, Sint32 y, Uint32 w, Uint32 h)
 {
     if (!screen || g_window == 0) {
@@ -542,8 +578,24 @@ void SDL_UpdateRect(SDL_Surface *screen, Sint32 x, Sint32 y, Uint32 w, Uint32 h)
     if ((Sint32)w <= 0 || (Sint32)h <= 0) {
         return;
     }
-    make_updated_pixels_opaque(screen, x, y, w, h);
-    window_damage(g_window, (uint32_t)x, (uint32_t)y, w, h);
+    if (!g_surface_opaque) {
+        make_updated_pixels_opaque(screen, x, y, w, h);
+    }
+
+    Sint32 x2 = x + (Sint32)w;
+    Sint32 y2 = y + (Sint32)h;
+    if (!g_dirty_active) {
+        g_dirty_x1 = x;
+        g_dirty_y1 = y;
+        g_dirty_x2 = x2;
+        g_dirty_y2 = y2;
+        g_dirty_active = true;
+    } else {
+        if (x < g_dirty_x1) g_dirty_x1 = x;
+        if (y < g_dirty_y1) g_dirty_y1 = y;
+        if (x2 > g_dirty_x2) g_dirty_x2 = x2;
+        if (y2 > g_dirty_y2) g_dirty_y2 = y2;
+    }
 }
 
 int SDL_SetColors(SDL_Surface *surface, SDL_Color *colors,
@@ -571,6 +623,7 @@ int SDL_EnableKeyRepeat(int delay, int interval)
 
 int SDL_PollEvent(SDL_Event *event)
 {
+    flush_dirty_rect();
     process_timers();
     pump_window_events();
     return queue_pop(event);
@@ -579,12 +632,14 @@ int SDL_PollEvent(SDL_Event *event)
 int SDL_WaitEvent(SDL_Event *event)
 {
     for (;;) {
+        flush_dirty_rect();
         process_timers();
         pump_window_events();
         if (queue_pop(event)) {
             return 1;
         }
-        sleep_ms(1);
+
+        sleep_ms(1u);
     }
 }
 

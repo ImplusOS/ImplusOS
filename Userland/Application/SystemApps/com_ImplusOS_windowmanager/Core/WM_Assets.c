@@ -299,3 +299,19 @@ void wm_assets_destroy(wm_assets_t *assets)
     free(assets->wallpaper_pixels);
     memset(assets, 0, sizeof(*assets));
 }
+
+bool wm_assets_load_logo(wm_assets_t *assets)
+{
+    if (!assets) return false;
+    assets->system_icons.logo.pixels = wm_assets_load_png(
+        "/Userland/SystemApps/com_ImplusOS_windowmanager/Resource/Icons/Logo.png",
+        &assets->system_icons.logo.width,
+        &assets->system_icons.logo.height
+    );
+    if (!assets->system_icons.logo.pixels) {
+        assets->system_icons.logo.width = 0;
+        assets->system_icons.logo.height = 0;
+        return false;
+    }
+    return true;
+}

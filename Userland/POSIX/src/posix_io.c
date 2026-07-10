@@ -175,6 +175,7 @@ int posix_select(int nfds, fd_set *readfds, fd_set *writefds,
                      ((uint64_t)timeout->tv_usec + 999ULL) / 1000ULL;
     }
     uint64_t deadline = get_uptime_ms() + timeout_ms;
+    uint32_t sleep_time = 1u;
 
     for (;;) {
         if (readfds) FD_ZERO(readfds);
@@ -215,7 +216,26 @@ int posix_select(int nfds, fd_set *readfds, fd_set *writefds,
             os_errno = 0;
             return ready_count;
         }
-        sleep_ms(1u);
+        
+        uint32_t cur_sleep = sleep_time;
+        if (finite_timeout) {
+            uint64_t now = get_uptime_ms();
+            if (now < deadline) {
+                uint64_t remaining = deadline - now;
+                if ((uint64_t)cur_sleep > remaining) {
+                    cur_sleep = (uint32_t)remaining;
+                }
+            } else {
+                cur_sleep = 1u;
+            }
+        }
+        if (cur_sleep < 1u) {
+            cur_sleep = 1u;
+        }
+        sleep_ms(cur_sleep);
+        if (sleep_time < 5u) {
+            sleep_time++;
+        }
     }
 }
 
@@ -231,6 +251,8 @@ int posix_poll(struct pollfd *fds, nfds_t nfds, int timeout_ms)
     bool finite_timeout = timeout_ms >= 0;
     uint64_t deadline = get_uptime_ms() +
         (finite_timeout ? (uint64_t)timeout_ms : 0u);
+    uint32_t sleep_time = 1u;
+
     for (;;) {
         int ready_count = 0;
         for (nfds_t i = 0; i < nfds; i++) {
@@ -254,6 +276,25 @@ int posix_poll(struct pollfd *fds, nfds_t nfds, int timeout_ms)
             os_errno = 0;
             return ready_count;
         }
-        sleep_ms(1u);
+
+        uint32_t cur_sleep = sleep_time;
+        if (finite_timeout) {
+            uint64_t now = get_uptime_ms();
+            if (now < deadline) {
+                uint64_t remaining = deadline - now;
+                if ((uint64_t)cur_sleep > remaining) {
+                    cur_sleep = (uint32_t)remaining;
+                }
+            } else {
+                cur_sleep = 1u;
+            }
+        }
+        if (cur_sleep < 1u) {
+            cur_sleep = 1u;
+        }
+        sleep_ms(cur_sleep);
+        if (sleep_time < 5u) {
+            sleep_time++;
+        }
     }
 }

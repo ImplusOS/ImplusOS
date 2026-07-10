@@ -131,6 +131,14 @@ static bool is_unscaled(const wm_window_t *window)
     return window->visual_scale > 0.999f && window->visual_scale < 1.001f;
 }
 
+static bool rect_contains_rect(wm_rect_t outer, wm_rect_t inner)
+{
+    return inner.w != 0u && inner.h != 0u &&
+           inner.x >= outer.x && inner.y >= outer.y &&
+           (int64_t)inner.x + inner.w <= (int64_t)outer.x + outer.w &&
+           (int64_t)inner.y + inner.h <= (int64_t)outer.y + outer.h;
+}
+
 static void draw_title_buttons(wm_state_t *state, wm_canvas_t *canvas,
                                 const wm_window_t *window, wm_rect_t frame,
                                 uint8_t opacity)
@@ -222,16 +230,35 @@ void wm_decoration_draw_window(wm_state_t *state, wm_canvas_t *canvas,
     if (!frame.w || !frame.h) return;
     wm_rect_t visual = wm_window_visual_bounds(state, window);
     if (!wm_rect_intersects(visual, canvas->clip)) return;
+    wm_rect_t visual_clip = wm_rect_intersection(visual, canvas->clip);
 
     if (window->is_system) {
         if (is_unscaled(window) && state->theme.corner_radius == 0u) {
             wm_canvas_blit(canvas, frame, window->surface,
-                           window->frame.w, window->frame.h, 0u, 0u, opacity);
+                           window->frame.w, window->frame.h, 0u, 0u,
+                           opacity, window->surface_opaque);
         } else {
             wm_canvas_blit_scaled(canvas, frame, window->surface,
                                   window->frame.w, window->frame.h,
                                   opacity, state->theme.corner_radius);
         }
+        return;
+    }
+
+    uint32_t title_h = (uint32_t)((float)state->theme.title_height *
+                                   window->visual_scale);
+    if (title_h > frame.h) title_h = frame.h;
+    wm_rect_t content = {
+        frame.x+1,
+        frame.y+(int32_t)title_h+1,
+        frame.w>2u?frame.w-2u:frame.w,
+        frame.h>title_h+2u?frame.h-title_h-2u:0u
+    };
+    if (is_unscaled(window) && opacity == 255u &&
+        rect_contains_rect(content, visual_clip)) {
+        wm_canvas_blit(canvas, content, window->surface,
+                       window->frame.w, window->frame.h, 0u, 0u,
+                       opacity, window->surface_opaque);
         return;
     }
 
@@ -246,9 +273,6 @@ void wm_decoration_draw_window(wm_state_t *state, wm_canvas_t *canvas,
                            state->theme.corner_radius>0u?state->theme.corner_radius-1u:0u,
                            apply_opacity(state->theme.surface, opacity));
                            
-    uint32_t title_h = (uint32_t)((float)state->theme.title_height *
-                                   window->visual_scale);
-    if (title_h > frame.h) title_h = frame.h;
     wm_rect_t title_rect = {frame.x+1, frame.y+1,
                             frame.w>2u?frame.w-2u:frame.w, title_h};
     uint32_t title_color = window->has_focus ?
@@ -273,16 +297,11 @@ void wm_decoration_draw_window(wm_state_t *state, wm_canvas_t *canvas,
                     frame.w>2u?frame.w-2u:frame.w, 1u},
         apply_opacity(state->theme.border, opacity));
 
-    wm_rect_t content = {
-        frame.x+1,
-        frame.y+(int32_t)title_h+1,
-        frame.w>2u?frame.w-2u:frame.w,
-        frame.h>title_h+2u?frame.h-title_h-2u:0u
-    };
     if (content.h) {
         if (is_unscaled(window)) {
             wm_canvas_blit(canvas, content, window->surface,
-                           window->frame.w, window->frame.h, 0u, 0u, opacity);
+                           window->frame.w, window->frame.h, 0u, 0u,
+                           opacity, window->surface_opaque);
         } else {
             wm_canvas_blit_scaled(canvas, content, window->surface,
                                   window->frame.w, window->frame.h, opacity,

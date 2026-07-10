@@ -488,4 +488,5 @@ int lapic_timer_start(uint8_t vector, uint32_t initial_count, int periodic, uint
     return -1;
 }
 void lapic_timer_stop(void) {}
+void lapic_timer_ap_init(void) {}
 void lapic_send_ipi(uint8_t apic_id, uint32_t icr_low) { (void)apic_id; (void)icr_low; }

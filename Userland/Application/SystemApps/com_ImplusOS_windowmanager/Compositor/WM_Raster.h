@@ -20,7 +20,7 @@ void wm_canvas_line(wm_canvas_t *canvas, int32_t x0, int32_t y0,
 void wm_canvas_blit(wm_canvas_t *canvas, wm_rect_t destination,
                     const uint32_t *source, uint32_t source_width,
                     uint32_t source_height, uint32_t source_x,
-                    uint32_t source_y, uint8_t opacity);
+                    uint32_t source_y, uint8_t opacity, bool force_opaque);
 void wm_canvas_blit_scaled(wm_canvas_t *canvas, wm_rect_t destination,
                            const uint32_t *source, uint32_t source_width,
                            uint32_t source_height, uint8_t opacity,

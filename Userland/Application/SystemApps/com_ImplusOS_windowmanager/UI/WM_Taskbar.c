@@ -184,15 +184,18 @@ void wm_taskbar_draw(wm_state_t *state, wm_canvas_t *canvas)
     if (launcher_bg)
         wm_canvas_fill_rounded(canvas, launcher, 8u, launcher_bg);
     {
-        uint32_t dot_color = state->launcher_open ?
-            state->theme.accent : state->theme.text;
-        int32_t lx = launcher.x + (int32_t)(launcher.w - 12u) / 2;
-        int32_t ly = launcher.y + (int32_t)(launcher.h - 12u) / 2;
-        for (int r = 0; r < 3; r++)
-            for (int c = 0; c < 3; c++)
-                wm_canvas_fill(canvas,
-                    (wm_rect_t){lx + c * 5, ly + r * 5, 3u, 3u},
-                    dot_color | 0xFF000000u);
+        wm_icon_image_t *logo = &state->assets.system_icons.logo;
+        uint32_t isz = 24u;
+        int32_t ix = launcher.x + (int32_t)(launcher.w - isz) / 2;
+        int32_t iy = launcher.y + (int32_t)(launcher.h - isz) / 2;
+        if (logo->pixels && logo->width > 0 && logo->height > 0) {
+            wm_canvas_blit_scaled(canvas, (wm_rect_t){ix, iy, isz, isz},
+                                  logo->pixels, logo->width, logo->height, 255u, 2u);
+        } else {
+            uint32_t rect_color = state->launcher_open ? state->theme.accent : state->theme.text;
+            wm_canvas_fill_rounded(canvas, (wm_rect_t){ix, iy, isz, isz}, 4u,
+                                   rect_color | 0xFF000000u);
+        }
         (void)cy;
     }
 

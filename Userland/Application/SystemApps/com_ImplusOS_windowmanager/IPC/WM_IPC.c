@@ -535,6 +535,21 @@ void wm_ipc_handle_message(wm_state_t *state, const ipc_message_t *message)
     case WM_SET_WINDOW_ICON_PATH:
         handle_icon_path(state, message, header);
         break;
+    case WM_SET_WINDOW_SURFACE_OPAQUE: {
+        struct opaque_message {
+            wm_msg_header_t header;
+            bool opaque;
+        };
+        if (!message_has(message, sizeof(struct opaque_message))) break;
+        window = owned_window(state, message, header);
+        if (!window) break;
+        bool opaque = ((const struct opaque_message *)message->data)->opaque;
+        if (window->surface_opaque != opaque) {
+            window->surface_opaque = opaque;
+            wm_window_mark_frame_damage(state, window);
+        }
+        break;
+    }
     case WM_SET_THEME: {
         struct theme_message {
             wm_msg_header_t header;

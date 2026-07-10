@@ -306,7 +306,7 @@ static bool wm_canvas_blit_scaled_fast(wm_canvas_t *canvas,
 void wm_canvas_blit(wm_canvas_t *canvas, wm_rect_t destination,
                     const uint32_t *source, uint32_t source_width,
                     uint32_t source_height, uint32_t source_x,
-                    uint32_t source_y, uint8_t opacity)
+                    uint32_t source_y, uint8_t opacity, bool force_opaque)
 {
     if (!canvas || !canvas->pixels || !source || destination.w == 0u ||
         destination.h == 0u || source_width == 0u || source_height == 0u ||
@@ -327,6 +327,10 @@ void wm_canvas_blit(wm_canvas_t *canvas, wm_rect_t destination,
         uint32_t *dst = &canvas->pixels[
             (uint32_t)(visible.y + (int32_t)row) * canvas->stride +
             (uint32_t)visible.x];
+        if (force_opaque && opacity == 255u) {
+            memcpy(dst, src, (size_t)visible.w * sizeof(uint32_t));
+            continue;
+        }
         if (opacity == 255u) {
             bool opaque = true;
             for (uint32_t col = 0u; col < visible.w; ++col) {
@@ -343,7 +347,7 @@ void wm_canvas_blit(wm_canvas_t *canvas, wm_rect_t destination,
 
         for (uint32_t col = 0u; col < visible.w; ++col) {
             uint32_t color = src[col];
-            uint32_t alpha = color >> 24u;
+            uint32_t alpha = force_opaque ? 255u : color >> 24u;
             if (opacity != 255u)
                 alpha = (alpha * (uint32_t)opacity + 127u) / 255u;
             if (alpha == 0u) continue;

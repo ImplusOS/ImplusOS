@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "kernel/config.h"
 
 typedef struct __attribute__((packed)) {
     char vendor[16];
@@ -101,3 +102,11 @@ typedef struct __attribute__((packed)) {
     system_memory_info_t memory;
     system_vmem_info_t vmem;
 } system_info_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t cpu_count;
+    uint32_t reserved;
+    uint64_t timestamp_ns;
+    uint64_t wall_ns;
+    uint64_t idle_ns[OS_CONFIG_SMP_MAX_CPUS];
+} system_cpu_usage_t;

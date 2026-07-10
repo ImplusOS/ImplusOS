@@ -46,6 +46,17 @@ static void mark_content_damage_on_screen(wm_state_t *state,
         return;
     }
 
+    if (!window->is_system) {
+        wm_rect_t visible_content = {
+            0,
+            0,
+            window->frame.w > 2u ? window->frame.w - 2u : 0u,
+            window->frame.h > 2u ? window->frame.h - 2u : 0u
+        };
+        clipped = wm_rect_intersection(clipped, visible_content);
+        if (!clipped.w || !clipped.h) return;
+    }
+
     wm_rect_t screen = {
         window->frame.x + clipped.x,
         window->frame.y +

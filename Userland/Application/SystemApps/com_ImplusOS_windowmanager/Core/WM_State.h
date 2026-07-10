@@ -164,6 +164,7 @@ typedef struct wm_window {
     uint32_t *surface;
     uint32_t surface_bytes;
     int32_t surface_shared_memory_handle;
+    bool surface_opaque;
     wm_region_t damage;
     uint32_t transaction_depth;
     bool transaction_dirty;
@@ -254,6 +255,7 @@ typedef struct {
     wm_icon_image_t window;
     wm_icon_image_t application;
     wm_icon_image_t search;
+    wm_icon_image_t logo;
 } wm_system_icons_t;
 
 typedef struct {

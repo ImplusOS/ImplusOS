@@ -107,7 +107,18 @@ typedef struct __attribute__((packed)) {
 
 #include "Error.h"
 
+#define OS_CPU_USAGE_MAX_CORES 16
+
+typedef struct __attribute__((packed)) {
+    uint32_t cpu_count;
+    uint32_t reserved;
+    uint64_t timestamp_ns;
+    uint64_t wall_ns;
+    uint64_t idle_ns[OS_CPU_USAGE_MAX_CORES];
+} system_cpu_usage_t;
+
 int64_t os_get_cpu_info(system_cpu_info_t *out_info);
+int64_t os_get_cpu_usage(system_cpu_usage_t *out_usage);
 int64_t os_get_memory_info(system_memory_info_t *out_info);
 int64_t os_get_vmem_info(system_vmem_info_t *out_info);
 int64_t os_get_disk_count(uint32_t *out_count);

@@ -8,6 +8,8 @@
 #include "Drivers/Module/InputManager.h"
 #include "Drivers/Module/AudioManager.h"
 #include "Core/process/ProcessManager.h"
+#include "Core/process/ProcessScheduler.h"
+#include "smp/SMP_Main.h"
 #include "Core/memory/SharedMemory.h"
 #include "Core/sysinfo/SystemInfo.h"
 #include "IPC/IPC_Main.h"
@@ -1278,29 +1280,51 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
 
         case SYSCALL_GET_DISPLAY_FRAMEBUFFER: {
             void *ptr = driver_manager_display_get_framebuffer();
-            if (ptr != NULL) {
-                uint64_t cr3 = process_get_current_cr3();
-                uint32_t w = driver_manager_display_width();
-                uint32_t h = driver_manager_display_height();
-                uint32_t stride = w;
-                display_mode_info_t mode_info = {0};
-                if (driver_manager_display_get_monitor_mode_info(0u, 0u,
-                                                                  &mode_info) &&
-                    mode_info.stride >= w) {
-                    stride = mode_info.stride;
-                }
-                uint64_t size = (uint64_t)stride * (uint64_t)h * 4ULL;
-                uint64_t start = (uint64_t)(uintptr_t)ptr;
-                uint64_t end = start + size;
-                uint64_t aligned_start = start & ~4095ULL;
-                uint64_t aligned_end = (end + 4095ULL) & ~4095ULL;
+            if (ptr == NULL) {
+                set_syscall_result(saved_rsp, 0);
+                break;
+            }
+            uint64_t cr3 = process_get_current_cr3();
+            uint32_t w = driver_manager_display_width();
+            uint32_t h = driver_manager_display_height();
+            uint32_t stride = w;
+            display_mode_info_t mode_info = {0};
+            if (driver_manager_display_get_monitor_mode_info(0u, 0u,
+                                                              &mode_info) &&
+                mode_info.stride >= w) {
+                stride = mode_info.stride;
+            }
+            uint64_t size = (uint64_t)stride * (uint64_t)h * 4ULL;
+            
+            uint64_t user_virt = 0x00000047E0000000ULL; 
+            
+            uint64_t start_virt = (uint64_t)(uintptr_t)ptr;
+            uint64_t aligned_start_virt = start_virt & ~4095ULL;
+            uint64_t aligned_end_virt = (start_virt + size + 4095ULL) & ~4095ULL;
+            uint64_t num_pages = (aligned_end_virt - aligned_start_virt) / 4096ULL;
 
-                int res = paging_set_user_access(cr3, aligned_start, aligned_end - aligned_start, 1);
-                if (res < 0) {
-                    ptr = NULL;
+            int res = 0;
+            for (uint64_t i = 0; i < num_pages; ++i) {
+                uint64_t kvirt = aligned_start_virt + i * 4096ULL;
+
+                uint64_t phys_page = paging_virt_to_phys(paging_get_kernel_cr3(), kvirt);
+                if (phys_page == 0) {
+                    res = -1;
+                    break;
+                }
+                
+                uint64_t virt_page = user_virt + i * 4096ULL;
+
+                if (paging_map_user_page(cr3, virt_page, phys_page, PAGE_RW | PAGE_USER | PAGE_EXTERNAL) < 0) {
+                    res = -1;
+                    break;
                 }
             }
-            set_syscall_result(saved_rsp, (uint64_t)(uintptr_t)ptr);
+            if (res < 0) {
+                set_syscall_result(saved_rsp, 0);
+            } else {
+                set_syscall_result(saved_rsp, user_virt + (start_virt & 4095ULL));
+            }
             break;
         }
 
@@ -2373,6 +2397,32 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
             set_syscall_status(saved_rsp, status);
+            break;
+        }
+
+        case SYSCALL_GET_CPU_USAGE: {
+            system_cpu_usage_t *usage_out =
+                (system_cpu_usage_t *)(uintptr_t)arg1;
+            if (!user_buffer_ok(usage_out, sizeof(system_cpu_usage_t))) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_cpu_usage_buffer");
+                break;
+            }
+            system_cpu_usage_t usage = {0};
+            uint64_t now_ns = timer_monotonic_ns();
+            usage.cpu_count = smp_get_cpu_count();
+            if (usage.cpu_count == 0) usage.cpu_count = 1;
+            usage.timestamp_ns = now_ns;
+            usage.wall_ns = now_ns;
+            for (uint32_t i = 0; i < usage.cpu_count && i < process_scheduler_max_cpus(); i++) {
+                usage.idle_ns[i] = process_scheduler_get_idle_ns(i);
+            }
+            if (copy_to_user(usage_out, &usage, sizeof(usage)) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT,
+                             "invalid_cpu_usage_buffer");
+                break;
+            }
+            set_syscall_status(saved_rsp, OS_STATUS_OK);
             break;
         }
 

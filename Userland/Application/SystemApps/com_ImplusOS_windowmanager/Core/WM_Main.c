@@ -137,6 +137,7 @@ void wm_service_init(wm_state_t *state)
     }
 
     (void)wm_assets_init_metadata(&state->assets);
+    (void)wm_assets_load_logo(&state->assets);
 
     (void)wm_display_update_from_system(state);
     uint32_t width  = state->display_topology.width;

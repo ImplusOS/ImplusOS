@@ -482,9 +482,10 @@ QEMU_NET_DEVICES ?= \
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE),accel=tcg \
-	-smp 4,sockets=1,cores=4,threads=1 \
+	-smp 16,sockets=1,cores=4,threads=4 \
 	-m 8192 \
 	-device ich9-ahci,id=sata \
+	-device ac97 \
 	$(QEMU_INPUT_DEVICES) \
 	$(QEMU_NET_DEVICES) \
 	-display $(QEMU_DISPLAY) \

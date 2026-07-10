@@ -393,7 +393,7 @@ int32_t page_fault_handler(uint64_t error_code,
         serial_write_string("[OS] [PF] Page fault in kernel mode, halting\n");
     }
 
-    panic_exception("page_fault", 14, error_code, rip, kernel_rsp, rbp, cr2);
+    panic_exception("page_fault", 14, error_code, rip, frame_rsp, rbp, cr2);
     return -1;
 }
 

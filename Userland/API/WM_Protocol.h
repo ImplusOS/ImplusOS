@@ -53,6 +53,7 @@
 #define WM_END_TRANSACTION     104
 #define WM_SET_CURSOR          110
 #define WM_SET_WINDOW_ICON_PATH 111
+#define WM_SET_WINDOW_SURFACE_OPAQUE 112
 
 
 #define WM_STATUS_OK             0

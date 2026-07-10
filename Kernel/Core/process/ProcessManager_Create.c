@@ -43,7 +43,8 @@
 #endif
 #define PROCESS_ELF_MAX_SIZE (20ULL * 1024ULL * 1024ULL)
 
-#define IA32_FS_BASE 0xC0000100U
+#define IA32_FS_BASE      0xC0000100U
+#define IA32_KERNEL_GS_BASE 0xC0000102U
 
 static inline uint64_t rdmsr_fs_base(void)
 {
@@ -66,6 +67,33 @@ static inline void wrmsr_fs_base(uint64_t val)
     uint32_t lo = (uint32_t)(val & 0xFFFFFFFFU);
     uint32_t hi = (uint32_t)(val >> 32);
     __asm__ volatile("wrmsr" :: "c"(IA32_FS_BASE), "a"(lo), "d"(hi) : "memory");
+#endif
+}
+
+static inline void wrmsr_gs_base(uint64_t val)
+{
+    hal_cpu_write_gs_base(val);
+}
+
+static inline uint64_t rdmsr_kernel_gs_base(void)
+{
+#if defined(__aarch64__)
+    return 0;
+#else
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(IA32_KERNEL_GS_BASE));
+    return ((uint64_t)hi << 32) | lo;
+#endif
+}
+
+static inline void wrmsr_kernel_gs_base(uint64_t val)
+{
+#if defined(__aarch64__)
+    (void)val;
+#else
+    uint32_t lo = (uint32_t)(val & 0xFFFFFFFFU);
+    uint32_t hi = (uint32_t)(val >> 32);
+    __asm__ volatile("wrmsr" :: "c"(IA32_KERNEL_GS_BASE), "a"(lo), "d"(hi) : "memory");
 #endif
 }
 
@@ -144,6 +172,7 @@ static inline void current_pid_set(int32_t pid)
 
 static void halt_forever(void)
 {
+    hal_cpu_disable_interrupts();
     while (1) {
         process_cpu_halt();
     }
@@ -355,6 +384,7 @@ static void save_syscall_frame_to_process(process_t *proc, uint64_t current_save
 {
     if (proc == NULL || current_saved_rsp == 0) return;
     proc->saved_rsp = current_saved_rsp;
+    proc->gs_base = hal_cpu_read_gs_base();
 }
 
 static void reset_process_slot(process_t *proc)
@@ -376,6 +406,7 @@ static void reset_process_slot(process_t *proc)
     initialize_fpu_state(proc->fpu_state);
 
     proc->fs_base = 0;
+    proc->gs_base = 0;
 
     proc->cr3 = 0;
     proc->kernel_stack_base = NULL;
@@ -656,6 +687,7 @@ static void activate_process_context(process_t *proc)
     gdt_set_kernel_rsp0(proc->kernel_stack_top);
 
     wrmsr_fs_base(proc->fs_base);
+    wrmsr_kernel_gs_base(proc->gs_base);
 }
 
 static void mark_process_runnable(process_t *proc, uint64_t entry, int32_t parent_pid)
@@ -952,6 +984,7 @@ static int initialize_process_memory(process_t *proc,
     initialize_fpu_state(proc->fpu_state);
 
     proc->fs_base = 0;
+    proc->gs_base = 0;
 
     uint64_t *kstack = (uint64_t *)proc->kernel_stack_top;
     kstack -= PROCESS_CONTEXT_QWORDS;
@@ -1066,6 +1099,7 @@ void process_manager_init(void)
 
     initialize_fpu_state(g_processes[0].fpu_state);
     g_processes[0].fs_base = 0;
+    g_processes[0].gs_base = 0;
     g_processes[0].cr3 = paging_get_kernel_cr3();
 
     current_pid_set(0);
@@ -1320,6 +1354,7 @@ int32_t process_create_thread(uint64_t entry,
 
     initialize_fpu_state(thread->fpu_state);
     thread->fs_base = current->fs_base;
+    thread->gs_base = current->gs_base;
 
     uint64_t *kstack = (uint64_t *)thread->kernel_stack_top;
     kstack -= PROCESS_CONTEXT_QWORDS;
@@ -1573,6 +1608,7 @@ int32_t process_fork(void)
 
     child->capability_mask = parent->capability_mask;
     child->fs_base = parent->fs_base;
+    child->gs_base = parent->gs_base;
     memcpy(child->fpu_state, parent->fpu_state, PROCESS_FPU_STATE_SIZE);
 
     uint64_t *parent_kstack = (uint64_t *)(uintptr_t)parent->saved_rsp;
@@ -1834,6 +1870,7 @@ int32_t process_execve(const char *path, const char *const *argv,
     proc->signal_mask = 0;
     proc->pending_signals = 0;
     proc->fs_base = 0;
+    proc->gs_base = 0;
 
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -2225,6 +2262,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         process_fpu_save(current->fpu_state);
         
         current->fs_base = rdmsr_fs_base();
+        current->gs_base = rdmsr_kernel_gs_base();
 
         if (do_switch && original_state != PROCESS_STATE_BLOCKED) {
             current->state = PROCESS_STATE_READY;
@@ -2241,11 +2279,11 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         current->state = PROCESS_STATE_RUNNING;
         
         process_fpu_restore(current->fpu_state);
+        activate_process_context(current);
         
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
-
-        activate_process_context(current);
+        
         if (next_user_rsp_out != NULL) {
             *next_user_rsp_out = return_user_rsp;
         }
@@ -2255,10 +2293,19 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
     int32_t next_pid = process_scheduler_pick_next(g_processes,
                                                    g_process_capacity,
                                                    current_pid_get());
+                                                   
+    static int embed_count = 0;
     while (next_pid < 0) {
+        uint32_t ecpu = smp_get_current_cpu_id();
+        if (ecpu != 0u && embed_count < 5) {
+            embed_count++;
+            debug_printf("[AP%u] embed_idle\r\n", ecpu);
+        }
         spinlock_unlock(&g_process_table_lock);
         hal_cpu_enable_interrupts();
+        uint64_t idle_start_ns = timer_monotonic_ns();
         process_cpu_halt();
+        process_scheduler_add_idle_ns(timer_monotonic_ns() - idle_start_ns);
         hal_cpu_disable_interrupts();
         spinlock_lock(&g_process_table_lock);
 
@@ -2279,11 +2326,10 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
     uint64_t next_user_rsp = next->saved_user_rsp;
     
     process_fpu_restore(next->fpu_state);
+    activate_process_context(next);
     
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
-
-    activate_process_context(next);
 
     if (next_user_rsp_out != NULL) {
         *next_user_rsp_out = next_user_rsp;
@@ -2327,10 +2373,9 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
     uint64_t next_saved_rsp = next->saved_rsp;
     uint64_t next_user_rsp = next->saved_user_rsp;
     process_fpu_restore(next->fpu_state);
+    activate_process_context(next);
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
-
-    activate_process_context(next);
 
     if (next_user_rsp_out != NULL) {
         *next_user_rsp_out = next_user_rsp;
@@ -2388,10 +2433,9 @@ int process_run_next_on_current_cpu(void)
     uint64_t next_cr3 = next->cr3;
     process_fpu_restore(next->fpu_state);
 
+    activate_process_context(next);
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
-
-    activate_process_context(next);
 
     const arch_ops_t *ops = arch_ops_get();
     if (ops != NULL && ops->enter_user_mode != NULL) {

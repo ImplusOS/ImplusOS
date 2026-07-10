@@ -160,6 +160,20 @@ void hal_cpu_write_fs_base(uint64_t val)
     __asm__ volatile("wrmsr" :: "c"(0xC0000100U), "a"(lo), "d"(hi) : "memory");
 }
 
+uint64_t hal_cpu_read_gs_base(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000101U));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+void hal_cpu_write_gs_base(uint64_t val)
+{
+    uint32_t lo = (uint32_t)(val & 0xFFFFFFFFU);
+    uint32_t hi = (uint32_t)(val >> 32);
+    __asm__ volatile("wrmsr" :: "c"(0xC0000101U), "a"(lo), "d"(hi) : "memory");
+}
+
 void hal_cpu_save_fpu(uint8_t *state)
 {
     __asm__ volatile("fxsave64 %0" : "=m"(*(uint8_t (*)[512])state) :: "memory");

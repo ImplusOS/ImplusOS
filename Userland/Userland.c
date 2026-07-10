@@ -449,8 +449,16 @@ static void draw_char(int x, int y, utf8_codepoint_t cp,
     );
 
     uint32_t *fb = (uint32_t*)sys_get_display_framebuffer();
+    if (!fb) {
+        free(bitmap);
+        return;
+    }
     int screen_w = (int)get_display_width();
     int screen_h = (int)get_display_height();
+    if (screen_w <= 0 || screen_h <= 0) {
+        free(bitmap);
+        return;
+    }
 
     for (int py = 0; py < height; ++py) {
         for (int px = 0; px < width; ++px) {
@@ -1052,9 +1060,6 @@ void _start(void) {
         "/Userland/SystemApps/com_ImplusOS_windowmanager/com_ImplusOS_windowmanager.ELF",
     };
     int32_t wm_spawn_pid = spawn_with_fallbacks(com_ImplusOS_windowmanager, 1);
-    serial_write_string("[userland] wm spawn pid=");
-    serial_write_i32(wm_spawn_pid);
-    serial_write_string("\n");
     process_yield();
 
     int32_t wm_pid = -1;

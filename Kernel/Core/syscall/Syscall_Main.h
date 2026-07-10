@@ -178,6 +178,8 @@
 #define SYSCALL_AUDIO_DRAIN       233
 #define SYSCALL_AUDIO_CLOSE       234
 
+#define SYSCALL_GET_CPU_USAGE     235
+
 #define SYSCALL_KVM_OPEN          240
 #define SYSCALL_KVM_IOCTL         241
 #define SYSCALL_KVM_CLOSE         242

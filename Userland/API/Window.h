@@ -54,3 +54,4 @@ void window_damage(window_id_t wid, uint32_t x, uint32_t y, uint32_t w, uint32_t
 void window_begin_transaction(window_id_t wid);
 void window_end_transaction(window_id_t wid);
 int32_t window_set_icon_path(window_id_t wid, const char *path);
+int32_t window_set_surface_opaque(window_id_t wid, bool opaque);

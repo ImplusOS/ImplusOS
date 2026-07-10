@@ -12,6 +12,9 @@
 #include "cpu/IDT_Main.h"
 #include "cpu/GDT_Main.h"
 #include "Core/syscall/Syscall_Main.h"
+#include "Core/process/ProcessScheduler.h"
+#include "Core/timer/Timer.h"
+#include "Debug/printf/printf.h"
 #include <string.h>
 
 #include <stdint.h>
@@ -130,14 +133,41 @@ void ap_entry_c(void)
     init_idt_per_cpu();
     syscall_init_per_cpu();
 
+    /* Per-CPU MSR setup: EFER (NX), LAPIC */
+    {
+        uint32_t msr = 0xC0000080U;
+        uint32_t lo, hi;
+        __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+        lo |= (1u << 11);
+        __asm__ volatile("wrmsr" :: "a"(lo), "d"(hi), "c"(msr) : "memory");
+    }
+
     __atomic_fetch_add(&g_cpu_online, 1u, __ATOMIC_SEQ_CST);
 
+    lapic_ap_init();
+
+    lapic_timer_ap_init();
     hal_cpu_enable_interrupts();
+    debug_printf("[AP%u] LAPIC timer started, ints enabled, entering loop\r\n", cpu_idx);
+    uint64_t ap_iter = 0;
     while (1) {
-        if (process_run_next_on_current_cpu() != 0) {
+        int found_proc = process_run_next_on_current_cpu();
+        if (found_proc != 0) {
             continue;
         }
+        if (++ap_iter <= 10) {
+            debug_printf("[AP%u] idle (iter=%u)\r\n", cpu_idx, (uint32_t)ap_iter);
+        }
+        if (ap_iter == 10) {
+            debug_printf("[AP%u] ... suppressing further idle prints\r\n", cpu_idx);
+        }
+        uint64_t idle_start_ns = timer_monotonic_ns();
         hal_cpu_halt();
+        uint64_t idle_ns = timer_monotonic_ns() - idle_start_ns;
+        process_scheduler_add_idle_ns(idle_ns);
+        if (ap_iter <= 5 && idle_ns > 0) {
+            debug_printf("[AP%u] idle_ns=%llu\r\n", cpu_idx, (unsigned long long)idle_ns);
+        }
     }
 }
 

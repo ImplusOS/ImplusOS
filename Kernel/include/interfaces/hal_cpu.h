@@ -29,5 +29,7 @@ uint64_t hal_cpu_get_current_el(void);
 void hal_cpu_set_vbar(void *vbar);
 uint64_t hal_cpu_read_fs_base(void);
 void hal_cpu_write_fs_base(uint64_t val);
+uint64_t hal_cpu_read_gs_base(void);
+void hal_cpu_write_gs_base(uint64_t val);
 void hal_cpu_save_fpu(uint8_t *state);
 void hal_cpu_restore_fpu(uint8_t *state);

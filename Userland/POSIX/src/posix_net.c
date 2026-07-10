@@ -250,6 +250,7 @@ int posix_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     }
 
     uint64_t deadline = get_uptime_ms() + 10000u;
+    uint32_t sleep_time = 1u;
     for (;;) {
         if (socket_get_info(sockfd, &info) < 0) {
             errno = EIO;
@@ -260,7 +261,11 @@ int posix_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
             errno = ETIMEDOUT;
             return -1;
         }
-        sleep_ms(1u);
+        uint64_t remaining = deadline - get_uptime_ms();
+        uint32_t cur_sleep = (remaining < (uint64_t)sleep_time) ? (uint32_t)remaining : sleep_time;
+        if (cur_sleep < 1u) { cur_sleep = 1u; }
+        sleep_ms(cur_sleep);
+        if (sleep_time < 5u) { sleep_time++; }
     }
     os_errno = 0;
     return 0;
@@ -326,6 +331,7 @@ ssize_t posix_send(int sockfd, const void *buf, size_t len, int flags)
         ((flags & MSG_DONTWAIT) != 0) ||
         ((entry->status_flags & POSIX_SFL_NONBLOCK) != 0);
 
+    uint32_t send_sleep = 1u;
     for (;;) {
         int32_t r = socket_send((int32_t)sockfd, buf, (uint32_t)len);
         if (r > 0 || len == 0u) {
@@ -340,7 +346,8 @@ ssize_t posix_send(int sockfd, const void *buf, size_t len, int flags)
             errno = EAGAIN;
             return -1;
         }
-        sleep_ms(1u);
+        sleep_ms(send_sleep);
+        if (send_sleep < 5u) { send_sleep++; }
     }
 }
 
@@ -366,6 +373,7 @@ ssize_t posix_recv(int sockfd, void *buf, size_t len, int flags)
         ((flags & MSG_DONTWAIT) != 0) ||
         ((entry->status_flags & POSIX_SFL_NONBLOCK) != 0);
 
+    uint32_t recv_sleep = 1u;
     for (;;) {
         int32_t r = socket_recv((int32_t)sockfd, buf, (uint32_t)len);
         if (r > 0 || len == 0u) {
@@ -386,7 +394,8 @@ ssize_t posix_recv(int sockfd, void *buf, size_t len, int flags)
             errno = EAGAIN;
             return -1;
         }
-        sleep_ms(1u);
+        sleep_ms(recv_sleep);
+        if (recv_sleep < 5u) { recv_sleep++; }
     }
 }
 

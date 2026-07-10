@@ -6,6 +6,7 @@ static int32_t g_current_pid_per_cpu[OS_CONFIG_SMP_MAX_CPUS];
 static int32_t g_last_pick_per_cpu[OS_CONFIG_SMP_MAX_CPUS];
 static uint8_t g_resched_per_cpu[OS_CONFIG_SMP_MAX_CPUS];
 static uint32_t g_timeslice_ticks = 4;
+static uint64_t g_cpu_idle_ns[OS_CONFIG_SMP_MAX_CPUS];
 
 static uint32_t scheduler_cpu_id(void)
 {
@@ -21,8 +22,7 @@ static int scheduler_pid_running_on_other_cpu(const process_t *processes,
                                               int32_t pid,
                                               uint32_t current_cpu)
 {
-    if (processes == 0 || pid < 0 || pid >= capacity ||
-        processes[pid].state != PROCESS_STATE_RUNNING) {
+    if (processes == 0 || pid < 0 || pid >= capacity) {
         return 0;
     }
     for (uint32_t cpu = 0; cpu < OS_CONFIG_SMP_MAX_CPUS; ++cpu) {
@@ -40,6 +40,7 @@ void process_scheduler_init(uint32_t timeslice_ticks)
         g_current_pid_per_cpu[i] = -1;
         g_last_pick_per_cpu[i] = -1;
         g_resched_per_cpu[i] = 0;
+        g_cpu_idle_ns[i] = 0;
     }
 }
 
@@ -85,6 +86,9 @@ int32_t process_scheduler_pick_next(process_t *processes,
         if (processes[idx].state == PROCESS_STATE_READY &&
             !scheduler_pid_running_on_other_cpu(processes, capacity,
                                                 idx, cpu)) {
+            if (cpu != 0u && (idx == 0 || idx == 1)) {
+                continue;
+            }
             return idx;
         }
     }
@@ -94,6 +98,9 @@ int32_t process_scheduler_pick_next(process_t *processes,
                                             current_pid, cpu) &&
         (processes[current_pid].state == PROCESS_STATE_RUNNING ||
          processes[current_pid].state == PROCESS_STATE_READY)) {
+        if (cpu != 0u && (current_pid == 0 || current_pid == 1)) {
+            return -1;
+        }
         return current_pid;
     }
 
@@ -145,4 +152,21 @@ void process_scheduler_prepare_run(process_t *proc)
     proc->state = PROCESS_STATE_RUNNING;
     proc->timeslice = g_timeslice_ticks;
     g_resched_per_cpu[scheduler_cpu_id()] = 0u;
+}
+
+void process_scheduler_add_idle_ns(uint64_t ns)
+{
+    uint32_t cpu = scheduler_cpu_id();
+    g_cpu_idle_ns[cpu] += ns;
+}
+
+uint64_t process_scheduler_get_idle_ns(uint32_t cpu)
+{
+    if (cpu >= (uint32_t)OS_CONFIG_SMP_MAX_CPUS) return 0;
+    return g_cpu_idle_ns[cpu];
+}
+
+uint32_t process_scheduler_max_cpus(void)
+{
+    return (uint32_t)OS_CONFIG_SMP_MAX_CPUS;
 }
