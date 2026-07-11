@@ -114,10 +114,29 @@ void wm_compositor_generate_background(wm_state_t *state)
                    state->compositor.framebuffer_width);
     wm_canvas_fill(&canvas, display_bounds(state), state->theme.bg_bottom);
     if (state->assets.wallpaper_pixels) {
-        wm_canvas_blit_scaled(&canvas, display_bounds(state),
-            state->assets.wallpaper_pixels,
-            state->assets.wallpaper_width,
-            state->assets.wallpaper_height, 255u, 0u);
+        uint32_t fb_w = state->compositor.framebuffer_width;
+        uint32_t fb_h = state->compositor.framebuffer_height;
+        uint32_t img_w = state->assets.wallpaper_width;
+        uint32_t img_h = state->assets.wallpaper_height;
+        if (img_w > 0u && img_h > 0u) {
+            uint32_t dest_w, dest_h;
+            int32_t dest_x, dest_y;
+            if ((uint64_t)fb_w * img_h >= (uint64_t)fb_h * img_w) {
+                dest_w = fb_w;
+                dest_h = (uint32_t)(((uint64_t)img_h * fb_w + img_w / 2u) / img_w);
+                dest_x = 0;
+                dest_y = (int32_t)(((int64_t)fb_h - (int64_t)dest_h) / 2);
+            } else {
+                dest_h = fb_h;
+                dest_w = (uint32_t)(((uint64_t)img_w * fb_h + img_h / 2u) / img_h);
+                dest_x = (int32_t)(((int64_t)fb_w - (int64_t)dest_w) / 2);
+                dest_y = 0;
+            }
+            wm_rect_t dest = {dest_x, dest_y, dest_w, dest_h};
+            wm_canvas_blit_scaled(&canvas, dest,
+                state->assets.wallpaper_pixels,
+                img_w, img_h, 255u, 0u);
+        }
     }
 }
 
@@ -357,6 +376,12 @@ void wm_compositor_render(wm_state_t *state, uint64_t now_ms)
                        state->compositor.framebuffer_height,
                        state->compositor.framebuffer_width);
         wm_canvas_set_clip(&canvas, rect);
+        {
+            wm_rect_t taskbar = wm_taskbar_rect(state);
+            wm_rect_t tb_intersect = wm_rect_intersection(taskbar, rect);
+            if (tb_intersect.w != 0u && tb_intersect.h != 0u)
+                wm_canvas_blur(&canvas, tb_intersect, 12u);
+        }
         draw_scene(state, &canvas);
         wm_taskbar_draw(state, &canvas);
         wm_start_menu_draw(state, &canvas);

@@ -1,76 +1,78 @@
 #include "NIC.h"
 
 #include "Drivers/Module/DriverManager.h"
+#include "Drivers/Module/DeviceRegistry.h"
 
 static volatile uint32_t g_poll_pending = 0;
-
-static const driver_nic_t *get_nic_driver(void)
-{
-    const device_t *device = driver_manager_find(DEVICE_TYPE_NIC, NULL);
-    return device ? (const driver_nic_t *)device->ops : NULL;
-}
+static const driver_nic_t *g_active_driver = NULL;
 
 bool nic_init(void)
 {
-    const driver_nic_t *driver = get_nic_driver();
-    if (driver == NULL || driver->init == NULL) {
-        return false;
+    if (g_active_driver != NULL) {
+        return true;
     }
-    return driver->init();
+
+    for (uint32_t i = 0;; ++i) {
+        const device_t *dev = device_registry_find_by_index(DEVICE_TYPE_NIC, i);
+        if (dev == NULL) {
+            break;
+        }
+        const driver_nic_t *driver = (const driver_nic_t *)dev->ops;
+        if (driver != NULL && driver->init != NULL && driver->init()) {
+            g_active_driver = driver;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool nic_is_ready(void)
 {
-    const driver_nic_t *driver = get_nic_driver();
-    if (driver == NULL || driver->is_ready == NULL) {
+    if (g_active_driver == NULL || g_active_driver->is_ready == NULL) {
         return false;
     }
-    return driver->is_ready();
+    return g_active_driver->is_ready();
 }
 
 uint16_t nic_mtu(void)
 {
-    const driver_nic_t *driver = get_nic_driver();
-    if (driver == NULL || driver->mtu == NULL) {
+    if (g_active_driver == NULL || g_active_driver->mtu == NULL) {
         return 0;
     }
-    return driver->mtu();
+    return g_active_driver->mtu();
 }
 
 void nic_get_mac(uint8_t mac_out[6])
 {
-    const driver_nic_t *driver = get_nic_driver();
-    if (driver == NULL || driver->get_mac == NULL) {
+    if (g_active_driver == NULL || g_active_driver->get_mac == NULL) {
         return;
     }
-    driver->get_mac(mac_out);
+    g_active_driver->get_mac(mac_out);
 }
 
 bool nic_send_frame(const uint8_t *frame, uint16_t frame_len)
 {
-    const driver_nic_t *driver = get_nic_driver();
-    if (driver == NULL || driver->send_frame == NULL) {
+    if (g_active_driver == NULL || g_active_driver->send_frame == NULL) {
         return false;
     }
-    return driver->send_frame(frame, frame_len);
+    return g_active_driver->send_frame(frame, frame_len);
 }
 
 void nic_poll(void)
 {
-    const driver_nic_t *driver = get_nic_driver();
-    if (driver == NULL || driver->poll == NULL) {
+    if (g_active_driver == NULL || g_active_driver->poll == NULL) {
         return;
     }
-    driver->poll();
+    g_active_driver->poll();
 }
 
 void nic_set_rx_callback(nic_rx_callback_t cb)
 {
-    const driver_nic_t *driver = get_nic_driver();
-    if (driver == NULL || driver->set_rx_callback == NULL) {
+    if (g_active_driver == NULL || g_active_driver->set_rx_callback == NULL) {
         return;
     }
-    driver->set_rx_callback(cb);
+    g_active_driver->set_rx_callback(cb);
 }
 
 void nic_schedule_poll(void)

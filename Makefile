@@ -456,8 +456,6 @@ image_livecd: all
 		-V IMPLUSOS \
 		-e esp.img \
 		-no-emul-boot \
-		-part_like_isohybrid \
-		-isohybrid-gpt-basdat \
 		-o $(LIVECD_IMAGE) \
 		$(IMAGE_STAGE_DIR)
 
@@ -477,8 +475,8 @@ QEMU_INPUT_DEVICES := \
 	-device usb-kbd,bus=xhci.0 \
 	-device usb-mouse,bus=xhci.0
 QEMU_NET_DEVICES ?= \
-	-netdev user,id=net0 \
-	-device virtio-net-pci,netdev=net0
+  -netdev user,id=net0 \
+  -device e1000e,netdev=net0
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE),accel=tcg \

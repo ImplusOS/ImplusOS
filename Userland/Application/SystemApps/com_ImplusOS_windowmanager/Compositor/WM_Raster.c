@@ -498,3 +498,12 @@ void wm_canvas_blur(wm_canvas_t *canvas, wm_rect_t rect, uint32_t radius)
     }
     free(temporary);
 }
+
+void wm_canvas_acrylic(wm_canvas_t *canvas, wm_rect_t rect,
+                       uint32_t corner_radius, uint32_t blur_radius,
+                       uint32_t tint_color)
+{
+    if (!canvas || rect.w == 0u || rect.h == 0u) return;
+    wm_canvas_blur(canvas, rect, blur_radius);
+    wm_canvas_fill_rounded(canvas, rect, corner_radius, tint_color);
+}

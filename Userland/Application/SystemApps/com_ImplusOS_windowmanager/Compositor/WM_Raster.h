@@ -29,3 +29,6 @@ void wm_canvas_draw_icon(wm_canvas_t *canvas, wm_rect_t destination,
                          const wm_icon_image_t *icon, uint8_t opacity,
                          uint32_t corner_radius, uint32_t fallback_color);
 void wm_canvas_blur(wm_canvas_t *canvas, wm_rect_t rect, uint32_t radius);
+void wm_canvas_acrylic(wm_canvas_t *canvas, wm_rect_t rect,
+                       uint32_t corner_radius, uint32_t blur_radius,
+                       uint32_t tint_color);

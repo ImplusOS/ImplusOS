@@ -1070,13 +1070,12 @@ void _start(void) {
     }
 
     if (wm_pid >= 0) {
-        /* TODO: fix Memory leaking  */
-        //static const char *const com_ImplusOS_sysnotif[] = {
-            //"/Userland/SystemApps/com_ImplusOS_sysnotif/com_ImplusOS_sysnotif.ELF",
-        //};
-        //spawn_with_fallbacks(com_ImplusOS_sysnotif, 1);
-        //(200);
-        //window_show_notification("System", "Welcome to ImplusOS!");
+        static const char *const com_ImplusOS_sysnotif[] = {
+            "/Userland/SystemApps/com_ImplusOS_sysnotif/com_ImplusOS_sysnotif.ELF",
+        };
+        spawn_with_fallbacks(com_ImplusOS_sysnotif, 1);
+        sleep_ms(200);
+        window_show_notification("System", "Welcome to ImplusOS!");
     }
 
     /* pls remove it in release version */

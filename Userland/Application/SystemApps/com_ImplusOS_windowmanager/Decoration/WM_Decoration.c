@@ -264,28 +264,39 @@ void wm_decoration_draw_window(wm_state_t *state, wm_canvas_t *canvas,
 
     draw_shadow(state, canvas, window, frame, opacity);
 
+    {
+        wm_rect_t blur_area = frame;
+        wm_rect_t canvas_full = {0, 0, canvas->width, canvas->height};
+        wm_rect_t visible = wm_rect_intersection(blur_area, canvas_full);
+        if (visible.w != 0u && visible.h != 0u)
+            wm_canvas_blur(canvas, visible, 8u);
+    }
+
     wm_canvas_fill_rounded(canvas, frame, state->theme.corner_radius,
                            apply_opacity(state->theme.border, opacity));
     wm_rect_t inner = {frame.x+1, frame.y+1,
                        frame.w>2u?frame.w-2u:frame.w,
                        frame.h>2u?frame.h-2u:frame.h};
+    uint32_t surf_alpha = ((uint32_t)opacity * 0xCCu) / 255u;
+    uint32_t surf_tint = (state->theme.surface & 0x00FFFFFFu) | (surf_alpha << 24u);
     wm_canvas_fill_rounded(canvas, inner,
                            state->theme.corner_radius>0u?state->theme.corner_radius-1u:0u,
-                           apply_opacity(state->theme.surface, opacity));
-                           
+                           surf_tint);
+                            
     wm_rect_t title_rect = {frame.x+1, frame.y+1,
-                            frame.w>2u?frame.w-2u:frame.w, title_h};
+                             frame.w>2u?frame.w-2u:frame.w, title_h};
     uint32_t title_color = window->has_focus ?
         state->theme.title_active : state->theme.title_inactive;
     uint32_t top_r = state->theme.corner_radius > 0u ?
         state->theme.corner_radius - 1u : 0u;
-    wm_canvas_fill_rounded(canvas, title_rect, top_r,
-                           apply_opacity(title_color, opacity));
+    uint32_t title_alpha_val = ((uint32_t)opacity * 0xCCu) / 255u;
+    uint32_t title_tint = (title_color & 0x00FFFFFFu) | (title_alpha_val << 24u);
+    wm_canvas_fill_rounded(canvas, title_rect, top_r, title_tint);
     if (title_rect.h > top_r) {
         wm_canvas_fill(canvas,
             (wm_rect_t){title_rect.x, title_rect.y+(int32_t)top_r,
                         title_rect.w, title_rect.h-top_r},
-            apply_opacity(title_color, opacity));
+            title_tint);
     }
     if (window->has_focus && title_rect.w > 2u) {
         wm_canvas_fill_rounded(canvas,

@@ -104,12 +104,6 @@ static bool cursor_in(const wm_state_t *state, wm_rect_t r)
            cy >= r.y && cy < r.y + (int32_t)r.h;
 }
 
-static uint32_t apply_opacity(uint32_t color, uint8_t opacity)
-{
-    uint32_t alpha = ((color >> 24u) * (uint32_t)opacity) / 255u;
-    return (color & 0x00FFFFFFu) | (alpha << 24u);
-}
-
 static uint32_t visible_window_count(const wm_state_t *state)
 {
     uint32_t count = 0u;
@@ -163,7 +157,8 @@ void wm_taskbar_draw(wm_state_t *state, wm_canvas_t *canvas)
     if (dock.w == 0u) return;
     if (!wm_rect_intersects(dock, canvas->clip)) return;
 
-    wm_canvas_fill(canvas, dock, state->theme.dock);
+    uint32_t dock_tint = (state->theme.dock & 0x00FFFFFFu) | (0xA0u << 24u);
+    wm_canvas_fill(canvas, dock, dock_tint);
     wm_canvas_fill(canvas,
         (wm_rect_t){0,
 #if WM_TASKBAR_AT_TOP

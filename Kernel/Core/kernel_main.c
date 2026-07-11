@@ -548,6 +548,7 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     disk_io_debug_dump("boot");
     process_debug_dump_summary("boot");
     timer_start_services();
+    serial_set_screen_mirror(debug_putchar);
 
     uint64_t user_rsp = process_get_current_user_rsp();
     uint64_t saved_rsp = process_get_current_saved_rsp();
