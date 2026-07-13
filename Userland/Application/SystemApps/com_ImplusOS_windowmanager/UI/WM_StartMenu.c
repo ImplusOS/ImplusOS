@@ -154,7 +154,7 @@ void wm_start_menu_draw(wm_state_t *state, wm_canvas_t *canvas)
     wm_canvas_fill_rounded(canvas,
         (wm_rect_t){menu.x + 3, menu.y + 5, menu.w, menu.h},
         16u, 0x1A000000u);
-    wm_canvas_blur(canvas, menu, 10u);
+    wm_canvas_blur(canvas, menu, 6u);
     wm_canvas_fill_rounded(canvas, menu, 16u, state->theme.border);
     uint32_t menu_tint = (state->theme.surface & 0x00FFFFFFu) | (0xCCu << 24u);
     wm_canvas_fill_rounded(canvas,

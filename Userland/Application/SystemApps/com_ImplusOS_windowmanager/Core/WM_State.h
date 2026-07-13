@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "../../../../../Userland/API/IPC.h"
 #include "../../../../../Userland/API/Input.h"
@@ -44,6 +45,34 @@ typedef struct {
     uint32_t w;
     uint32_t h;
 } wm_rect_t;
+
+typedef enum {
+    WM_DIALOG_INFO = 0,
+    WM_DIALOG_WARNING,
+    WM_DIALOG_ERROR
+} wm_dialog_type_t;
+
+#define WM_DIALOG_TITLE_MAX 64
+#define WM_DIALOG_MSG_MAX 256
+
+typedef struct {
+    char title[WM_DIALOG_TITLE_MAX];
+    char message[WM_DIALOG_MSG_MAX];
+    wm_dialog_type_t type;
+    bool active;
+    bool dragging;
+    bool hover_close;
+    bool hover_ok;
+    int32_t x;
+    int32_t y;
+    uint32_t w;
+    uint32_t h;
+    int32_t drag_start_x;
+    int32_t drag_start_y;
+    int32_t drag_origin_x;
+    int32_t drag_origin_y;
+    uint64_t start_ms;
+} wm_dialog_t;
 
 typedef struct {
     wm_rect_t rects[WM_MAX_DAMAGE_RECTS];
@@ -322,6 +351,15 @@ typedef struct {
 } wm_input_state_t;
 
 typedef struct {
+    time_t ntp_base_sec;
+    uint64_t ntp_base_uptime_ms;
+    uint64_t ntp_poll_start_ms;
+    uint16_t ntp_local_port;
+    uint32_t ntp_server_ip;
+    bool ntp_ready;
+} wm_ntp_state_t;
+
+typedef struct {
     wm_scene_t scene;
     wm_compositor_t compositor;
     display_topology_t display_topology;
@@ -349,7 +387,9 @@ typedef struct {
     char search_text[WM_SEARCH_MAX];
     uint32_t search_len;
     bool search_active;
+    wm_dialog_t dialog;
     bool running;
+    wm_ntp_state_t ntp;
 } wm_state_t;
 
 extern wm_state_t g_wm_state;

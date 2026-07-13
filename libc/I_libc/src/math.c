@@ -508,9 +508,19 @@ double ldexp(double x, int exp)
     return x * pow(2.0, (double)exp);
 }
 
+double scalbn(double x, int exp)
+{
+    return ldexp(x, exp);
+}
+
 float ldexpf(float x, int exp)
 {
     return x * powf(2.0f, (float)exp);
+}
+
+float scalbnf(float x, int exp)
+{
+    return ldexpf(x, exp);
 }
 
 double hypot(double x, double y)
@@ -592,6 +602,11 @@ float rintf(float x)
     return roundf(x);
 }
 
+long double scalbnl(long double x, int exp)
+{
+    return (long double)scalbn((double)x, exp);
+}
+
 double fmin(double x, double y)
 {
     if (__builtin_isnan(x)) return y;
@@ -653,4 +668,14 @@ double frexp(double x, int *exp)
     while (abs_x < 0.5) { abs_x *= 2.0; e--; }
     *exp = e;
     return x > 0 ? abs_x : -abs_x;
+}
+
+float frexpf(float x, int *exp)
+{
+    return (float)frexp((double)x, exp);
+}
+
+long double frexpl(long double x, int *exp)
+{
+    return (long double)frexp((double)x, exp);
 }

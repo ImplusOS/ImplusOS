@@ -1096,5 +1096,7 @@ void _start(void) {
     g_font_buffer = NULL;
     g_font_loaded = 0;
 
-    while (1) sleep_ms(1000u);
+    while (1) {
+        sleep_ms(1000u);
+    }
 }

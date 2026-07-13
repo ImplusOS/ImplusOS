@@ -46,6 +46,15 @@ static volatile int malloc_lock_state;
 
 #define MALLOC_ALIGNMENT 16u
 #define MALLOC_PAGE_SIZE 4096u
+/*
+ * The kernel backs each SYSCALL_USER_MMAP chunk with a per-process user
+ * allocation slot (PROCESS_USER_ALLOC_MAX). free() never releases chunks back
+ * to the kernel, so every distinct chunk permanently consumes one slot. Grow
+ * the heap in large arenas (splitting the remainder onto the free-list) so
+ * heavy apps such as NetSurf do not exhaust the kernel slot pool and can still
+ * map shared surfaces (window backing stores) afterwards.
+ */
+#define MALLOC_ARENA_MIN (256u * 1024u)
 
 static size_t malloc_align(size_t size)
 {
@@ -129,6 +138,9 @@ void* malloc(size_t size) {
     alloc_size = malloc_align(size + sizeof(malloc_block_t));
     alloc_size = (alloc_size + (MALLOC_PAGE_SIZE - 1u)) &
         ~((size_t)(MALLOC_PAGE_SIZE - 1u));
+    if (alloc_size < MALLOC_ARENA_MIN) {
+        alloc_size = MALLOC_ARENA_MIN;
+    }
     block = (malloc_block_t*)syscall2(SYSCALL_USER_MMAP, alloc_size, 0);
     if (!block) {
         malloc_unlock();

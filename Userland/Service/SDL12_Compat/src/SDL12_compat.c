@@ -395,6 +395,24 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags)
         return NULL;
     }
 
+    if (g_window != 0) {
+        uint32_t x = 120;
+        uint32_t y = 80;
+        uint32_t old_w = 0;
+        uint32_t old_h = 0;
+        (void)window_get_rect(g_window, &x, &y, &old_w, &old_h);
+        window_release_backing_store(g_window);
+        window_set_rect(g_window, x, y, (uint32_t)width, (uint32_t)height);
+    }
+
+    uint32_t fb_w = 0;
+    uint32_t fb_h = 0;
+    uint32_t *pixels = window_get_backing_store(g_window, &fb_w, &fb_h);
+    if ((!pixels || fb_w == 0 || fb_h == 0) && g_window != 0) {
+        window_destroy(g_window);
+        g_window = 0;
+    }
+
     if (g_window == 0) {
         g_window = window_create_ex(120, 80, (uint32_t)width, (uint32_t)height,
                                     0xff000000u, "NetSurf");
@@ -408,22 +426,12 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags)
         window_show(g_window);
         window_raise(g_window);
         window_set_focus(g_window);
-    } else {
-        uint32_t x = 120;
-        uint32_t y = 80;
-        uint32_t old_w = 0;
-        uint32_t old_h = 0;
-        (void)window_get_rect(g_window, &x, &y, &old_w, &old_h);
-        window_release_backing_store(g_window);
-        window_set_rect(g_window, x, y, (uint32_t)width, (uint32_t)height);
-    }
 
-    uint32_t fb_w = 0;
-    uint32_t fb_h = 0;
-    uint32_t *pixels = window_get_backing_store(g_window, &fb_w, &fb_h);
-    if (!pixels || fb_w == 0 || fb_h == 0) {
-        sdl12_set_error("window_get_backing_store failed");
-        return NULL;
+        pixels = window_get_backing_store(g_window, &fb_w, &fb_h);
+        if (!pixels || fb_w == 0 || fb_h == 0) {
+            sdl12_set_error("window_get_backing_store failed");
+            return NULL;
+        }
     }
 
     setup_format(bpp == 0 ? 32 : bpp);

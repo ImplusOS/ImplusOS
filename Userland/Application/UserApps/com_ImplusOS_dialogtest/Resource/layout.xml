@@ -1,0 +1,6 @@
+<Panel width="320" height="280" bgColor="#FF1E1E2E">
+    <Label x="20" y="14" width="280" height="20" fontSize="14" color="#FFCDD6F4">Click a button to show a popup dialog:</Label>
+    <Button x="20" y="44" width="200" height="44" bgColor="#FF42A5F5" fontSize="14" color="#FFFFFFFF">INFO</Button>
+    <Button x="20" y="104" width="200" height="44" bgColor="#FFFFA726" fontSize="14" color="#FFFFFFFF">WARNING</Button>
+    <Button x="20" y="164" width="200" height="44" bgColor="#FFE53935" fontSize="14" color="#FFFFFFFF">ERROR</Button>
+</Panel>

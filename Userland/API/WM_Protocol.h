@@ -41,6 +41,7 @@
 #define WM_SET_LAYOUT_XML_END   62
 #define WM_UPDATE_CLOCK         70
 #define WM_SHOW_NOTIFICATION    80
+#define WM_SHOW_DIALOG          81
 
 #define WM_SET_THEME            90
 #define WM_RELOAD_BACKGROUND    91
@@ -69,6 +70,7 @@
 #define WM_CAP_THEME_ENGINE     (1u << 3)
 #define WM_CAP_NOTIFICATIONS    (1u << 4)
 #define WM_CAP_SHARED_SURFACE   (1u << 5)
+#define WM_CAP_DIALOGS          (1u << 6)
 
 
 typedef struct {

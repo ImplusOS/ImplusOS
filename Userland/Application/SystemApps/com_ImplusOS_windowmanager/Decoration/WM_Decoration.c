@@ -264,12 +264,12 @@ void wm_decoration_draw_window(wm_state_t *state, wm_canvas_t *canvas,
 
     draw_shadow(state, canvas, window, frame, opacity);
 
-    {
+    if (!window->is_system) {
         wm_rect_t blur_area = frame;
         wm_rect_t canvas_full = {0, 0, canvas->width, canvas->height};
         wm_rect_t visible = wm_rect_intersection(blur_area, canvas_full);
         if (visible.w != 0u && visible.h != 0u)
-            wm_canvas_blur(canvas, visible, 8u);
+            wm_canvas_blur(canvas, visible, 3u);
     }
 
     wm_canvas_fill_rounded(canvas, frame, state->theme.corner_radius,

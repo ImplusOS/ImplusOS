@@ -44,7 +44,9 @@ void* bsearch(const void* key, const void* base, size_t nmemb, size_t size,
 
 #define RAND_MAX 0x7fff
 
+#ifndef IMPLUSOS_FFMPEG_BUILD
 char* getenv(const char* name);
+#endif
 int setenv(const char *name, const char *value, int overwrite);
 int unsetenv(const char *name);
 int putenv(char *string);

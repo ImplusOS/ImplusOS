@@ -7,6 +7,9 @@ All libraries should be managed dynamically by the `Makefile` in this directory.
 1. Place the library source in a subdirectory.
 2. Update the `Makefile` to include the library in the build process.
 3. The built library (e.g., `libz.a`) will be placed in `Build/Vendor/Library/`.
+4. For FFmpeg, keep the source as a Git submodule at `Vendor/Library/ffmpeg` and build
+   the static libraries `libavutil.a`, `libavcodec.a`, `libavformat.a`, and
+   `libswscale.a`.
 
 ## Usage
 The top-level `Makefile` triggers the build of this directory.

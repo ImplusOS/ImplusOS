@@ -379,15 +379,14 @@ int32_t page_fault_handler(uint64_t error_code,
 
         process_exit_current();
 
-        uint64_t next_user_rsp = 0;
-        uint64_t next_saved_rsp = process_schedule_after_exit(&next_user_rsp);
+        serial_write_string("[OS] [PF] Idle-waiting for scheduler...\n");
 
-        int32_t next_pid = process_get_current_pid();
-        serial_write_string("[OS] [PF] Switched to pid=");
-        serial_write_uint32((uint32_t)next_pid);
-        serial_write_string("\n");
+        while (!process_run_next_on_current_cpu()) {
+            hal_cpu_enable_interrupts();
+            hal_cpu_halt();
+        }
 
-        syscall_enter_user_from_frame(next_saved_rsp, next_user_rsp);
+        return -1;
     } else {
         kernel_panic("PAGE_FAULT", "Page fault in kernel mode");
         serial_write_string("[OS] [PF] Page fault in kernel mode, halting\n");

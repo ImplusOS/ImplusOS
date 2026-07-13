@@ -116,13 +116,14 @@ static void timer_debug_dump_async_poll(uint64_t interval_ns)
 
 static void timer_core_handler(void) {
     uint32_t cpu_id = smp_get_current_cpu_id();
+    if (cpu_id != 0u) {
+        return;
+    }
+
     if (__atomic_load_n(&g_timer_services_started, __ATOMIC_ACQUIRE) != 0u) {
         process_on_timer_tick();
     }
 
-    if (cpu_id != 0u) {
-        return;
-    }
     g_tick_count++;
 
     if (__atomic_load_n(&g_timer_clock_started, __ATOMIC_ACQUIRE) != 0u) {

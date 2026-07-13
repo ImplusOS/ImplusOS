@@ -147,3 +147,13 @@ https://www.netsurf-browser.org/projects/library/
 
 License file:
 Docs/OSS_License/LICENSEFILE/NetSurf_libraries
+
+FFmpeg
+
+Most files are under the GNU Lesser General Public License version 2.1 or later (LGPL v2.1+).
+Some optional GPL parts are not used in this build.
+See:
+https://ffmpeg.org/legal.html
+
+License file:
+Docs/OSS_License/LICENSEFILE/ffmpeg

@@ -55,3 +55,8 @@ void window_begin_transaction(window_id_t wid);
 void window_end_transaction(window_id_t wid);
 int32_t window_set_icon_path(window_id_t wid, const char *path);
 int32_t window_set_surface_opaque(window_id_t wid, bool opaque);
+
+void window_show_dialog(uint32_t type, const char *title, const char *message);
+void window_show_info(const char *title, const char *message);
+void window_show_warning(const char *title, const char *message);
+void window_show_error(const char *title, const char *message);

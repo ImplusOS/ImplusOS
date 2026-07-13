@@ -17,14 +17,21 @@
 #define HUGE_VAL  (__builtin_huge_val())
 #define INFINITY  (__builtin_inff())
 #define NAN       (__builtin_nanf(""))
+#define FP_NAN    0
+#define FP_INFINITE 1
+#define FP_ZERO   2
+#define FP_SUBNORMAL 3
+#define FP_NORMAL 4
 
 static inline int __isnan(double x) { return __builtin_isnan(x); }
 static inline int __isinf(double x) { return __builtin_isinf(x); }
 static inline int __isfinite(double x) { return __builtin_isfinite(x); }
+static inline int __isnormal(double x) { return __builtin_isnormal(x); }
 static inline int __fpclassify(double x) { return __builtin_fpclassify(0, 1, 2, 3, 4, x); }
 #define isnan(x) __isnan(x)
 #define isinf(x) __isinf(x)
 #define isfinite(x) __isfinite(x)
+#define isnormal(x) __isnormal(x)
 #define fpclassify(x) __fpclassify(x)
 
 static inline int __isnanf(float x) { return __builtin_isnan(x); }
@@ -41,6 +48,7 @@ double ceil(double x);
 double fmod(double x, double y);
 double fabs(double x);
 double ldexp(double x, int exp);
+double scalbn(double x, int exp);
 double log(double x);
 double log10(double x);
 double log2(double x);
@@ -56,14 +64,6 @@ double tanh(double x);
 double asinh(double x);
 double acosh(double x);
 double atanh(double x);
-
-double hypot(double x, double y);
-double cbrt(double x);
-double round(double x);
-double trunc(double x);
-double nearbyint(double x);
-double rint(double x);
-
 double logb(double x);
 double log1p(double x);
 double expm1(double x);
@@ -71,10 +71,24 @@ double expm1(double x);
 double fmin(double x, double y);
 double fmax(double x, double y);
 double fma(double x, double y, double z);
-double copysign(double x, double y);
 double signbit(double x);
 double modf(double x, double *iptr);
 double frexp(double x, int *exp);
+float frexpf(float x, int *exp);
+long double frexpl(long double x, int *exp);
+
+#ifndef IMPLUSOS_FFMPEG_BUILD
+double hypot(double x, double y);
+double cbrt(double x);
+double round(double x);
+double trunc(double x);
+double nearbyint(double x);
+double rint(double x);
+double copysign(double x, double y);
+float cbrtf(float x);
+float roundf(float x);
+float truncf(float x);
+#endif
 
 /* float variants */
 float sinf(float x);
@@ -89,6 +103,7 @@ float logf(float x);
 float log10f(float x);
 float log2f(float x);
 float expf(float x);
+float scalbnf(float x, int exp);
 float asinf(float x);
 float acosf(float x);
 float atanf(float x);
@@ -97,12 +112,19 @@ float sinhf(float x);
 float coshf(float x);
 float tanhf(float x);
 float hypotf(float x, float y);
-float cbrtf(float x);
-float roundf(float x);
-float truncf(float x);
 float nearbyintf(float x);
 float rintf(float x);
+float fminf(float x, float y);
+float fmaxf(float x, float y);
 float fmodf(float x, float y);
+
+/* Bessel functions */
+double j0(double x);
+double j1(double x);
+double jn(int n, double x);
+double y0(double x);
+double y1(double x);
+double yn(int n, double x);
 float ldexpf(float x, int exp);
 
 /* long double variants */
@@ -116,3 +138,4 @@ long double fabsl(long double x);
 long double powl(long double x, long double y);
 long double logl(long double x);
 long double expl(long double x);
+long double scalbnl(long double x, int exp);

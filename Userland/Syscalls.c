@@ -481,9 +481,9 @@ int32_t window_register_service(void)
 
 int32_t window_get_wm_pid(void)
 {
-    if (g_cached_wm_pid >= 0) return g_cached_wm_pid;
     int32_t pid = (int32_t)syscall0(SYSCALL_WINDOW_GET_WM_PID);
     if (pid < 0) {
+        g_cached_wm_pid = -1;
         os_set_errno(EFAULT);
         return -1;
     }
@@ -1169,6 +1169,41 @@ void window_show_notification(const char *title, const char *message)
     ipc_send_message(window_get_wm_pid(), &cmd, sizeof(cmd));
 }
 
+void window_show_dialog(uint32_t type, const char *title, const char *message)
+{
+    struct {
+        wm_msg_header_t hdr;
+        uint32_t type;
+        char title[64];
+        char message[128];
+    } cmd;
+
+    if (!title || !message) return;
+
+    cmd.hdr.type = WM_SHOW_DIALOG;
+    cmd.hdr.window_id = 0;
+    cmd.type = type;
+    os_strcpy_s(cmd.title, sizeof(cmd.title), title);
+    os_strcpy_s(cmd.message, sizeof(cmd.message), message);
+
+    ipc_send_message(window_get_wm_pid(), &cmd, sizeof(cmd));
+}
+
+void window_show_info(const char *title, const char *message)
+{
+    window_show_dialog(0u, title, message);
+}
+
+void window_show_warning(const char *title, const char *message)
+{
+    window_show_dialog(1u, title, message);
+}
+
+void window_show_error(const char *title, const char *message)
+{
+    window_show_dialog(2u, title, message);
+}
+
 uint32_t window_get_capabilities(void)
 {
     wm_msg_header_t command;
@@ -1201,22 +1236,14 @@ uint32_t window_get_capabilities(void)
     return 0;
 }
 
-uint32_t *window_get_backing_store(window_id_t wid, uint32_t *out_w, uint32_t *out_h)
+static uint32_t *window_get_backing_store_internal(window_id_t wid, uint32_t *out_w, uint32_t *out_h, int32_t wm_pid)
 {
-    if (out_w) *out_w = 0u;
-    if (out_h) *out_h = 0u;
-    if (wid == 0u) {
-        os_set_errno(EINVAL);
-        return NULL;
-    }
-
     wm_msg_header_t request;
     memset(&request, 0, sizeof(request));
     request.type = WM_GET_BACKING_STORE;
     request.request_id = ++g_wm_request_id;
     request.window_id = wid;
 
-    int32_t wm_pid = window_get_wm_pid();
     if (wm_pid < 0 ||
         ipc_send_message(wm_pid, &request, sizeof(request)) < 0) {
         return NULL;
@@ -1291,6 +1318,32 @@ uint32_t *window_get_backing_store(window_id_t wid, uint32_t *out_w, uint32_t *o
         process_yield();
     }
     os_set_errno(ETIMEDOUT);
+    return NULL;
+}
+
+uint32_t *window_get_backing_store(window_id_t wid, uint32_t *out_w, uint32_t *out_h)
+{
+    if (out_w) *out_w = 0u;
+    if (out_h) *out_h = 0u;
+    if (wid == 0u) {
+        os_set_errno(EINVAL);
+        return NULL;
+    }
+
+    int32_t wm_pid = window_get_wm_pid();
+    if (wm_pid < 0) {
+        return NULL;
+    }
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+        uint32_t *pixels = window_get_backing_store_internal(wid, out_w, out_h, wm_pid);
+        if (pixels) return pixels;
+
+        if (os_get_errno() != ETIMEDOUT) {
+            break;
+        }
+    }
+
     return NULL;
 }
 

@@ -3,9 +3,12 @@
 #include "../Compositor/WM_Raster.h"
 #include "../Font/WM_Font.h"
 #include "../../../../../Userland/API/Time.h"
+#include "../../../../../Userland/API/Network.h"
+#include "../../../../../Userland/API/Process.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static const char *month_names[] = {
     "Jan","Feb","Mar","Apr","May","Jun",
@@ -14,6 +17,8 @@ static const char *month_names[] = {
 static const char *day_names[] = {
     "Sun","Mon","Tue","Wed","Thu","Fri","Sat"
 };
+
+#define NTP_TIMEOUT_MS   5000u
 
 #define TB_LAUNCHER_W   48u
 #define TB_TRAY_W       80u
@@ -33,25 +38,112 @@ static uint32_t day_of_week(uint32_t y, uint32_t m, uint32_t d)
 bool wm_taskbar_update_clock(wm_state_t *state)
 {
     if (!state) return false;
-    rtc_time_t t;
-    if (sys_get_rtc_time(&t) < 0) return false;
 
     char next_clock[sizeof(state->clock_text)] = {0};
     char next_date[sizeof(state->date_text)] = {0};
-    snprintf(next_clock, sizeof(next_clock),
-             "%02u:%02u:%02u",
-             (unsigned)t.hour, (unsigned)t.minute, (unsigned)t.second);
-    uint32_t dow = day_of_week(t.year, t.month, t.day);
-    uint32_t mon_idx = t.month >= 1u && t.month <= 12u ? t.month - 1u : 0u;
-    snprintf(next_date, sizeof(next_date),
-             "%s %u %s",
-             day_names[dow % 7u], (unsigned)t.day, month_names[mon_idx]);
+
+    if (state->ntp.ntp_ready) {
+        uint64_t now_ms = get_uptime_ms();
+        uint64_t elapsed_ms = now_ms > state->ntp.ntp_base_uptime_ms ?
+            now_ms - state->ntp.ntp_base_uptime_ms : 0u;
+        time_t now_sec = state->ntp.ntp_base_sec + (time_t)(elapsed_ms / 1000ULL);
+        struct tm result;
+        if (gmtime_r(&now_sec, &result)) {
+            snprintf(next_clock, sizeof(next_clock),
+                     "%02d:%02d:%02d",
+                     result.tm_hour, result.tm_min, result.tm_sec);
+            uint32_t mon_idx = result.tm_mon >= 0 && result.tm_mon < 12 ?
+                (uint32_t)result.tm_mon : 0u;
+            snprintf(next_date, sizeof(next_date),
+                     "%s %d %s",
+                     day_names[(uint32_t)result.tm_wday % 7u],
+                     result.tm_mday, month_names[mon_idx]);
+        } else {
+            return false;
+        }
+    } else {
+        rtc_time_t t;
+        if (sys_get_rtc_time(&t) < 0) return false;
+        snprintf(next_clock, sizeof(next_clock),
+                 "%02u:%02u:%02u",
+                 (unsigned)t.hour, (unsigned)t.minute, (unsigned)t.second);
+        uint32_t dow = day_of_week(t.year, t.month, t.day);
+        uint32_t mon_idx = t.month >= 1u && t.month <= 12u ? t.month - 1u : 0u;
+        snprintf(next_date, sizeof(next_date),
+                 "%s %u %s",
+                 day_names[dow % 7u], (unsigned)t.day, month_names[mon_idx]);
+    }
 
     if (strcmp(state->clock_text, next_clock) == 0 &&
         strcmp(state->date_text, next_date) == 0) return false;
     memcpy(state->clock_text, next_clock, sizeof(state->clock_text));
     memcpy(state->date_text, next_date, sizeof(state->date_text));
     return true;
+}
+
+void wm_taskbar_start_ntp(wm_state_t *state)
+{
+    if (!state || state->ntp.ntp_local_port != 0u) return;
+
+    uint32_t ip = dns_resolve("time.google.com");
+    if (ip == 0u) return;
+
+    uint16_t port = 0u;
+    for (uint16_t try_port = 49152u; try_port < 65535u; ++try_port) {
+        if (udp_bind_port(try_port) >= 0) { port = try_port; break; }
+    }
+    if (port == 0u) return;
+
+    uint8_t packet[48] = {0};
+    packet[0] = 0x1Bu;
+    if (!udp_send(ip, port, 123u, packet, 48)) {
+        udp_unbind_port(port);
+        return;
+    }
+
+    state->ntp.ntp_server_ip = ip;
+    state->ntp.ntp_local_port = port;
+    state->ntp.ntp_poll_start_ms = get_uptime_ms();
+    state->ntp.ntp_ready = false;
+}
+
+void wm_taskbar_poll_ntp(wm_state_t *state)
+{
+    if (!state || state->ntp.ntp_local_port == 0u) return;
+
+    uint64_t now_ms = get_uptime_ms();
+    if (now_ms - state->ntp.ntp_poll_start_ms > NTP_TIMEOUT_MS) {
+        udp_unbind_port(state->ntp.ntp_local_port);
+        state->ntp.ntp_local_port = 0u;
+        return;
+    }
+
+    uint8_t buf[8u + 48u];
+    int32_t received = udp_recv(state->ntp.ntp_local_port, buf, sizeof(buf));
+    if (received <= 0) return;
+
+    if (received < 8 + 48) {
+        udp_unbind_port(state->ntp.ntp_local_port);
+        state->ntp.ntp_local_port = 0u;
+        return;
+    }
+
+    uint32_t ntp_sec = ((uint32_t)buf[48] << 24u) | ((uint32_t)buf[49] << 16u) |
+                       ((uint32_t)buf[50] << 8u) | (uint32_t)buf[51];
+
+    if (ntp_sec < 2208988800u) {
+        udp_unbind_port(state->ntp.ntp_local_port);
+        state->ntp.ntp_local_port = 0u;
+        return;
+    }
+    time_t unix_sec = (time_t)(ntp_sec - 2208988800u);
+
+    state->ntp.ntp_base_sec = unix_sec;
+    state->ntp.ntp_base_uptime_ms = get_uptime_ms();
+    state->ntp.ntp_ready = true;
+
+    udp_unbind_port(state->ntp.ntp_local_port);
+    state->ntp.ntp_local_port = 0u;
 }
 
 wm_rect_t wm_taskbar_rect(const wm_state_t *state)

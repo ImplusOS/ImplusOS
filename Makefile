@@ -114,6 +114,7 @@ SYSTEM_APP_DIRS := \
 
 USER_APP_DIRS := \
 	Userland/Application/UserApps/com_ImplusOS_exampleApp \
+	Userland/Application/UserApps/com_ImplusOS_dialogtest \
 	Userland/Application/UserApps/com_ImplusOS_ImplusStore \
 	Userland/Application/UserApps/com_ImplusOS_NetworkTest \
 	Userland/Application/UserApps/com_ImplusOS_curlSocketProbe \
@@ -129,6 +130,11 @@ USER_APP_DIRS := \
 	Userland/Application/UserApps/doom \
 	Userland/Application/UserApps/NetSurf \
 	Userland/Application/UserApps/com_ImplusOS_watermark
+
+FFMPEG_VENDOR_DIR := Vendor/Library/ffmpeg
+ifneq ($(wildcard $(FFMPEG_VENDOR_DIR)/configure),)
+USER_APP_DIRS += Userland/Application/UserApps/com_ImplusOS_ffmpegTest
+endif
 
 LIBRARY_C_SRCS := $(shell find Library -name "*.c" 2>/dev/null)
 
@@ -456,6 +462,8 @@ image_livecd: all
 		-V IMPLUSOS \
 		-e esp.img \
 		-no-emul-boot \
+		-part_like_isohybrid \
+		-isohybrid-gpt-basdat \
 		-o $(LIVECD_IMAGE) \
 		$(IMAGE_STAGE_DIR)
 
@@ -475,8 +483,8 @@ QEMU_INPUT_DEVICES := \
 	-device usb-kbd,bus=xhci.0 \
 	-device usb-mouse,bus=xhci.0
 QEMU_NET_DEVICES ?= \
-  -netdev user,id=net0 \
-  -device e1000e,netdev=net0
+	-netdev user,id=net0 \
+	-device virtio-net-pci,netdev=net0
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE),accel=tcg \

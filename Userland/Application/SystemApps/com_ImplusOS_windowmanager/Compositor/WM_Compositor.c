@@ -5,6 +5,7 @@
 #include "../Decoration/WM_Decoration.h"
 #include "../SceneGraph/WM_Node.h"
 #include "../UI/WM_Notification.h"
+#include "../UI/WM_Dialog.h"
 #include "../UI/WM_StartMenu.h"
 #include "../UI/WM_Taskbar.h"
 #include "../../../../../Userland/Syscalls.h"
@@ -380,12 +381,13 @@ void wm_compositor_render(wm_state_t *state, uint64_t now_ms)
             wm_rect_t taskbar = wm_taskbar_rect(state);
             wm_rect_t tb_intersect = wm_rect_intersection(taskbar, rect);
             if (tb_intersect.w != 0u && tb_intersect.h != 0u)
-                wm_canvas_blur(&canvas, tb_intersect, 12u);
+                wm_canvas_blur(&canvas, tb_intersect, 4u);
         }
         draw_scene(state, &canvas);
         wm_taskbar_draw(state, &canvas);
         wm_start_menu_draw(state, &canvas);
         wm_notification_draw(state, &canvas, now_ms);
+        wm_dialog_draw(state, &canvas);
     }
 
     draw_cursor_on_shadow(state);

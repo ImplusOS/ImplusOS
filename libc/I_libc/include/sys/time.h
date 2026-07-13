@@ -14,3 +14,4 @@ struct timezone {
 };
 
 int gettimeofday(struct timeval* tv, struct timezone* tz);
+int utimes(const char *path, const struct timeval times[2]);

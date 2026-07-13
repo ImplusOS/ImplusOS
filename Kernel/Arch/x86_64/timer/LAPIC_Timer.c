@@ -6,6 +6,7 @@
 #include "Platform/io/IO_Main.h"
 #include "Platform/interrupt/LAPIC.h"
 #include "Platform/interrupt/Interrupts.h"
+#include "Arch/x86_64/smp/SMP_Main.h"
 #include "Debug/serial/Serial.h"
 #include "interfaces/hal_cpu.h"
 
@@ -39,6 +40,9 @@ static void pit_set_frequency(uint32_t hz) {
 }
 
 static void lapic_timer_handler(void) {
+    if (smp_get_current_cpu_id() != 0u) {
+        return;
+    }
     __atomic_fetch_add(&g_ticks, 1u, __ATOMIC_RELAXED);
     if (g_timer_callback) {
         g_timer_callback();

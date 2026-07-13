@@ -9,6 +9,7 @@
 #include "../SceneGraph/WM_Node.h"
 #include "../Theme/WM_Theme.h"
 #include "../UI/WM_Notification.h"
+#include "../UI/WM_Dialog.h"
 #include "../../../../../Userland/API/XMLParser.h"
 #include "../../../../../Userland/Syscalls.h"
 
@@ -615,6 +616,26 @@ void wm_ipc_handle_message(wm_state_t *state, const ipc_message_t *message)
         wm_notification_add(state, title, body);
         break;
     }
+    case WM_SHOW_DIALOG: {
+        struct dialog_message {
+            wm_msg_header_t header;
+            uint32_t type;
+            char title[64];
+            char message[128];
+        };
+        if (!message_has(message, sizeof(struct dialog_message))) break;
+        const struct dialog_message *command = (const void *)message->data;
+        char title[64];
+        char body[128];
+        memcpy(title, command->title, sizeof(title));
+        memcpy(body, command->message, sizeof(body));
+        title[sizeof(title) - 1u] = '\0';
+        body[sizeof(body) - 1u] = '\0';
+        uint32_t type = command->type;
+        if (type > WM_DIALOG_ERROR) type = WM_DIALOG_INFO;
+        wm_dialog_show(state, (wm_dialog_type_t)type, title, body);
+        break;
+    }
     case WM_GET_CAPABILITIES: {
         struct {
             wm_msg_header_t header;
@@ -627,7 +648,7 @@ void wm_ipc_handle_message(wm_state_t *state, const ipc_message_t *message)
         response.status = WM_STATUS_OK;
         response.capabilities = WM_CAP_SERVER_SURFACE | WM_CAP_DAMAGE_REGIONS |
             WM_CAP_TRANSACTIONS | WM_CAP_THEME_ENGINE | WM_CAP_NOTIFICATIONS |
-            WM_CAP_SHARED_SURFACE;
+            WM_CAP_SHARED_SURFACE | WM_CAP_DIALOGS;
         ipc_send_message(message->sender_pid, &response, sizeof(response));
         break;
     }

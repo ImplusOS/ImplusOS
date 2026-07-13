@@ -873,6 +873,11 @@ uint64_t clock_ms(void)
     return get_uptime_ms();
 }
 
+clock_t clock(void)
+{
+    return (clock_t)clock_ms();
+}
+
 time_t time(time_t* out)
 {
     struct timeval value;

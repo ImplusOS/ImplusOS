@@ -6,6 +6,7 @@
 #include "../UI/WM_StartMenu.h"
 #include "../UI/WM_Taskbar.h"
 #include "../UI/WM_Notification.h"
+#include "../UI/WM_Dialog.h"
 #include "../../../../../Userland/Syscalls.h"
 #include "../../../../../Userland/API/Process.h"
 #include "../../../../../Userland/API/Serial.h"
@@ -315,6 +316,13 @@ static void update_hover(wm_state_t *state)
             state->launcher_hover_index = (int32_t)action.app_index;
     }
     if (old_hover != state->launcher_hover_index) damage_start_menu(state);
+
+    wm_dialog_set_hover_ok(state,
+        state->dialog.active && wm_dialog_ok_contains(state,
+            (int32_t)state->scene.cursor_x, (int32_t)state->scene.cursor_y));
+    wm_dialog_set_hover_close(state,
+        state->dialog.active && wm_dialog_close_contains(state,
+            (int32_t)state->scene.cursor_x, (int32_t)state->scene.cursor_y));
 }
 
 static void update_taskbar_hover(wm_state_t *state)
@@ -594,6 +602,18 @@ static void handle_mouse_event(wm_state_t *state,
         route_mouse(state, event);
         return;
     }
+    if (wm_dialog_dragging(state) && left_held) {
+        extern uint64_t get_uptime_ms(void);
+        uint64_t now_ms = get_uptime_ms();
+        if (now_ms - state->input.last_pointer_frame_ms >= 16u) {
+            state->input.last_pointer_frame_ms = now_ms;
+            int32_t dx = (int32_t)state->scene.cursor_x - state->dialog.drag_start_x;
+            int32_t dy = (int32_t)state->scene.cursor_y - state->dialog.drag_start_y;
+            wm_dialog_move(state, state->dialog.drag_origin_x + dx,
+                           state->dialog.drag_origin_y + dy);
+        }
+        return;
+    }
     if (state->input.resizing && left_held) {
         extern uint64_t get_uptime_ms(void);
         uint64_t now_ms = get_uptime_ms();
@@ -627,12 +647,32 @@ static void handle_mouse_event(wm_state_t *state,
         state->input.resizing        = false;
         state->input.active_window_id = 0u;
         state->scene.cursor_style    = WM_CURSOR_DEFAULT;
+        wm_dialog_set_dragging(state, false);
     }
     bool consumed = false;
     if (left_down) {
         extern uint64_t get_uptime_ms(void);
         state->input.last_pointer_frame_ms = get_uptime_ms();
-        if (handle_taskbar_click(state)) {
+        if (state->dialog.active) {
+            if (wm_dialog_close_contains(state, (int32_t)state->scene.cursor_x,
+                                         (int32_t)state->scene.cursor_y)) {
+                wm_dialog_close(state);
+            } else if (wm_dialog_ok_contains(state, (int32_t)state->scene.cursor_x,
+                                            (int32_t)state->scene.cursor_y)) {
+                wm_dialog_close(state);
+            } else if (wm_dialog_title_contains(state, (int32_t)state->scene.cursor_x,
+                                               (int32_t)state->scene.cursor_y)) {
+                wm_dialog_set_dragging(state, true);
+                state->dialog.drag_start_x = (int32_t)state->scene.cursor_x;
+                state->dialog.drag_start_y = (int32_t)state->scene.cursor_y;
+                state->dialog.drag_origin_x = state->dialog.x;
+                state->dialog.drag_origin_y = state->dialog.y;
+            } else if (!wm_dialog_contains(state, (int32_t)state->scene.cursor_x,
+                                          (int32_t)state->scene.cursor_y)) {
+                wm_dialog_close(state);
+            }
+            consumed = true;
+        } else if (handle_taskbar_click(state)) {
             consumed = true;
         } else if (handle_notification_center_click(state)) {
             consumed = true;

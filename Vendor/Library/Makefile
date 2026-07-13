@@ -11,6 +11,10 @@ JPEG_CONFIG_DIR := $(JPEG_BUILD_DIR)/include
 JPEG_CONFIG_HEADER := $(JPEG_CONFIG_DIR)/jconfig.h
 JPEG_CONFIGINT_HEADER := $(JPEG_CONFIG_DIR)/jconfigint.h
 JPEG_VERSION_HEADER := $(JPEG_CONFIG_DIR)/jversion.h
+FFMPEG_SRC_DIR := $(REPO_ROOT)/Vendor/Library/ffmpeg
+FFMPEG_BUILD_DIR := $(TOP_BUILD_DIR)/Vendor/Library/ffmpeg
+FFMPEG_CONFIGURE := $(FFMPEG_SRC_DIR)/configure
+FFMPEG_AVAILABLE := $(wildcard $(FFMPEG_CONFIGURE))
 SDL_DIR := SDL
 SDL_PORT_DIR := $(REPO_ROOT)/Userland/Service/SDL_ImplusOS
 SDL_BUILD_DIR := $(TOP_BUILD_DIR)/Vendor/Library/SDL
@@ -19,6 +23,10 @@ LIB_Z := $(LIB_DIR)/libz.a
 LIB_PNG := $(LIB_DIR)/libpng.a
 LIB_JPEG := $(LIB_DIR)/libjpeg.a
 LIB_SDL := $(LIB_DIR)/libSDL3.a
+LIB_AVUTIL := $(LIB_DIR)/libavutil.a
+LIB_AVCODEC := $(LIB_DIR)/libavcodec.a
+LIB_AVFORMAT := $(LIB_DIR)/libavformat.a
+LIB_SWSCALE := $(LIB_DIR)/libswscale.a
 
 ifeq ($(ARCH),arm64)
 CROSS_COMPILE ?= aarch64-elf-
@@ -28,6 +36,12 @@ CROSS_COMPILE ?= x86_64-elf-
 ARCH_CFLAGS := -mcmodel=large -mno-red-zone
 else
 $(error Unsupported ARCH '$(ARCH)'. Use x86_64 or arm64.)
+endif
+
+ifeq ($(ARCH),arm64)
+FFMPEG_ARCH := aarch64
+else ifeq ($(ARCH),x86_64)
+FFMPEG_ARCH := x86_64
 endif
 
 CC := $(CROSS_COMPILE)gcc
@@ -209,7 +223,7 @@ SDL_OBJS := \
 	$(SDL_LIBM_SRCS:%.c=$(SDL_BUILD_DIR)/%.o) \
 	$(SDL_PORT_SRCS:%.c=$(SDL_BUILD_DIR)/port/%.o)
 
-COMMON_CFLAGS := -ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -Os -g0 -ffunction-sections -fdata-sections -I$(REPO_ROOT)/libc/I_libc/include -Wno-error -include stddef.h
+COMMON_CFLAGS := -ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -Os -g0 -ffunction-sections -fdata-sections -I$(REPO_ROOT)/libc/I_libc/include -Wno-error -include stddef.h -include math.h
 ZLIB_CFLAGS := $(COMMON_CFLAGS) -I. -Izlib -DNO_GZFILE_OPS
 LIBPNG_CFLAGS := $(COMMON_CFLAGS) -I$(PNG_CONFIG_DIR) -Ilibpng -Izlib
 LIBJPEG_CFLAGS := $(COMMON_CFLAGS) -I$(JPEG_CONFIG_DIR) -Ilibjpeg/src -Ilibjpeg/src/wrapper -DC_ARITH_CODING_SUPPORTED=1 -DD_ARITH_CODING_SUPPORTED=1 -Wno-unused-parameter -Wno-sign-conversion -Wno-conversion -Wno-shadow
@@ -226,7 +240,13 @@ SDL_CFLAGS := $(COMMON_CFLAGS) \
 	-Wno-unused-function \
 	-Wno-missing-field-initializers
 
-all: $(LIB_Z) $(LIB_PNG) $(LIB_JPEG) $(LIB_SDL)
+ifneq ($(FFMPEG_AVAILABLE),)
+FFMPEG_TARGETS := $(LIB_AVUTIL) $(LIB_AVCODEC) $(LIB_AVFORMAT) $(LIB_SWSCALE)
+else
+FFMPEG_TARGETS :=
+endif
+
+all: $(LIB_Z) $(LIB_PNG) $(LIB_JPEG) $(LIB_SDL) $(FFMPEG_TARGETS)
 
 $(LIB_Z): $(ZLIB_OBJS)
 	@mkdir -p $(LIB_DIR)
@@ -315,5 +335,48 @@ $(LIB_SDL): $(SDL_OBJS)
 	@mkdir -p $(LIB_DIR)
 	$(AR) rcs $@ $^
 
+$(FFMPEG_BUILD_DIR)/config.mak: $(FFMPEG_CONFIGURE)
+	@mkdir -p $(FFMPEG_BUILD_DIR)
+	cd $(FFMPEG_BUILD_DIR) && \
+		$(FFMPEG_CONFIGURE) \
+			--prefix="$(FFMPEG_BUILD_DIR)/install" \
+			--disable-programs \
+			--disable-doc \
+			--disable-debug \
+			--disable-shared \
+			--enable-static \
+			--disable-autodetect \
+			--disable-network \
+			--disable-pthreads \
+			--disable-w32threads \
+			--disable-os2threads \
+			--enable-cross-compile \
+			--target-os=none \
+			--arch=$(FFMPEG_ARCH) \
+			--cross-prefix="$(CROSS_COMPILE)" \
+			--enable-avcodec \
+			--enable-avformat \
+			--enable-avutil \
+			--enable-swscale \
+			--disable-asm \
+			--disable-inline-asm \
+			--disable-x86asm \
+			--cc="$(CC)" \
+			--ar="$(AR)" \
+			--nm="$(CROSS_COMPILE)nm" \
+			--ranlib="$(CROSS_COMPILE)ranlib" \
+			--strip="$(CROSS_COMPILE)strip" \
+		--pkg-config=false \
+		--extra-cflags="$(COMMON_CFLAGS) -DIMPLUSOS_FFMPEG_BUILD" \
+		--extra-ldflags="$(COMMON_CFLAGS)"
+
+$(LIB_AVUTIL) $(LIB_AVCODEC) $(LIB_AVFORMAT) $(LIB_SWSCALE): $(FFMPEG_BUILD_DIR)/config.mak
+	$(MAKE) -C $(FFMPEG_BUILD_DIR) -j1 libavutil/libavutil.a libavcodec/libavcodec.a libavformat/libavformat.a libswscale/libswscale.a
+	@mkdir -p $(LIB_DIR)
+	@cp $(FFMPEG_BUILD_DIR)/libavutil/libavutil.a $(LIB_AVUTIL)
+	@cp $(FFMPEG_BUILD_DIR)/libavcodec/libavcodec.a $(LIB_AVCODEC)
+	@cp $(FFMPEG_BUILD_DIR)/libavformat/libavformat.a $(LIB_AVFORMAT)
+	@cp $(FFMPEG_BUILD_DIR)/libswscale/libswscale.a $(LIB_SWSCALE)
+
 clean:
-	rm -rf $(ZLIB_BUILD_DIR) $(PNG_BUILD_DIR) $(JPEG_BUILD_DIR) $(SDL_BUILD_DIR) $(LIB_Z) $(LIB_PNG) $(LIB_JPEG) $(LIB_SDL)
+	rm -rf $(ZLIB_BUILD_DIR) $(PNG_BUILD_DIR) $(JPEG_BUILD_DIR) $(SDL_BUILD_DIR) $(FFMPEG_BUILD_DIR) $(LIB_Z) $(LIB_PNG) $(LIB_JPEG) $(LIB_SDL) $(LIB_AVUTIL) $(LIB_AVCODEC) $(LIB_AVFORMAT) $(LIB_SWSCALE)

@@ -7,10 +7,12 @@ Implus Store|/Userland/UserApps/com_ImplusOS_ImplusStore/com_ImplusOS_ImplusStor
 Network|/Userland/UserApps/com_ImplusOS_NetworkTest/com_ImplusOS_NetworkTest.ELF|NW
 Virtual Machine|/Userland/UserApps/com_ImplusOS_vm/com_ImplusOS_vm.ELF|VM
 Example|/Userland/UserApps/com_ImplusOS_exampleApp/com_ImplusOS_exampleApp.ELF|EX
+Dialog Test|/Userland/UserApps/com_ImplusOS_dialogtest/com_ImplusOS_dialogtest.ELF|DG
 Settings|/Userland/UserApps/com_ImplusOS_settings/com_ImplusOS_settings.ELF|SE
 System Info|/Userland/SystemApps/com_ImplusOS_version/com_ImplusOS_version.ELF|IN
 Zlib Test|/Userland/UserApps/com_ImplusOS_zlibTest/com_ImplusOS_zlibTest.ELF|ZT
 PNG Viewer|/Userland/UserApps/com_ImplusOS_pngTest/com_ImplusOS_pngTest.ELF|PV
+FFmpeg Test|/Userland/UserApps/com_ImplusOS_ffmpegTest/com_ImplusOS_ffmpegTest.ELF|FM
 SDL 2D Test|/Userland/UserApps/com_ImplusOS_sdlTest/com_ImplusOS_sdlTest.ELF|SD
 DOOM|/Userland/UserApps/doom/doom.ELF|DM
 NetSurf|/Userland/UserApps/NetSurf/NetSurf.ELF|NT

@@ -106,14 +106,6 @@ static bool wm_service_do_deferred_work(wm_state_t *state)
         }
     }
 
-    if (state->assets.metadata_loaded &&
-        !state->assets.wallpaper_load_attempted) {
-        (void)wm_assets_reload_wallpaper(&state->assets);
-        wm_compositor_generate_background(state);
-        wm_compositor_damage_all(state);
-        return true;
-    }
-
     return false;
 }
 
@@ -139,6 +131,8 @@ void wm_service_init(wm_state_t *state)
     (void)wm_assets_init_metadata(&state->assets);
     (void)wm_assets_load_logo(&state->assets);
 
+    (void)wm_assets_reload_wallpaper(&state->assets);
+
     (void)wm_display_update_from_system(state);
     uint32_t width  = state->display_topology.width;
     uint32_t height = state->display_topology.height;
@@ -157,6 +151,7 @@ void wm_service_init(wm_state_t *state)
     state->scene.cursor_style   = WM_CURSOR_DEFAULT;
 
     (void)wm_taskbar_update_clock(state);
+    wm_taskbar_start_ntp(state);
 
     wm_compositor_generate_background(state);
     wm_compositor_damage_all(state);
@@ -229,6 +224,13 @@ void wm_service_main_loop(void)
             did_work = true;
             next_deferred_work_ms = now_ms + WM_DEFERRED_STEP_DELAY_MS;
         }
+        wm_taskbar_poll_ntp(&g_wm_state);
+        if (g_wm_state.ntp.ntp_ready &&
+            g_wm_state.ntp.ntp_local_port == 0u &&
+            now_ms - g_wm_state.ntp.ntp_poll_start_ms >= NTP_REFRESH_MS) {
+            wm_taskbar_start_ntp(&g_wm_state);
+        }
+
         if (now_ms - last_clock_ms >= CLOCK_UPDATE_INTERVAL_MS) {
             last_clock_ms = now_ms;
             if (wm_taskbar_update_clock(&g_wm_state)) {

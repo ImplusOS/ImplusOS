@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 typedef int64_t time_t;
+typedef int64_t clock_t;
 
 #ifndef __clockid_t_defined
 typedef int clockid_t;
@@ -13,6 +14,7 @@ typedef int clockid_t;
 #define CLOCK_MONOTONIC          1
 #define CLOCK_PROCESS_CPUTIME_ID 2
 #define CLOCK_THREAD_CPUTIME_ID  3
+#define CLOCKS_PER_SEC           1000
 
 struct timespec {
     time_t tv_sec;
@@ -34,6 +36,7 @@ struct tm {
 typedef struct timespec timespec_t;
 
 uint64_t    clock_ms(void);
+clock_t     clock(void);
 time_t      time(time_t* out);
 int         nanosleep(const struct timespec* req, struct timespec* rem);
 int         clock_gettime(clockid_t clk_id, struct timespec* tp);
