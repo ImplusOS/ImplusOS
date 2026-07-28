@@ -223,7 +223,8 @@ SDL_OBJS := \
 	$(SDL_LIBM_SRCS:%.c=$(SDL_BUILD_DIR)/%.o) \
 	$(SDL_PORT_SRCS:%.c=$(SDL_BUILD_DIR)/port/%.o)
 
-COMMON_CFLAGS := -ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -Os -g0 -ffunction-sections -fdata-sections -I$(REPO_ROOT)/libc/I_libc/include -Wno-error -include stddef.h -include math.h
+COMMON_CFLAGS := -ffreestanding -fPIC -fno-builtin $(ARCH_CFLAGS) -nostdlib -Os -g0 -ffunction-sections -fdata-sections -I$(REPO_ROOT)/libc/I_libc/include -Wno-error -include stddef.h -include math.h
+FFMPEG_CFLAGS := -ffreestanding -fno-pic -fno-builtin $(ARCH_CFLAGS) -nostdlib -O2 -g0 -ffunction-sections -fdata-sections -I$(REPO_ROOT)/libc/I_libc/include -Wno-error -fno-tree-vectorize
 ZLIB_CFLAGS := $(COMMON_CFLAGS) -I. -Izlib -DNO_GZFILE_OPS
 LIBPNG_CFLAGS := $(COMMON_CFLAGS) -I$(PNG_CONFIG_DIR) -Ilibpng -Izlib
 LIBJPEG_CFLAGS := $(COMMON_CFLAGS) -I$(JPEG_CONFIG_DIR) -Ilibjpeg/src -Ilibjpeg/src/wrapper -DC_ARITH_CODING_SUPPORTED=1 -DD_ARITH_CODING_SUPPORTED=1 -Wno-unused-parameter -Wno-sign-conversion -Wno-conversion -Wno-shadow
@@ -335,7 +336,7 @@ $(LIB_SDL): $(SDL_OBJS)
 	@mkdir -p $(LIB_DIR)
 	$(AR) rcs $@ $^
 
-$(FFMPEG_BUILD_DIR)/config.mak: $(FFMPEG_CONFIGURE)
+$(FFMPEG_BUILD_DIR)/ffbuild/config.mak: $(FFMPEG_CONFIGURE)
 	@mkdir -p $(FFMPEG_BUILD_DIR)
 	cd $(FFMPEG_BUILD_DIR) && \
 		$(FFMPEG_CONFIGURE) \
@@ -354,24 +355,31 @@ $(FFMPEG_BUILD_DIR)/config.mak: $(FFMPEG_CONFIGURE)
 			--target-os=none \
 			--arch=$(FFMPEG_ARCH) \
 			--cross-prefix="$(CROSS_COMPILE)" \
+			--disable-everything \
 			--enable-avcodec \
 			--enable-avformat \
 			--enable-avutil \
 			--enable-swscale \
+			--enable-decoder='aac,rawvideo,mpeg4,mpeg2video,h264,hevc,vp8,vp9,vc1,wmv3,mjpeg,png,bmp,tiff,gif,webp,flv1,svq1,rv10,rv20,rv30,rv40,fraps,huffyuv,dvvideo,msrle,msvideo1,vp6,vp7,wmv1,wmv2,qtrle,rpza,smc,flashsv,mdec,zlib,zmbv' \
+			--enable-demuxer='avi,mov,mp4,matroska,webm,flv,mpegts,mpegps,image2,gif,wav,aac,ogg,asf' \
+			--enable-parser='h264,hevc,vp8,vp9,mpeg4video,mpegaudio,aac,ac3,vorbis' \
+			--enable-protocol=file \
+			--enable-bsf='h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc' \
 			--disable-asm \
 			--disable-inline-asm \
-			--disable-x86asm \
 			--cc="$(CC)" \
+			--as="$(CC)" \
 			--ar="$(AR)" \
 			--nm="$(CROSS_COMPILE)nm" \
 			--ranlib="$(CROSS_COMPILE)ranlib" \
 			--strip="$(CROSS_COMPILE)strip" \
 		--pkg-config=false \
-		--extra-cflags="$(COMMON_CFLAGS) -DIMPLUSOS_FFMPEG_BUILD" \
+		--extra-cflags="$(FFMPEG_CFLAGS) -DIMPLUSOS_FFMPEG_BUILD -DMALLOC_PREFIX=FFmpeg_ -O2" \
 		--extra-ldflags="$(COMMON_CFLAGS)"
 
-$(LIB_AVUTIL) $(LIB_AVCODEC) $(LIB_AVFORMAT) $(LIB_SWSCALE): $(FFMPEG_BUILD_DIR)/config.mak
-	$(MAKE) -C $(FFMPEG_BUILD_DIR) -j1 libavutil/libavutil.a libavcodec/libavcodec.a libavformat/libavformat.a libswscale/libswscale.a
+
+$(LIB_AVUTIL) $(LIB_AVCODEC) $(LIB_AVFORMAT) $(LIB_SWSCALE): $(FFMPEG_BUILD_DIR)/ffbuild/config.mak
+	MAKEFLAGS= MAKEOVERRIDES= $(MAKE) -C $(FFMPEG_BUILD_DIR) -j1 libavutil/libavutil.a libavcodec/libavcodec.a libavformat/libavformat.a libswscale/libswscale.a
 	@mkdir -p $(LIB_DIR)
 	@cp $(FFMPEG_BUILD_DIR)/libavutil/libavutil.a $(LIB_AVUTIL)
 	@cp $(FFMPEG_BUILD_DIR)/libavcodec/libavcodec.a $(LIB_AVCODEC)

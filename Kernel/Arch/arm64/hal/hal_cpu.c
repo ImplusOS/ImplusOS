@@ -353,6 +353,18 @@ void hal_cpu_restore_fpu(uint8_t *state)
                      : "x9", "x10", "memory");
 }
 
+uint64_t hal_cpu_read_gs_base(void)
+{
+    uint64_t val;
+    __asm__ volatile("mrs %0, TPIDR_EL1" : "=r"(val));
+    return val;
+}
+
+void hal_cpu_write_gs_base(uint64_t val)
+{
+    __asm__ volatile("msr TPIDR_EL1, %0" :: "r"(val) : "memory");
+}
+
 #else
 #error "Unsupported platform"
 #endif

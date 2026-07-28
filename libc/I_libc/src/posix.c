@@ -3652,7 +3652,11 @@ int pthread_spin_lock(pthread_spinlock_t *lock)
     if (!lock) return EINVAL;
     while (__sync_lock_test_and_set(lock, 1)) {
         while (*lock) {
-            __asm__ __volatile__ ("pause" ::: "memory");
+            #if defined(__aarch64__)
+                __asm__ volatile("yield" ::: "memory");
+            #else
+                __asm__ volatile("pause" ::: "memory");
+            #endif
         }
     }
     return 0;

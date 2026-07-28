@@ -1,3 +1,4 @@
+// libc/I_libc/src/stdlib.c
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -33,28 +34,20 @@ extern uint64_t syscall0(uint64_t num);
 static void (*g_atexit_handlers[ATEXIT_MAX_HANDLERS])(void);
 static int g_atexit_count = 0;
 
+#define MALLOC_ALIGNMENT 64u
+#define MALLOC_PAGE_SIZE 4096u
+#define MALLOC_ARENA_MIN (256u * 1024u)
+
 typedef struct malloc_block {
-    size_t size;
-    int free;
-    int reserved;
-    struct malloc_block *next;
-    uintptr_t padding;
+    size_t size;               // 8 bytes
+    int free;                  // 4 bytes
+    int reserved;              // 4 bytes
+    struct malloc_block *next; // 8 bytes
+    uint64_t padding[5];       // 40 bytes (Total: 64 bytes)
 } malloc_block_t;
 
 static malloc_block_t *free_list = NULL;
 static volatile int malloc_lock_state;
-
-#define MALLOC_ALIGNMENT 16u
-#define MALLOC_PAGE_SIZE 4096u
-/*
- * The kernel backs each SYSCALL_USER_MMAP chunk with a per-process user
- * allocation slot (PROCESS_USER_ALLOC_MAX). free() never releases chunks back
- * to the kernel, so every distinct chunk permanently consumes one slot. Grow
- * the heap in large arenas (splitting the remainder onto the free-list) so
- * heavy apps such as NetSurf do not exhaust the kernel slot pool and can still
- * map shared surfaces (window backing stores) afterwards.
- */
-#define MALLOC_ARENA_MIN (256u * 1024u)
 
 static size_t malloc_align(size_t size)
 {
@@ -88,7 +81,7 @@ static void malloc_split_block(malloc_block_t *block, size_t size)
     remainder->size = remaining;
     remainder->free = 1;
     remainder->reserved = 0;
-    remainder->padding = 0;
+    memset(remainder->padding, 0, sizeof(remainder->padding));
     remainder->next = block->next;
 
     block->size = size;
@@ -149,7 +142,7 @@ void* malloc(size_t size) {
     block->size = alloc_size - sizeof(malloc_block_t);
     block->free = 1;
     block->reserved = 0;
-    block->padding = 0;
+    memset(block->padding, 0, sizeof(block->padding));
     block->next = free_list;
     free_list = block;
     malloc_split_block(block, size);
@@ -280,6 +273,26 @@ void exit(int status) {
 void abort(void) {
     exit(1);
 }
+
+int posix_memalign(void **memptr, size_t alignment, size_t size)
+{
+    if (alignment % sizeof(void*) != 0 || (alignment & (alignment - 1)) != 0)
+        return EINVAL;
+    if (size == 0) {
+        *memptr = NULL;
+        return 0;
+    }
+
+    /* MALLOC_ALIGNMENT is 64. Any requirement up to 64 bytes is naturally met */
+    if (alignment > MALLOC_ALIGNMENT) {
+        return EINVAL;
+    }
+
+    *memptr = malloc(size);
+    if (!*memptr) return ENOMEM;
+    return 0;
+}
+
 #endif
 
 long strtol(const char* nptr, char** endptr, int base) {

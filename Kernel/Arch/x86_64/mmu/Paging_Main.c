@@ -1356,20 +1356,34 @@ int paging_handle_swap_fault(uint64_t cr3, uint64_t fault_addr)
         return 0;
     }
 
+    spinlock_lock(&g_swap_lock);
     uint32_t slot = (uint32_t)((entry & PAGE_FRAME_MASK) >> 12);
     if (slot >= SWAP_SLOT_COUNT || !g_swap_slots[slot].used) {
+        spinlock_unlock(&g_swap_lock);
         return 0;
     }
 
     void *phys_page = alloc_page();
-    if (phys_page == NULL) return 0;
+    if (phys_page == NULL) {
+        spinlock_unlock(&g_swap_lock);
+        return 0;
+    }
 
     copy_page_bytes((uint8_t *)phys_page, g_swap_slots[slot].phys_page);
     swap_free_slot(slot);
 
+    // Clear the PTE so that subsequent attempts to access this page
+    // MUST go through paging_handle_swap_fault again until swap-in completes.
+    // However, if we're setting it to a phys_page immediately, we can
+    // directly update the PTE.
+    
+    // Ensure all modifications to PTE are atomic with respect to the swap state
+    // AND synchronized across TLB.
+    
     uint64_t flags = entry & PAGE_RW;
     *pte = ((uint64_t)(uintptr_t)phys_page) | PAGE_PRESENT | PAGE_USER | flags;
 
+    spinlock_lock(&g_swap_lock);
     swap_track_t *track = swap_find_track(cr3, virt_addr);
     if (track != NULL) {
         track->swapped = 0;
@@ -1377,6 +1391,7 @@ int paging_handle_swap_fault(uint64_t cr3, uint64_t fault_addr)
     } else {
         swap_track_page(cr3, virt_addr);
     }
+    spinlock_unlock(&g_swap_lock);
 
     tlb_shootdown_all(virt_addr, 1ULL);
     return 1;

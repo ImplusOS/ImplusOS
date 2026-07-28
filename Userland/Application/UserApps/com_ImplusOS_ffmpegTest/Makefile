@@ -1,3 +1,4 @@
+# Userland/Application/UserApps/com_ImplusOS_ffmpegTest/Makefile
 .PHONY: all clean copy_resources
 
 APP_NAME := com_ImplusOS_ffmpegTest
@@ -16,22 +17,20 @@ LIBAVFORMAT := $(TOP_BUILD_DIR)/Vendor/Library/libavformat.a
 LIBAVCODEC  := $(TOP_BUILD_DIR)/Vendor/Library/libavcodec.a
 LIBAVUTIL   := $(TOP_BUILD_DIR)/Vendor/Library/libavutil.a
 LIBSWSCALE  := $(TOP_BUILD_DIR)/Vendor/Library/libswscale.a
-LIBPNG      := $(TOP_BUILD_DIR)/Vendor/Library/libpng.a
-LIBZ        := $(TOP_BUILD_DIR)/Vendor/Library/libz.a
 RESOURCE_DIR := Resource
 OBJS := $(APP_OBJS) $(FFMPEG_API_OBJ) $(COMMON_OBJS)
 
 CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
-          $(ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
+          -mcmodel=large $(ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
+          -Os -ffunction-sections -fdata-sections \
           -DIMPLUSOS_FFMPEG_BUILD \
           -I../../../../libc/I_libc/include -I../../../../libc/I_libc/include/sys \
           -I../../../../Userland \
           -I../../../../Userland/API \
-          -I../../../../Vendor/Library/ffmpeg \
-          -I../../../../Vendor/Library/libpng \
-          -I$(TOP_BUILD_DIR)/Vendor/Library/libpng/include \
+           -I../../../../Vendor/Library/ffmpeg \
+           -I$(TOP_BUILD_DIR)/Vendor/Library/ffmpeg \
           -Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow -MMD -MP
-LDFLAGS := -T ../../../../Userland/Userland.ld -e _start -nostdlib --build-id=none -L$(TOP_BUILD_DIR)/Vendor/Library
+LDFLAGS := -T ../../../../Userland/Userland.ld -e _start -nostdlib --build-id=none -L$(TOP_BUILD_DIR)/Vendor/Library --gc-sections --allow-multiple-definition
 
 all: $(ELF) copy_resources
 
@@ -49,9 +48,9 @@ $(FFMPEG_API_OBJ): ../../../../Userland/API/FFmpeg.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(ELF): $(OBJS) $(LIBAVFORMAT) $(LIBAVCODEC) $(LIBAVUTIL) $(LIBSWSCALE) $(LIBPNG) $(LIBZ)
+$(ELF): $(OBJS) $(LIBAVFORMAT) $(LIBAVCODEC) $(LIBAVUTIL) $(LIBSWSCALE)
 	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) $(OBJS) $(LIBAVFORMAT) $(LIBAVCODEC) $(LIBAVUTIL) $(LIBSWSCALE) $(LIBPNG) $(LIBZ) -o $@
+	$(LD) $(LDFLAGS) $(OBJS) $(LIBAVFORMAT) $(LIBAVCODEC) $(LIBSWSCALE) $(LIBAVUTIL) $(USERLAND_LIBGCC) -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)

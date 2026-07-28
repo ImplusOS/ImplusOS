@@ -1083,7 +1083,16 @@ void _start(void) {
         //"/Userland/UserApps/com_ImplusOS_watermark/com_ImplusOS_watermark.ELF",
     //};
     //spawn_with_fallbacks(com_ImplusOS_watermark, 1);
-
+    sleep_ms(5000);
+    serial_write_string("[init] spawning ffmpegTest\n");
+    static const char *const com_ImplusOS_ffmpegTest[] = {
+        "/Userland/UserApps/com_ImplusOS_ffmpegTest/com_ImplusOS_ffmpegTest.ELF",
+    };
+    int32_t ffpid = spawn_with_fallbacks(com_ImplusOS_ffmpegTest, 1);
+    serial_write_string("[init] ffmpegTest pid=");
+    serial_write_i32(ffpid);
+    serial_write_string("\n");
+    sleep_ms(500);
 
     if (g_bg_cache) {
         free(g_bg_cache);
