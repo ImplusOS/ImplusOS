@@ -692,7 +692,14 @@ int ffmpeg_decoder_read_frame(ffmpeg_decoder_t *dec,
         return -1;
     }
 
-    avcodec_flush_buffers(dec->video_codec_ctx);
+    // NOTE: avcodec_flush_buffers() must NOT be called here.
+    // Calling it resets the codec's entire internal state (including all
+    // buffered packets and the VP9 ProgressFrame thread context), which
+    // causes the codec's receive callback to be set to NULL after the flush.
+    // On the next avcodec_receive_frame() call the codec dispatches through
+    // that NULL pointer, giving RIP=0x0 / CR2=0x0 (#PF error 0x15 = exec
+    // from user mode).  flush_buffers is only correct after a seek or at
+    // stream end, never during normal sequential decoding.
 
     int got_frame = 0;
     while (!got_frame) {
@@ -793,12 +800,26 @@ int ffmpeg_decoder_read_frame(ffmpeg_decoder_t *dec,
 
     uint8_t *dst_data[4] = { out_image->rgba, NULL, NULL, NULL };
     int dst_linesize[4] = { (int)stride, 0, 0, 0 };
-    
-    // Release the previous frame buffer once we've successfully decoded
-    // and rendered a new frame. At this point VP9 no longer needs the
-    // raw buffer (avcodec_flush_buffers above reset the codec's internal
-    // frames), so unref'ing it here is safe.
-    if (dec->frame_anchor) av_frame_unref(dec->frame_anchor);
+
+    // Scale the decoded frame into the RGBA output buffer.
+    // This call must happen while dec->frame (and frame_anchor if VP9 raw
+    // pointers point into it) are still alive.
+    int scale_rc = sws_scale(dec->sws,
+                             (const uint8_t *const *)dec->frame->data,
+                             dec->frame->linesize,
+                             0, dec->frame->height,
+                             dst_data, dst_linesize);
+    if (scale_rc <= 0) {
+        serial_write_string("[FFmpeg] sws_scale failed\n");
+        return -1;
+    }
+
+    // Now that sws_scale has finished reading dec->frame's buffers it is safe
+    // to release the previous anchor frame.  (dec->frame itself is kept alive
+    // as the new anchor for the next call via the frame_anchor rotation above.)
+    if (dec->frame_anchor) {
+        av_frame_unref(dec->frame_anchor);
+    }
 
     return 0;
 }
