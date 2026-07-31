@@ -608,7 +608,6 @@ static int audio_convert_and_buffer(ffmpeg_decoder_t *dec, AVFrame *frame)
             }
         }
         out_buf = dst_buf;
-        av_free(src_buf);
     }
 
     /* Append to audio PCM buffer */
@@ -618,15 +617,19 @@ static int audio_convert_and_buffer(ffmpeg_decoder_t *dec, AVFrame *frame)
         int new_cap = needed + 65536;
         uint8_t *nb = (uint8_t *)av_realloc(dec->audio_pcm_buf,
                                             (size_t)new_cap);
-        if (!nb) { av_free(out_buf); return -1; }
+        if (!nb) { 
+            if (out_buf != src_buf) av_free(out_buf);
+            av_free(src_buf);
+            return -1; 
+        }
         dec->audio_pcm_buf     = nb;
         dec->audio_pcm_capacity = new_cap;
     }
     memcpy(dec->audio_pcm_buf + dec->audio_pcm_used, out_buf, out_size);
     dec->audio_pcm_used += (int)out_size;
 
-    if (out_buf != tmp) av_free(out_buf);
-    if (tmp == src_buf && out_buf != src_buf) av_free(src_buf);
+    if (out_buf != src_buf) av_free(out_buf);
+    av_free(src_buf);
     return 0;
 }
 
