@@ -31,48 +31,20 @@ void* memset(void* ptr, int v, size_t n)
     return ptr;
 }
 
-void* memmove(void* dst, const void* src, size_t n)
+void *memmove(void *dst,const void *src,size_t n)
 {
-    unsigned char* d = (unsigned char*)dst;
-    const unsigned char* s = (const unsigned char*)src;
+    unsigned char *d = dst;
+    const unsigned char *s = src;
 
     if (d == s || n == 0)
         return dst;
 
-    if (d < s) {
-        size_t head = 0;
-        while (head < n && ((uintptr_t)(d + head) & 7) != 0) {
-            d[head] = s[head];
-            head++;
-        }
-
-        size_t remaining = n - head;
-        size_t words = remaining / 8;
-        size_t tail  = remaining % 8;
-        uint64_t *dw = (uint64_t *)(d + head);
-        const uint64_t *sw = (const uint64_t *)(s + head);
-        for (size_t i = 0; i < words; i++)
-            dw[i] = sw[i];
-
-        unsigned char *dt = (unsigned char *)(dw + words);
-        const unsigned char *st = (const unsigned char *)(sw + words);
-        for (size_t i = 0; i < tail; i++)
-            dt[i] = st[i];
+    if (d < s || d >= s + n) {
+        while (n--)
+            *d++ = *s++;
     } else {
-        size_t tail_bytes = 0;
-        while (tail_bytes < n && ((uintptr_t)(d + n - tail_bytes) & 7) != 0) {
-            tail_bytes++;
-            d[n - tail_bytes] = s[n - tail_bytes];
-        }
-        size_t remaining = n - tail_bytes;
-        size_t words = remaining / 8;
-        size_t head  = remaining % 8;
-        uint64_t *dw = (uint64_t *)(d + head);
-        const uint64_t *sw = (const uint64_t *)(s + head);
-        for (size_t i = words; i != 0; i--)
-            dw[i - 1] = sw[i - 1];
-        for (size_t i = head; i != 0; i--)
-            d[i - 1] = s[i - 1];
+        while (n--)
+            d[n] = s[n];
     }
 
     return dst;

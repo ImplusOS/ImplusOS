@@ -58,13 +58,56 @@ static int malloc_blocks_adjacent(const malloc_block_t *left,
                                   const malloc_block_t *right)
 {
     const unsigned char *left_end;
-
     if (left == NULL || right == NULL) {
         return 0;
     }
-
     left_end = (const unsigned char *)(left + 1) + left->size;
     return left_end == (const unsigned char *)right;
+}
+
+// リストから指定ブロックを外す
+static void remove_from_free_list(malloc_block_t *block) {
+    if (free_list == block) {
+        free_list = block->next;
+        return;
+    }
+    malloc_block_t *curr = free_list;
+    while (curr) {
+        if (curr->next == block) {
+            curr->next = block->next;
+            return;
+        }
+        curr = curr->next;
+    }
+}
+
+// アドレス順で空きリストに追加する
+static void add_to_free_list(malloc_block_t *block) {
+    if (!free_list || block < free_list) {
+        block->next = free_list;
+        free_list = block;
+        return;
+    }
+    malloc_block_t *curr = free_list;
+    while (curr->next && curr->next < block) {
+        curr = curr->next;
+    }
+    block->next = curr->next;
+    curr->next = block;
+}
+
+// リストの先頭から舐めて隣接する空きブロック同士を結合する
+static void coalesce_free_list(void) {
+    malloc_block_t *curr = free_list;
+    while (curr && curr->next) {
+        if (malloc_blocks_adjacent(curr, curr->next)) {
+            curr->size += sizeof(malloc_block_t) + curr->next->size;
+            curr->next = curr->next->next;
+            // 結合後は curr 自体を再評価させるため進めない
+        } else {
+            curr = curr->next;
+        }
+    }
 }
 
 static void malloc_split_block(malloc_block_t *block, size_t size)
@@ -82,20 +125,11 @@ static void malloc_split_block(malloc_block_t *block, size_t size)
     remainder->free = 1;
     remainder->reserved = 0;
     memset(remainder->padding, 0, sizeof(remainder->padding));
-    remainder->next = block->next;
-
+    
     block->size = size;
-    block->next = remainder;
-}
 
-static void malloc_coalesce_forward(malloc_block_t *block)
-{
-    while (malloc_blocks_adjacent(block, block->next) && block->next->free) {
-        malloc_block_t *next = block->next;
-
-        block->size += sizeof(*next) + next->size;
-        block->next = next->next;
-    }
+    // 余った部分を空きリストに登録
+    add_to_free_list(remainder);
 }
 
 static void malloc_lock(void)
@@ -117,9 +151,11 @@ void* malloc(size_t size) {
     if (size == 0) return NULL;
     size = malloc_align(size);
     malloc_lock();
+    
     malloc_block_t *curr = free_list;
     while (curr) {
-        if (curr->free && curr->size >= size) {
+        if (curr->size >= size) {
+            remove_from_free_list(curr);
             malloc_split_block(curr, size);
             curr->free = 0;
             malloc_unlock();
@@ -128,6 +164,7 @@ void* malloc(size_t size) {
         curr = curr->next;
     }
 
+    // 足りないのでカーネルから確保
     alloc_size = malloc_align(size + sizeof(malloc_block_t));
     alloc_size = (alloc_size + (MALLOC_PAGE_SIZE - 1u)) &
         ~((size_t)(MALLOC_PAGE_SIZE - 1u));
@@ -140,13 +177,11 @@ void* malloc(size_t size) {
         return NULL;
     }
     block->size = alloc_size - sizeof(malloc_block_t);
-    block->free = 1;
+    block->free = 0;
     block->reserved = 0;
     memset(block->padding, 0, sizeof(block->padding));
-    block->next = free_list;
-    free_list = block;
+    
     malloc_split_block(block, size);
-    block->free = 0;
     malloc_unlock();
     return (void*)(block + 1);
 }
@@ -165,10 +200,7 @@ void* calloc(size_t nmemb, size_t size)
     }
     ptr = malloc(total);
     if (ptr) {
-        unsigned char* p = (unsigned char*)ptr;
-        for (size_t i = 0; i < total; ++i) {
-            p[i] = 0;
-        }
+        memset(ptr, 0, total);
     }
     return ptr;
 }
@@ -190,6 +222,7 @@ void* realloc(void* ptr, size_t size)
     block = (malloc_block_t*)ptr - 1;
     old_size = block->size;
     size = malloc_align(size);
+
     if (old_size >= size) {
         malloc_lock();
         malloc_split_block(block, size);
@@ -198,55 +231,51 @@ void* realloc(void* ptr, size_t size)
     }
 
     malloc_lock();
-    if (malloc_blocks_adjacent(block, block->next) && block->next->free &&
-        block->size + sizeof(*block) + block->next->size >= size) {
-        malloc_block_t *next = block->next;
+    // 次のブロックが空いていればインプレースで拡張可能か確認
+    malloc_block_t *next_adjacent = (malloc_block_t *)((unsigned char *)(block + 1) + block->size);
+    
+    // next_adjacentがfree_listに属しているか探す
+    int found_adjacent = 0;
+    malloc_block_t *curr = free_list;
+    while (curr) {
+        if (curr == next_adjacent) {
+            found_adjacent = 1;
+            break;
+        }
+        curr = curr->next;
+    }
 
-        block->size += sizeof(*next) + next->size;
-        block->next = next->next;
+    if (found_adjacent && (block->size + sizeof(*next_adjacent) + next_adjacent->size >= size)) {
+        remove_from_free_list(next_adjacent);
+        block->size += sizeof(*next_adjacent) + next_adjacent->size;
         malloc_split_block(block, size);
         malloc_unlock();
         return ptr;
     }
     malloc_unlock();
 
+    // インプレースで拡張できなかったので、新しく確保してコピー
     new_ptr = malloc(size);
     if (!new_ptr) {
         return NULL;
     }
 
-    {
-        unsigned char* dst = (unsigned char*)new_ptr;
-        unsigned char* src = (unsigned char*)ptr;
-        for (size_t i = 0; i < old_size; ++i) {
-            dst[i] = src[i];
-        }
-    }
+    memcpy(new_ptr, ptr, old_size);
 
     free(ptr);
     return new_ptr;
 }
 
 void free(void* p) {
-    malloc_block_t *block;
-    malloc_block_t *curr;
-
     if (!p) return;
     malloc_lock();
-    block = (malloc_block_t*)p - 1;
+    
+    malloc_block_t *block = (malloc_block_t*)p - 1;
     block->free = 1;
-    malloc_coalesce_forward(block);
 
-    curr = free_list;
-    while (curr != NULL) {
-        if (curr->next == block) {
-            if (curr->free && malloc_blocks_adjacent(curr, block)) {
-                malloc_coalesce_forward(curr);
-            }
-            break;
-        }
-        curr = curr->next;
-    }
+    add_to_free_list(block);
+    coalesce_free_list();
+
     malloc_unlock();
 }
 
