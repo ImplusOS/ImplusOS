@@ -226,7 +226,7 @@ static int align_up_u64_checked(uint64_t value, uint64_t align, uint64_t *result
 
 static int is_valid_user_entry(uint64_t entry)
 {
-    return (entry >= USER_CODE_BASE) &&
+    return (entry >= 0x1000) &&
            (entry < USER_CODE_LIMIT);
 }
 
@@ -425,6 +425,8 @@ static void reset_process_slot(process_t *proc)
     proc->total_ticks = 0;
     process_perf_reset(proc);
     memset(proc->name, 0, sizeof(proc->name));
+    memset(proc->cwd, 0, sizeof(proc->cwd));
+    proc->cwd[0] = '/';
     memset(proc->launch_argument, 0, sizeof(proc->launch_argument));
     proc->parent_pid = -1;
     proc->memory_owner_pid = -1;
@@ -1136,6 +1138,179 @@ uint64_t process_get_current_fs_base(void)
     return val;
 }
 
+uint8_t process_get_current_abi_mode(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    uint8_t mode = PROCESS_ABI_IMPLUS;
+    if (is_valid_pid(current_pid_get())) {
+        mode = g_processes[current_pid_get()].abi_mode;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return mode;
+}
+
+void process_set_current_abi_mode(uint8_t mode)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (is_valid_pid(current_pid_get())) {
+        g_processes[current_pid_get()].abi_mode = mode;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+}
+
+uint64_t process_get_current_pending_signals(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    uint64_t pending = 0;
+    if (is_valid_pid(current_pid_get())) {
+        pending = g_processes[current_pid_get()].pending_signals;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return pending;
+}
+
+int process_consume_pending_signal(int32_t signum)
+{
+    if (signum <= 0 || signum >= PROCESS_SIGNAL_MAX) {
+        return 0;
+    }
+    uint64_t bit = 1u << (uint32_t)signum;
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int consumed = 0;
+    if (is_valid_pid(current_pid_get())) {
+        process_t *proc = &g_processes[current_pid_get()];
+        if ((proc->pending_signals & bit) != 0u) {
+            proc->pending_signals &= ~bit;
+            consumed = 1;
+        }
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return consumed;
+}
+
+int process_set_current_name(const char *name, uint32_t max_len)
+{
+    if (name == NULL || max_len == 0u) {
+        return -22;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int result = -22;
+    if (is_valid_pid(current_pid_get())) {
+        process_t *proc = &g_processes[current_pid_get()];
+        uint32_t copy_len = max_len;
+        if (copy_len >= sizeof(proc->name)) {
+            copy_len = sizeof(proc->name) - 1u;
+        }
+        for (uint32_t i = 0; i < copy_len; ++i) {
+            if (name[i] == '\0') {
+                copy_len = i;
+                break;
+            }
+        }
+        memcpy(proc->name, name, copy_len);
+        proc->name[copy_len] = '\0';
+        result = 0;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return result;
+}
+
+int process_get_current_name(char *out, uint32_t capacity)
+{
+    if (out == NULL || capacity == 0u) {
+        return -22;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int result = -22;
+    if (is_valid_pid(current_pid_get())) {
+        process_t *proc = &g_processes[current_pid_get()];
+        uint32_t len = 0;
+        while (len + 1u < capacity && proc->name[len] != '\0') {
+            ++len;
+        }
+        memcpy(out, proc->name, len);
+        out[len] = '\0';
+        result = 0;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return result;
+}
+
+int process_set_current_cwd(const char *cwd)
+{
+    if (cwd == NULL || cwd[0] == '\0' || cwd[0] != '/') {
+        return -22;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int result = -22;
+    if (is_valid_pid(current_pid_get())) {
+        process_t *proc = &g_processes[current_pid_get()];
+        uint32_t len = 0;
+        while (cwd[len] != '\0' && len + 1u < sizeof(proc->cwd)) {
+            ++len;
+        }
+        memcpy(proc->cwd, cwd, len);
+        proc->cwd[len] = '\0';
+        result = 0;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return result;
+}
+
+int process_get_current_cwd(char *out, uint32_t capacity)
+{
+    if (out == NULL || capacity == 0u) {
+        return -22;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int result = -22;
+    if (is_valid_pid(current_pid_get())) {
+        process_t *proc = &g_processes[current_pid_get()];
+        uint32_t len = 0;
+        while (len + 1u < capacity && proc->cwd[len] != '\0') {
+            ++len;
+        }
+        memcpy(out, proc->cwd, len);
+        out[len] = '\0';
+        result = 0;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return result;
+}
+
 int process_set_clear_child_tid(uint64_t address)
 {
     if (address != 0u &&
@@ -1441,7 +1616,7 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
 
     elf_load_policy_t policy = {
         .max_file_size = PROCESS_ELF_MAX_SIZE,
-        .min_vaddr = USER_CODE_BASE,
+        .min_vaddr = 0x1000,
         .max_vaddr = USER_CODE_LIMIT,
     };
     elf_loaded_image_info_t image_info = {0};
@@ -1457,6 +1632,10 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
         irq_restore(irq_flags);
         return -1;
     }
+    proc->abi_mode = image_info.linux_abi ? PROCESS_ABI_LINUX : PROCESS_ABI_IMPLUS;
+    proc->main_phdr_vaddr = image_info.phdr_vaddr;
+    proc->main_phent = image_info.phent;
+    proc->main_phnum = image_info.phnum;
     if (initialize_elf_user_stack(proc, &image_info, path) < 0) {
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
@@ -1510,6 +1689,11 @@ static int process_copy_user_page(uint64_t child_cr3, uint64_t vaddr,
 
 static int process_clone_address_space(process_t *child, process_t *parent)
 {
+    if (parent->abi_mode == PROCESS_ABI_LINUX) {
+        return paging_copy_present_user_range(child->cr3, parent->cr3,
+                                              0x1000, USER_STACK_BASE);
+    }
+
     uint64_t parent_cr3 = parent->cr3;
     uint64_t child_cr3 = child->cr3;
 
@@ -1607,6 +1791,7 @@ int32_t process_fork(void)
     }
 
     child->capability_mask = parent->capability_mask;
+    child->abi_mode = parent->abi_mode;
     child->fs_base = parent->fs_base;
     child->gs_base = parent->gs_base;
     memcpy(child->fpu_state, parent->fpu_state, PROCESS_FPU_STATE_SIZE);
@@ -1638,6 +1823,7 @@ int32_t process_fork(void)
     process_perf_mark_ready_locked(child, process_perf_now_ns());
 
     memcpy(child->name, parent->name, sizeof(child->name));
+    memcpy(child->cwd, parent->cwd, sizeof(child->cwd));
     memcpy(child->launch_argument, parent->launch_argument,
            sizeof(child->launch_argument));
 
@@ -1680,6 +1866,25 @@ int32_t process_execve(const char *path, const char *const *argv,
         return -14;
     if (copy_from_user(path_buf, path, path_len + 1) < path_len + 1)
         return -14;
+
+    if (path_buf[0] != '/') {
+        char cwd_buf[256];
+        if (process_get_current_cwd(cwd_buf, sizeof(cwd_buf)) != 0) {
+            return -36;
+        }
+        uint32_t cwd_len = (uint32_t)strlen(cwd_buf);
+        while (cwd_len > 1u && cwd_buf[cwd_len - 1u] == '/') {
+            cwd_buf[cwd_len - 1u] = '\0';
+            --cwd_len;
+        }
+        if ((uint64_t)cwd_len + path_len + 2u > sizeof(path_buf)) {
+            return -36;
+        }
+        memmove(path_buf + cwd_len + 1u, path_buf, path_len + 1u);
+        memcpy(path_buf, cwd_buf, cwd_len);
+        path_buf[cwd_len] = '/';
+        path_len += (uint64_t)cwd_len + 1u;
+    }
 
     uint64_t argc = 0;
     uint64_t envc = 0;
@@ -1816,7 +2021,7 @@ int32_t process_execve(const char *path, const char *const *argv,
 
     elf_load_policy_t elf_policy = {
         .max_file_size = PROCESS_ELF_MAX_SIZE,
-        .min_vaddr = USER_CODE_BASE,
+        .min_vaddr = 0x1000,
         .max_vaddr = USER_CODE_LIMIT,
     };
     elf_loaded_image_info_t image_info = {0};
@@ -1831,6 +2036,11 @@ int32_t process_execve(const char *path, const char *const *argv,
         irq_restore(irq2);
         return -1;
     }
+
+    proc->abi_mode = image_info.linux_abi ? PROCESS_ABI_LINUX : PROCESS_ABI_IMPLUS;
+    proc->main_phdr_vaddr = image_info.phdr_vaddr;
+    proc->main_phent = image_info.phent;
+    proc->main_phnum = image_info.phnum;
 
     if (initialize_elf_user_stack_ex(proc, &image_info, path_buf,
                                       argc, (const char *const *)argv_ptrs,
@@ -1903,9 +2113,35 @@ int32_t process_copy_launch_argument(char *out, uint32_t capacity)
     return (int32_t)length;
 }
 
-int32_t process_register_boot_process(const char *path, uint64_t *entry_out)
+int64_t process_get_main_image_info(uint64_t *phdr_vaddr,
+                                    uint64_t *phent,
+                                    uint64_t *phnum)
 {
-    int32_t pid = process_spawn_user_elf(path);
+    if (phdr_vaddr == NULL || phent == NULL || phnum == NULL) {
+        return (int64_t)OS_STATUS_INVALID_ARG;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    process_t *proc = is_valid_pid(current_pid_get()) ?
+        &g_processes[current_pid_get()] : NULL;
+    proc = process_memory_owner_locked(proc);
+    if (proc == NULL) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return (int64_t)OS_STATUS_FAULT;
+    }
+    *phdr_vaddr = proc->main_phdr_vaddr;
+    *phent = proc->main_phent;
+    *phnum = proc->main_phnum;
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+int32_t process_register_boot_process(const char *path, uint64_t *entry_out)
+{    int32_t pid = process_spawn_user_elf(path);
     if (pid < 0) {
         return -1;
     }
@@ -1958,6 +2194,9 @@ int32_t process_register_boot_process_from_memory(const void *data, uint64_t siz
         irq_restore(irq_flags);
         return -1;
     }
+    proc->main_phdr_vaddr = image_info.phdr_vaddr;
+    proc->main_phent = image_info.phent;
+    proc->main_phnum = image_info.phnum;
 
     if (initialize_elf_user_stack(proc, &image_info, "/Userland/Userland.ELF") < 0) {
         ipc_cleanup_process_queue(pid);
@@ -2226,6 +2465,103 @@ uint64_t process_get_current_cr3(void)
     return cr3;
 }
 
+void process_debug_dump_current(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    int32_t pid = current_pid_get();
+    if (!is_valid_pid(pid)) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return;
+    }
+    process_t *proc = &g_processes[pid];
+    extern void serial_write_uint64(uint64_t value);
+    extern void serial_write_string(const char *str);
+    serial_write_string("[PFDBG] pid=");
+    serial_write_uint64((uint64_t)(uint32_t)pid);
+    serial_write_string(" name=");
+    serial_write_string(proc->name);
+    serial_write_string(" is_thread=");
+    serial_write_uint64((uint64_t)proc->is_thread);
+    serial_write_string(" owner=");
+    serial_write_uint64((uint64_t)(uint32_t)proc->memory_owner_pid);
+    serial_write_string(" saved_rsp=");
+    serial_write_uint64(proc->saved_rsp);
+    serial_write_string(" saved_user_rsp=");
+    serial_write_uint64(proc->saved_user_rsp);
+    serial_write_string(" stack_top=");
+    serial_write_uint64(proc->user_stack_top);
+    serial_write_string(" heap_limit=");
+    serial_write_uint64(proc->user_heap_limit);
+    if (proc->saved_rsp != 0u) {
+        const uint64_t *kf = (const uint64_t *)(uintptr_t)proc->saved_rsp;
+        serial_write_string(" kf_rcx=");
+        serial_write_string(" ");
+        serial_write_uint64(kf[SYSCALL_FRAME_RCX]);
+        serial_write_string(" kf_r11=");
+        serial_write_uint64(kf[SYSCALL_FRAME_R11]);
+        serial_write_string(" kf_rax=");
+        serial_write_uint64(kf[SYSCALL_FRAME_RAX]);
+    }
+    serial_write_string("\n");
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+}
+
+void process_debug_dump_pid(int32_t pid)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (!is_valid_pid(pid)) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return;
+    }
+    process_t *proc = &g_processes[pid];
+    extern void serial_write_uint64(uint64_t value);
+    extern void serial_write_string(const char *str);
+    serial_write_string("[PFDBG] pid=");
+    serial_write_uint64((uint64_t)(uint32_t)pid);
+    serial_write_string(" name=");
+    serial_write_string(proc->name);
+    serial_write_string(" is_thread=");
+    serial_write_uint64((uint64_t)proc->is_thread);
+    serial_write_string(" owner=");
+    serial_write_uint64((uint64_t)(uint32_t)proc->memory_owner_pid);
+    serial_write_string(" state=");
+    serial_write_uint64((uint64_t)(uint32_t)proc->state);
+    serial_write_string(" saved_rsp=");
+    serial_write_uint64(proc->saved_rsp);
+    serial_write_string(" saved_user_rsp=");
+    serial_write_uint64(proc->saved_user_rsp);
+    serial_write_string(" stack_top=");
+    serial_write_uint64(proc->user_stack_top);
+    serial_write_string(" heap_limit=");
+    serial_write_uint64(proc->user_heap_limit);
+    if (proc->saved_rsp != 0u) {
+        const uint64_t *kf = (const uint64_t *)(uintptr_t)proc->saved_rsp;
+        serial_write_string(" kf_rcx=");
+        serial_write_string(" ");
+        serial_write_uint64(kf[SYSCALL_FRAME_RCX]);
+        serial_write_string(" kf_r11=");
+        serial_write_uint64(kf[SYSCALL_FRAME_R11]);
+        serial_write_string(" kf_rax=");
+        serial_write_uint64(kf[SYSCALL_FRAME_RAX]);
+        serial_write_string(" kf_rdi=");
+        serial_write_uint64(kf[SYSCALL_FRAME_RDI]);
+        serial_write_string(" kf_rsi=");
+        serial_write_uint64(kf[SYSCALL_FRAME_RSI]);
+        serial_write_string(" kf_rdx=");
+        serial_write_uint64(kf[SYSCALL_FRAME_RDX]);
+        serial_write_string(" kf_r8=");
+        serial_write_uint64(kf[SYSCALL_FRAME_R8]);
+    }
+    serial_write_string("\n");
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+}
+
 uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
                                      uint64_t current_user_rsp,
                                      int request_switch,
@@ -2277,6 +2613,25 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         uint64_t return_saved_rsp = current->saved_rsp;
         uint64_t return_user_rsp = current->saved_user_rsp;
         current->state = PROCESS_STATE_RUNNING;
+        {
+            extern void serial_write_uint64(uint64_t value);
+            extern void serial_write_string(const char *str);
+            if (current->is_thread) {
+                serial_write_string("[SR> pid=");
+                serial_write_uint64((uint64_t)(uint32_t)current_pid_get());
+                serial_write_string(" srs=");
+                serial_write_uint64(return_saved_rsp);
+                serial_write_string(" rcx=");
+                if (return_saved_rsp != 0u) {
+                    serial_write_uint64(((const uint64_t *)(uintptr_t)return_saved_rsp)[13]);
+                } else {
+                    serial_write_uint64(0);
+                }
+                serial_write_string(" ursp=");
+                serial_write_uint64(return_user_rsp);
+                serial_write_string("]\n");
+            }
+        }
         
         process_fpu_restore(current->fpu_state);
         activate_process_context(current);
@@ -2324,6 +2679,31 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
 
     uint64_t next_saved_rsp = next->saved_rsp;
     uint64_t next_user_rsp = next->saved_user_rsp;
+    {
+        extern void serial_write_uint64(uint64_t value);
+        extern void serial_write_string(const char *str);
+        if (next->is_thread || g_processes[current_pid_get()].is_thread) {
+            serial_write_string("[SW> pid=");
+            serial_write_uint64((uint64_t)(uint32_t)current_pid_get());
+            serial_write_string(" srs=");
+            serial_write_uint64(next_saved_rsp);
+            serial_write_string(" srs_rcx=");
+            if (next_saved_rsp != 0u) {
+                serial_write_uint64(((const uint64_t *)(uintptr_t)next_saved_rsp)[13]);
+            } else {
+                serial_write_uint64(0);
+            }
+            serial_write_string(" srs_r11=");
+            if (next_saved_rsp != 0u) {
+                serial_write_uint64(((const uint64_t *)(uintptr_t)next_saved_rsp)[14]);
+            } else {
+                serial_write_uint64(0);
+            }
+            serial_write_string(" ursp=");
+            serial_write_uint64(next_user_rsp);
+            serial_write_string("]\n");
+        }
+    }
     
     process_fpu_restore(next->fpu_state);
     activate_process_context(next);
@@ -2467,8 +2847,22 @@ int process_user_buffer_is_valid(const void *ptr, uint64_t len)
     uint64_t stack_base     = proc->user_stack_base;
     uint64_t stack_top      = proc->user_stack_top;
     uint64_t process_cr3    = proc->cr3;
+    uint8_t  abi_mode       = proc->abi_mode;
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
+
+    if (abi_mode == PROCESS_ABI_LINUX) {
+        if (addr < 0x1000) {
+            return 0;
+        }
+        if (range_within(addr, len, 0x1000, USER_STACK_BASE)) {
+            return paging_is_user_range_mapped(process_cr3, addr, len);
+        }
+        if (range_within(addr, len, stack_base, stack_top)) {
+            return paging_is_user_range_mapped(process_cr3, addr, len);
+        }
+        return 0;
+    }
 
     if (range_within(addr, len, code_base, code_limit)) {
         return paging_is_user_range_mapped(process_cr3, addr, len);
@@ -2745,6 +3139,68 @@ int process_user_munmap(void *ptr, uint64_t length)
     irq_restore(irq_flags);
 
     return paging_unmap_range(cr3, start, end - start);
+}
+
+uint64_t process_get_heap_cursor(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    uint64_t cursor = 0;
+    if (is_valid_pid(current_pid_get())) {
+        cursor = g_processes[current_pid_get()].user_heap_cursor;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return cursor;
+}
+
+int process_set_heap_cursor(uint64_t addr)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    process_t *proc =
+        process_memory_owner_locked(&g_processes[current_pid_get()]);
+    uint64_t grow = 0;
+    if (proc != NULL &&
+        addr >= proc->user_heap_base &&
+        addr <= proc->user_heap_alloc_limit) {
+        if (addr > proc->user_heap_cursor) {
+            grow = addr - proc->user_heap_cursor;
+        } else {
+            proc->user_heap_cursor = addr;
+        }
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    if (grow != 0u) {
+        if (process_user_alloc((uint32_t)grow) == NULL) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+void process_set_thread_user_rsp(int32_t tid, uint64_t user_rsp)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (is_valid_pid(tid)) {
+        g_processes[tid].saved_user_rsp = user_rsp;
+    }
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
 }
 
 uint64_t process_signal_set_handler(int32_t signum, uint64_t handler)

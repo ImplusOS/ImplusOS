@@ -17,6 +17,9 @@
 #define PROCESS_STATE_ZOMBIE  5
 #define PROCESS_STATE_BLOCKED 6
 
+#define PROCESS_ABI_IMPLUS 0
+#define PROCESS_ABI_LINUX  1
+
 typedef struct {
     uint8_t used;
     uint64_t addr;
@@ -27,10 +30,14 @@ typedef struct __attribute__((aligned(16))) {
     uint8_t state;
     uint8_t is_thread;
     uint8_t thread_detached;
+    uint8_t abi_mode;
     process_capability_mask_t capability_mask;
     uint64_t entry;
     uint64_t saved_rsp;
     uint64_t saved_user_rsp;
+    uint64_t main_phdr_vaddr;
+    uint64_t main_phent;
+    uint64_t main_phnum;
     uint8_t  fpu_state[PROCESS_FPU_STATE_SIZE] __attribute__((aligned(16)));
 
     uint64_t fs_base;
@@ -70,6 +77,7 @@ typedef struct __attribute__((aligned(16))) {
     uint64_t ready_since_ns;
     uint64_t blocked_since_ns;
     char     name[64];
+    char     cwd[256];
     char     launch_argument[512];
     int32_t parent_pid;
     int32_t memory_owner_pid;

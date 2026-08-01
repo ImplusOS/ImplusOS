@@ -129,7 +129,9 @@ USER_APP_DIRS := \
 	Userland/Application/UserApps/com_ImplusOS_sdlTest \
 	Userland/Application/UserApps/doom \
 	Userland/Application/UserApps/NetSurf \
-	Userland/Application/UserApps/com_ImplusOS_watermark
+	Userland/Application/UserApps/com_ImplusOS_watermark \
+	Userland/Application/UserApps/com_ImplusOS_dltest \
+	Userland/Application/UserApps/com_ImplusOS_linuxhello
 
 FFMPEG_VENDOR_DIR := Vendor/Library/ffmpeg
 ifneq ($(wildcard $(FFMPEG_VENDOR_DIR)/configure),)
@@ -147,6 +149,7 @@ USERLAND_C_SRCS := \
 	libc/I_libc/src/stdio.c \
 	libc/I_libc/src/errno.c \
 	libc/I_libc/src/posix.c \
+	libc/I_libc/src/dlfcn.c \
 	libc/I_libc/src/sys/syscalls.c \
 	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
 	libc/I_libc/src/sys/$(ARCH)/setjmp.c \
@@ -175,6 +178,7 @@ USERLAND_APP_C_SRCS := \
 	libc/I_libc/src/stdio.c \
 	libc/I_libc/src/errno.c \
 	libc/I_libc/src/posix.c \
+	libc/I_libc/src/dlfcn.c \
 	libc/I_libc/src/sys/syscalls.c \
 	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
 	libc/I_libc/src/sys/$(ARCH)/setjmp.c \

@@ -417,7 +417,8 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                          uint64_t arg2,
                          uint64_t arg3,
                          uint64_t arg4,
-                         uint64_t arg5)
+                         uint64_t arg5,
+                         uint64_t arg6)
 {
     syscall_arch_enable_interrupts();
 
@@ -461,6 +462,17 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         uint64_t poll_flags = irq_save_disable();
         wm_kernel_drain_input();
         irq_restore(poll_flags);
+    }
+
+    extern uint64_t linux_syscall_dispatch(uint64_t, uint64_t, uint64_t,
+                                           uint64_t, uint64_t, uint64_t,
+                                           uint64_t, uint64_t);
+    if (process_get_current_abi_mode() == PROCESS_ABI_LINUX) {
+        syscall_arch_user_access_begin();
+        request_switch |= linux_syscall_dispatch(saved_rsp, num,
+                                                 arg1, arg2, arg3, arg4,
+                                                 arg5, arg6);
+        goto pre_schedule;
     }
 
     process_capability_mask_t required_capability = syscall_required_capability(num);
@@ -2002,6 +2014,23 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         case SYSCALL_SHM_CLOSE:
             set_syscall_i32(saved_rsp, shared_memory_close((int32_t)arg1));
             break;
+        case SYSCALL_GET_MAIN_IMAGE_INFO: {
+            struct {
+                uint64_t phdr_vaddr;
+                uint64_t phent;
+                uint64_t phnum;
+            } info;
+            int64_t result = process_get_main_image_info(&info.phdr_vaddr,
+                                                         &info.phent,
+                                                         &info.phnum);
+            if (result == 0 &&
+                copy_to_user((void *)(uintptr_t)arg1,
+                             &info, sizeof(info)) != 0u) {
+                result = (int64_t)OS_STATUS_FAULT;
+            }
+            set_syscall_result(saved_rsp, (uint64_t)result);
+            break;
+        }
         
         case SYSCALL_FORK: {
             int32_t child_pid = process_fork();

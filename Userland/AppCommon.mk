@@ -30,6 +30,7 @@ COMMON_OBJS := $(COMMON_LIBS_DIR)/Syscalls.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/stdlib.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/errno.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/posix.o \
+               $(COMMON_LIBS_DIR)/libc/I_libc/src/dlfcn.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/sys/syscalls.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/sys/$(ARCH)/hal_syscall.o \
                $(COMMON_LIBS_DIR)/libc/I_libc/src/sys/$(ARCH)/setjmp.o \

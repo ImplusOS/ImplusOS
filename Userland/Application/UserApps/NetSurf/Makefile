@@ -256,6 +256,7 @@ $(ELF): $(BUILD_DIR)/libnetsurf_objs.a $(BUILD_DIR)/netsurf_start.o $(SHIM_DIR)/
 		$(LIBC_OBJ_DIR)/stdlib.o \
 		$(LIBC_OBJ_DIR)/errno.o \
 		$(LIBC_OBJ_DIR)/posix.o \
+		$(LIBC_OBJ_DIR)/dlfcn.o \
 		$(LIBC_OBJ_DIR)/stdio.o \
 		$(LIBC_OBJ_DIR)/math.o \
 		$(LIBC_OBJ_DIR)/assert.o \

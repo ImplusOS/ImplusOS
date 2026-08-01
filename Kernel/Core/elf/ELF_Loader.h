@@ -27,6 +27,7 @@ typedef struct {
     uint64_t phdr_vaddr;
     uint64_t phent;
     uint64_t phnum;
+    uint8_t linux_abi;
 } elf_loaded_image_info_t;
 
 const char *elf_loader_last_error(void);

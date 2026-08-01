@@ -34,6 +34,8 @@ int paging_protect_user_range(uint64_t cr3, uint64_t start, uint64_t size,
                               uint64_t flags);
 int paging_unmap_range(uint64_t cr3, uint64_t start, uint64_t size);
 int paging_is_user_range_mapped(uint64_t cr3, uint64_t start, uint64_t size);
+int paging_copy_present_user_range(uint64_t child_cr3, uint64_t parent_cr3,
+                                   uint64_t start, uint64_t end);
 int paging_map_user_page(uint64_t cr3,
                          uint64_t virt_addr,
                          uint64_t phys_addr,

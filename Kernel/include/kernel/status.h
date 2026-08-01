@@ -13,6 +13,7 @@ enum {
     OS_STATUS_IO_ERROR      = -5,
     OS_STATUS_FAULT         = -14,
     OS_STATUS_NOT_SUPPORTED = -95,
+    OS_STATUS_WOULD_BLOCK   = -11,
     OS_STATUS_INTERNAL      = -255,
     OS_STATUS_INIT_FAILED   = -256
 };

@@ -34,6 +34,7 @@
 #include <ifaddrs.h>
 #include <netdb.h>
 #include <stdio.h>
+#include <dlfcn.h>
 
 typedef struct {
     uint32_t size;
@@ -1848,6 +1849,8 @@ static void libc_thread_entry(libc_thread_desc_t* desc)
         }
     }
 
+    implus_dl_thread_init();
+
     pthread_t self = (pthread_t)syscall0(SYSCALL_GETTID);
     libc_thread_lock();
     (void)libc_tls_alloc_locked(self);
@@ -1867,6 +1870,7 @@ static void libc_thread_entry(libc_thread_desc_t* desc)
     if (cleanup) {
         libc_thread_cleanup(desc);
     }
+    implus_dl_thread_cleanup();
     (void)syscall1(SYSCALL_THREAD_EXIT, 0);
     for (;;) {
         (void)syscall0(SYSCALL_PROCESS_YIELD);

@@ -38,6 +38,11 @@ syscall_entry:
 
     push rax
     
+    mov rax, [rsp + 48]
+    push rax
+    
+    sub rsp, 8
+    
     call syscall_dispatch
     
     mov rsp, rax

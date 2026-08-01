@@ -16,6 +16,14 @@ SECTIONS
         *(.data*)
     }
 
+    .tdata ALIGN(8) : {
+        KEEP(*(.tdata*))
+    }
+
+    .tbss ALIGN(8) : {
+        KEEP(*(.tbss*))
+    }
+
     .preinit_array ALIGN(8) : {
         PROVIDE(__preinit_array_start = .);
         KEEP(*(.preinit_array*))

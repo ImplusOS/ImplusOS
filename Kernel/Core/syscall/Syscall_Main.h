@@ -137,6 +137,7 @@
 #define SYSCALL_SET_ROBUST_LIST   193
 #define SYSCALL_SHM_UNMAP         194
 #define SYSCALL_SHM_CLOSE         195
+#define SYSCALL_GET_MAIN_IMAGE_INFO 196
 
 #define SYSCALL_GET_CPU_INFO       200
 #define SYSCALL_GET_MEMORY_INFO   201
@@ -233,4 +234,5 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
                           uint64_t arg2,
                           uint64_t arg3,
                           uint64_t arg4,
-                          uint64_t arg5);
+                          uint64_t arg5,
+                          uint64_t arg6);

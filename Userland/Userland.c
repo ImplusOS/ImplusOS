@@ -1094,6 +1094,20 @@ void _start(void) {
     serial_write_string("\n");
     sleep_ms(500);
 
+    serial_write_string("[init] spawning dltest\n");
+    static const char *const com_ImplusOS_dltest[] = {
+        "/Userland/UserApps/com_ImplusOS_dltest/com_ImplusOS_dltest.ELF",
+    };
+    spawn_with_fallbacks(com_ImplusOS_dltest, 1);
+    sleep_ms(500);
+
+    serial_write_string("[init] spawning linuxhello (Linux ABI test)\n");
+    static const char *const com_ImplusOS_linuxhello[] = {
+        "/Userland/UserApps/com_ImplusOS_linuxhello/com_ImplusOS_linuxhello.ELF",
+    };
+    spawn_with_fallbacks(com_ImplusOS_linuxhello, 1);
+    sleep_ms(500);
+
     if (g_bg_cache) {
         free(g_bg_cache);
         g_bg_cache = NULL;

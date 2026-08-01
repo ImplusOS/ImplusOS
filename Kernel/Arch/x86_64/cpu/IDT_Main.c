@@ -377,6 +377,9 @@ int32_t page_fault_handler(uint64_t error_code,
             serial_write_string(" (mode=user)\n");
         }
 
+        extern void process_debug_dump_pid(int32_t pid);
+        process_debug_dump_pid(pid);
+
         process_exit_current();
 
         serial_write_string("[OS] [PF] Idle-waiting for scheduler...\n");

@@ -23,6 +23,10 @@
 #define ELF_MAGIC_3 'F'
 
 #define ET_EXEC 2
+
+#define EI_OSABI 7
+#define ELFOSABI_LINUX 3
+#define ELFOSABI_LINUX_ENTRY_HINT 0x4000000000ULL
 #define ET_DYN  3
 
 #define EM_X86_64  62
@@ -1207,6 +1211,41 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
         goto fail;
     }
 
+    if (phdr_vaddr == 0) {
+        uint64_t phoff = (uint64_t)ehdr.e_phoff;
+        uint64_t ph_page = phoff & ~0xFFFULL;
+        uint64_t first_vaddr = 0;
+        uint64_t first_offset = 0;
+        for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
+            const Elf64_Phdr *ph = &phdrs[i];
+            if (ph->p_type != PT_LOAD || ph->p_memsz == 0 ||
+                ph->p_filesz == 0) {
+                continue;
+            }
+            first_vaddr = ph->p_vaddr;
+            first_offset = ph->p_offset;
+            break;
+        }
+        if (ph_page + 0x1000ULL <= first_offset &&
+            first_offset <= first_vaddr) {
+            uint64_t map_vaddr = first_vaddr - first_offset + ph_page;
+            if (paging_map_user_range_alloc(
+                    target_cr3, map_vaddr, 0x1000ULL,
+                    PAGE_RW | PAGE_USER | PAGE_NX) == 0) {
+                uint8_t *hdr_page = (uint8_t *)malloc(0x1000ULL);
+                if (hdr_page != NULL) {
+                    if (vfs_read_at(&file, (uint32_t)ph_page,
+                                    hdr_page, 0x1000u)) {
+                        (void)copy_to_address_space(target_cr3, map_vaddr,
+                                                    hdr_page, 0x1000u, false);
+                        phdr_vaddr = map_vaddr + (phoff & 0xFFFULL);
+                    }
+                    free(hdr_page);
+                }
+            }
+        }
+    }
+
     if (ehdr.e_entry < policy->min_vaddr ||
         ehdr.e_entry >= policy->max_vaddr) {
         goto fail;
@@ -1216,6 +1255,10 @@ bool elf_loader_load_from_path(uint64_t target_cr3,
     image_out->phdr_vaddr  = phdr_vaddr;
     image_out->phent       = ehdr.e_phentsize;
     image_out->phnum       = ehdr.e_phnum;
+    image_out->linux_abi   =
+        (ehdr.e_ident[EI_OSABI] == ELFOSABI_LINUX) ||
+        (ehdr.e_ident[EI_OSABI] == 0 &&
+         ehdr.e_entry >= 0x1000 && ehdr.e_entry < ELFOSABI_LINUX_ENTRY_HINT) ? 1u : 0u;
     free(phdrs);
     (void)vfs_close_file(&file);
     return true;
@@ -1329,6 +1372,10 @@ bool elf_loader_load_from_memory(uint64_t target_cr3,
     image_out->phdr_vaddr = phdr_vaddr;
     image_out->phent      = ehdr->e_phentsize;
     image_out->phnum      = ehdr->e_phnum;
+    image_out->linux_abi  =
+        (ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX) ||
+        (ehdr->e_ident[EI_OSABI] == 0 &&
+         ehdr->e_entry >= 0x1000 && ehdr->e_entry < ELFOSABI_LINUX_ENTRY_HINT) ? 1u : 0u;
     return true;
 }
 

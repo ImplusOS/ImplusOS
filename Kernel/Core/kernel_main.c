@@ -211,7 +211,7 @@ static void kernel_rebind_boot_framebuffer_after_paging(BOOT_INFO *boot_info)
     debugger_init(boot_info);
     kernel_panic_init(boot_info);
     load_bar_init(boot_info);
-    serial_set_screen_mirror(NULL);
+    serial_set_screen_mirror(debug_putchar);
 }
 
 bool all_fs_initialize(void)
@@ -370,7 +370,7 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     );
     boot_profile_end("pmm", phase_ns);
 
-    serial_set_screen_mirror(NULL);
+    serial_set_screen_mirror(debug_putchar);
     phase_ns = boot_profile_begin();
     init_paging();
     kernel_rebind_boot_framebuffer_after_paging(boot_info);
@@ -468,7 +468,7 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
     phase_ns = boot_profile_begin();
     bool display_ready = driver_manager_display_init();
     bool debug_display_ready = debugger_display_init();
-    serial_set_screen_mirror(NULL);
+    serial_set_screen_mirror(debug_putchar);
     wm_kernel_init();
     boot_profile_end("display_init", phase_ns);
 
