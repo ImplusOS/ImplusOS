@@ -689,6 +689,118 @@ int paging_map_user_range_alloc(uint64_t address_space, uint64_t start, uint64_t
     return 0;
 }
 
+static int copy_present_page(uint64_t child_ttbr0, uint64_t vaddr,
+                             uint64_t parent_phys)
+{
+    void *child_page = alloc_page();
+    if (child_page == NULL) {
+        return -1;
+    }
+    memcpy(child_page, (void *)(uintptr_t)parent_phys, PAGE_SIZE);
+    int ret = paging_map_user_page(child_ttbr0, vaddr,
+                                   (uint64_t)(uintptr_t)child_page,
+                                   PAGE_RW | PAGE_USER);
+    if (ret < 0) {
+        free_page(child_page);
+    }
+    return ret;
+}
+
+int paging_copy_present_user_range(uint64_t child_ttbr0, uint64_t parent_ttbr0,
+                                   uint64_t start, uint64_t end)
+{
+    if (child_ttbr0 == 0 || parent_ttbr0 == 0 || end <= start) {
+        return -1;
+    }
+
+    uint64_t first = start & PAGE_MASK;
+    uint64_t last = (end - 1) & PAGE_MASK;
+
+    uint64_t *l0 = (uint64_t *)(uintptr_t)(parent_ttbr0 & PAGE_MASK);
+    if (l0 == NULL) {
+        return -1;
+    }
+
+    uint64_t l0_first = level_index(first, ARM64_L0_SHIFT);
+    uint64_t l0_last = level_index(last, ARM64_L0_SHIFT);
+    uint64_t l1_first = level_index(first, ARM64_L1_SHIFT);
+    uint64_t l1_last = level_index(last, ARM64_L1_SHIFT);
+    uint64_t l2_first = level_index(first, ARM64_L2_SHIFT);
+    uint64_t l2_last = level_index(last, ARM64_L2_SHIFT);
+    uint64_t l3_first = level_index(first, ARM64_L3_SHIFT);
+    uint64_t l3_last = level_index(last, ARM64_L3_SHIFT);
+
+    for (uint64_t i = l0_first; i <= l0_last; ++i) {
+        if (!desc_is_table(l0[i], 0)) {
+            continue;
+        }
+        uint64_t *l1 = desc_to_table(l0[i]);
+
+        uint64_t j_first = (i == l0_first) ? l1_first : 0;
+        uint64_t j_last = (i == l0_last) ? l1_last : ARM64_TABLE_ENTRIES - 1;
+
+        for (uint64_t j = j_first; j <= j_last; ++j) {
+            uint64_t l1_desc = l1[j];
+            if (!desc_is_valid(l1_desc) || !desc_is_table(l1_desc, 1)) {
+                continue;
+            }
+            uint64_t *l2 = desc_to_table(l1_desc);
+
+            uint64_t k_first = (i == l0_first && j == j_first) ? l2_first : 0;
+            uint64_t k_last = (i == l0_last && j == j_last) ? l2_last
+                                                            : ARM64_TABLE_ENTRIES - 1;
+
+            for (uint64_t k = k_first; k <= k_last; ++k) {
+                uint64_t l2_desc = l2[k];
+                if (!desc_is_valid(l2_desc)) {
+                    continue;
+                }
+                uint64_t region_base = (i << ARM64_L0_SHIFT) |
+                                       (j << ARM64_L1_SHIFT) |
+                                       (k << ARM64_L2_SHIFT);
+
+                uint64_t l_first = (i == l0_first && j == j_first && k == k_first)
+                                       ? l3_first : 0;
+                uint64_t l_last = (i == l0_last && j == j_last && k == k_last)
+                                      ? l3_last : ARM64_TABLE_ENTRIES - 1;
+
+                if (!desc_is_table(l2_desc, 2)) {
+                    uint64_t block_base = l2_desc & ARM64_DESC_ADDR_MASK;
+                    for (uint64_t l = l_first; l <= l_last; ++l) {
+                        uint64_t v = region_base + (l << ARM64_L3_SHIFT);
+                        if (v < first || v > last) {
+                            continue;
+                        }
+                        if (copy_present_page(child_ttbr0, v,
+                                              block_base + (l << ARM64_L3_SHIFT)) < 0) {
+                            return -1;
+                        }
+                    }
+                    continue;
+                }
+
+                uint64_t *l3 = desc_to_table(l2_desc);
+                for (uint64_t l = l_first; l <= l_last; ++l) {
+                    uint64_t l3_desc = l3[l];
+                    if (!desc_is_valid(l3_desc)) {
+                        continue;
+                    }
+                    uint64_t v = region_base + (l << ARM64_L3_SHIFT);
+                    if (v < first || v > last) {
+                        continue;
+                    }
+                    if (copy_present_page(child_ttbr0, v,
+                                          l3_desc & ARM64_DESC_ADDR_MASK) < 0) {
+                        return -1;
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
 int paging_map_kernel_range(uint64_t start, uint64_t size, uint64_t flags)
 {
     if (size == 0) {

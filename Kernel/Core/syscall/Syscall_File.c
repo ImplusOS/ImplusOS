@@ -316,7 +316,8 @@ int32_t syscall_file_open(const char *path, uint64_t flags)
 
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
-    for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
+    /* fd 0/1/2 are implicitly reserved as console fds; allocate from 3. */
+    for (int32_t fd = 3; fd < FILE_MAX_FD; ++fd) {
         if (g_files[fd].used == 0) {
             int32_t open_index = allocate_open_file_locked();
             if (open_index < 0) {
@@ -751,7 +752,7 @@ int32_t syscall_file_pipe(int32_t fds_out[2])
 
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
-    for (int32_t fd = 0; fd < FILE_MAX_FD && (read_fd < 0 || write_fd < 0); ++fd) {
+    for (int32_t fd = 3; fd < FILE_MAX_FD && (read_fd < 0 || write_fd < 0); ++fd) {
         if (g_files[fd].used == 0) {
             if (read_fd < 0) {
                 read_fd = fd;
@@ -957,7 +958,7 @@ int32_t syscall_file_dup(int32_t oldfd)
     }
 
     int32_t newfd = -1;
-    for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
+    for (int32_t fd = 3; fd < FILE_MAX_FD; ++fd) {
         if (g_files[fd].used == 0) {
             newfd = fd;
             break;
@@ -1331,7 +1332,7 @@ int32_t syscall_file_register_dir(const char *path)
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
     int32_t result = (int32_t)OS_STATUS_LIMIT_REACHED;
-    for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
+    for (int32_t fd = 3; fd < FILE_MAX_FD; ++fd) {
         if (g_files[fd].used == 0) {
             g_files[fd].used = FILE_USED_DIR;
             g_files[fd].owner_pid = current_pid;
@@ -1421,7 +1422,7 @@ int32_t syscall_file_create_timerfd(void)
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
     int32_t result = (int32_t)OS_STATUS_LIMIT_REACHED;
-    for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
+    for (int32_t fd = 3; fd < FILE_MAX_FD; ++fd) {
         if (g_files[fd].used == 0) {
             g_files[fd].used = FILE_USED_TIMERFD;
             g_files[fd].owner_pid = current_pid;
@@ -1495,7 +1496,7 @@ int32_t syscall_file_create_memfd(const char *name)
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
     int32_t result = (int32_t)OS_STATUS_LIMIT_REACHED;
-    for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
+    for (int32_t fd = 3; fd < FILE_MAX_FD; ++fd) {
         if (g_files[fd].used == 0) {
             g_files[fd].used = FILE_USED_MEMFD;
             g_files[fd].owner_pid = current_pid;
@@ -1520,7 +1521,7 @@ int32_t syscall_file_create_signalfd(uint64_t mask)
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
     int32_t result = (int32_t)OS_STATUS_LIMIT_REACHED;
-    for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
+    for (int32_t fd = 3; fd < FILE_MAX_FD; ++fd) {
         if (g_files[fd].used == 0) {
             g_files[fd].used = FILE_USED_SIGNALFD;
             g_files[fd].owner_pid = current_pid;

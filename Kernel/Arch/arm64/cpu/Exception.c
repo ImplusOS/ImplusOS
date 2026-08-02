@@ -48,7 +48,7 @@ arm64_exception_frame_t *arm64_exception_dispatch(arm64_exception_frame_t *frame
             uint64_t next_frame_addr =
                 syscall_dispatch((uint64_t)(uintptr_t)frame, nr,
                                  frame->x[0], frame->x[1], frame->x[2],
-                                 frame->x[3], frame->x[4]);
+                                 frame->x[3], frame->x[4], frame->x[5]);
             arm64_exception_frame_t *next_frame =
                 (arm64_exception_frame_t *)(uintptr_t)next_frame_addr;
             if (next_frame == NULL) {

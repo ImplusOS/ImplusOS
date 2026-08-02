@@ -91,6 +91,8 @@ typedef struct __attribute__((aligned(16))) {
     uint64_t clear_child_tid;
     uint64_t robust_list_head;
     uint64_t robust_list_length;
+    uint64_t rseq_area;
+    uint32_t rseq_sig;
 } process_t;
 
 void process_scheduler_init(uint32_t timeslice_ticks);

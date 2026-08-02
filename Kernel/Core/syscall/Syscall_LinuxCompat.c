@@ -21,9 +21,13 @@
 
 #define LINUX_EBADF  (-9LL)
 #define LINUX_EFAULT (-14LL)
+#define LINUX_EBUSY  (-16LL)
+#define LINUX_ENODEV (-19LL)
 #define LINUX_EINVAL (-22LL)
 #define LINUX_ESRCH  (-3LL)
 #define LINUX_ENOTSUP (-95LL)
+
+#define LINUX_RSEQ_FLAG_UNREGISTER 1u
 
 #define LINUX_ARCH_SET_FS 0x1002u
 #define LINUX_ARCH_GET_FS 0x1003u
@@ -376,7 +380,9 @@ int64_t write(int fd, const void *buf, uint64_t count)
     uint8_t chunk[512];
     uint64_t total = 0;
 
-    if (fd == 1 || fd == 2) {
+    if ((fd == 1 || fd == 2) &&
+        syscall_file_get_file_info(fd, NULL, NULL) != 0) {
+        /* fd 1/2 not allocated to this process: treat as console. */
         while (total < count) {
             uint64_t n = count - total;
             if (n > sizeof(chunk)) {
@@ -664,12 +670,24 @@ static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
     if (syscall_file_get_file_info((int32_t)fd, &vf, NULL) < 0) {
         return LINUX_EBADF;
     }
-    if (offset != 0u) {
-        return LINUX_ENOTSUP;
+    if ((offset & (PAGE_SIZE - 1u)) != 0u) {
+        return LINUX_EINVAL;
     }
-    uint64_t read_len = length;
-    if (read_len > (uint64_t)vf.size) {
-        read_len = (uint64_t)vf.size;
+    int64_t saved_offset = -1;
+    if (offset < (uint64_t)vf.size) {
+        saved_offset = syscall_file_seek((int32_t)fd, 0, LINUX_SEEK_CUR);
+        if (saved_offset < 0 ||
+            syscall_file_seek((int32_t)fd, (int64_t)offset, LINUX_SEEK_SET) < 0) {
+            return LINUX_ENODEV;
+        }
+    }
+    uint64_t read_len = 0;
+    if (offset < (uint64_t)vf.size) {
+        read_len = length;
+        uint64_t remaining = (uint64_t)vf.size - offset;
+        if (read_len > remaining) {
+            read_len = remaining;
+        }
     }
 
     void *mapped;
@@ -700,9 +718,16 @@ static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
         if (count <= 0) break;
         if (copy_to_user((uint8_t *)(uintptr_t)mapped + total,
                          chunk, (uint64_t)count) != 0u) {
+            if (saved_offset >= 0) {
+                (void)syscall_file_seek((int32_t)fd, saved_offset,
+                                        LINUX_SEEK_SET);
+            }
             return LINUX_EFAULT;
         }
         total += (uint64_t)count;
+    }
+    if (saved_offset >= 0) {
+        (void)syscall_file_seek((int32_t)fd, saved_offset, LINUX_SEEK_SET);
     }
     return (int64_t)(uintptr_t)mapped;
 }
@@ -902,6 +927,14 @@ static int64_t linux_resolve_path(char *path, uint64_t capacity)
         --cwd_len;
     }
     uint64_t path_len = strlen(path);
+    if (cwd_len == 1u && cwd[0] == '/') {
+        if (path_len + 2u > capacity) {
+            return LINUX_ENAMETOOLONG;
+        }
+        memmove(path + 1u, path, path_len + 1u);
+        path[0] = '/';
+        return 0;
+    }
     if (cwd_len + path_len + 2u > capacity) {
         return LINUX_ENAMETOOLONG;
     }
@@ -1085,6 +1118,28 @@ static int64_t linux_getdents64(int32_t fd, uint64_t buf_ptr, uint64_t count)
         written += reclen;
     }
     return (int64_t)written;
+}
+
+static int64_t linux_rseq(uint64_t rseq, uint64_t length, uint64_t flags,
+                          uint32_t sig)
+{
+    if ((flags & LINUX_RSEQ_FLAG_UNREGISTER) != 0u) {
+        return (int64_t)process_rseq_unregister();
+    }
+    if (flags != 0u) {
+        return LINUX_EINVAL;
+    }
+    if (rseq == 0u) {
+        return LINUX_EINVAL;
+    }
+    if (length != (uint64_t)PROCESS_RSEQ_AREA_SIZE) {
+        return LINUX_EINVAL;
+    }
+    if (!process_user_buffer_is_valid((void *)(uintptr_t)rseq,
+                                      PROCESS_RSEQ_AREA_SIZE)) {
+        return LINUX_EFAULT;
+    }
+    return (int64_t)process_rseq_register(rseq, sig);
 }
 
 static int64_t linux_prctl(uint64_t option, uint64_t arg2, uint64_t arg3,
@@ -1922,7 +1977,7 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             break;
 
         case LINUX_SYS_RSEQ:
-            result = LINUX_ENOTSUP;
+            result = linux_rseq(arg1, arg2, arg3, (uint32_t)arg4);
             break;
 
         case LINUX_SYS_EVENTFD:

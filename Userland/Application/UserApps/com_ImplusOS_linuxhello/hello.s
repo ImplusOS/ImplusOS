@@ -81,11 +81,13 @@ t3: ; chdir("/") then chdir("Userland") then getcwd (80)
     mov rax, 80
     mov rdi, dir_root
     syscall
+    mov [rel t3_r1], rax
     cmp rax, 0
     jne t3_fail
     mov rax, 80
     mov rdi, dir_userland
     syscall
+    mov [rel t3_r2], rax
     cmp rax, 0
     jne t3_fail
     mov rax, 79
@@ -109,6 +111,10 @@ t3_fail:
     mov rax, 1
     mov rdi, 1
     syscall
+    mov rax, [rel t3_r1]
+    call print_hex
+    mov rax, [rel t3_r2]
+    call print_hex
 
 t4: ; stat("/") (4)
     mov rax, 4
@@ -205,25 +211,29 @@ t6_fail:
     syscall
 
 t7: ; mmap anonymous MAP_FIXED (9)
-    mov rax, 9
     mov rdi, 0x100000000    ; addr
+    mov [rel t7_addr], rdi
+    mov rax, 9
     mov rsi, 0x2000         ; length
     mov rdx, 3              ; PROT_READ|WRITE
     mov r10, 0x32           ; MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS
     mov r8, -1
     mov r9, 0
     syscall
-    cmp rax, 0x100000000
+    mov [rel t7_ret], rax
+    cmp rax, [rel t7_addr]
     jne t7_fail
+    mov rdi, [rel t7_addr]
     mov rax, 0x1122334455667788
-    mov [0x100000000], rax
-    mov rax, [0x100000000]
+    mov [rdi], rax
+    mov rax, [rdi]
     lea rsi, [rel msg_t7]
     mov rdx, msg_t7_len
     mov rax, 1
     mov rdi, 1
     syscall
-    mov rax, [0x100000000]
+    mov rdi, [rel t7_addr]
+    mov rax, [rdi]
     call print_hex
     jmp t8
 t7_fail:
@@ -232,7 +242,9 @@ t7_fail:
     mov rax, 1
     mov rdi, 1
     syscall
-
+    mov rax, [rel t7_ret]
+    call print_hex
+    jmp t8
 t8: ; memfd_create + write + lseek + read + fstat (319, 1, 8, 0, 5)
     mov rax, 319
     mov rdi, memfd_name
@@ -349,8 +361,9 @@ t10: ; unlink a freshly created file via creat + unlink (85, 87)
     mov rax, 85
     mov rdi, del_file
     syscall
+    mov [rel t10_ret], rax
     cmp rax, 0
-    jl t10_fail
+    jl t10_ro
     mov [rel del_fd], rax
     mov rax, 3
     mov rdi, [rel del_fd]
@@ -366,12 +379,26 @@ t10: ; unlink a freshly created file via creat + unlink (85, 87)
     mov rdi, 1
     syscall
     jmp t11
+t10_ro: ; read-only media (LiveCD): creat must fail, unlink must fail too
+    mov rax, 87
+    mov rdi, del_file
+    syscall
+    cmp rax, 0
+    je t10_fail
+    lea rsi, [rel msg_t10_ro]
+    mov rdx, msg_t10_ro_len
+    mov rax, 1
+    mov rdi, 1
+    syscall
+    jmp t11
 t10_fail:
     lea rsi, [rel msg_t10_fail]
     mov rdx, msg_t10_fail_len
     mov rax, 1
     mov rdi, 1
     syscall
+    mov rax, [rel t10_ret]
+    call print_hex
 
 t11: ; clone with CLONE_PARENT_SETTID|CLONE_CHILD_SETTID (56)
     mov rdi, 0x00008000 | 0x01000000
@@ -437,6 +464,11 @@ print_hex:
     ret
 
 section .data
+t3_r1:      dq 0
+t3_r2:      dq 0
+t7_ret:     dq 0
+t7_addr:    dq 0
+t10_ret:    dq 0
 msg_t0:    db "T0 write ok", 0x0A
 msg_t0_len equ $ - msg_t0
 msg_t1:    db "T1 brk new="
@@ -475,6 +507,8 @@ msg_t9_fail:    db "T9 timerfd FAIL", 0x0A
 msg_t9_fail_len equ $ - msg_t9_fail
 msg_t10:    db "T10 creat+unlink ok", 0x0A
 msg_t10_len equ $ - msg_t10
+msg_t10_ro: db "T10 creat+unlink ok (read-only fs)", 0x0A
+msg_t10_ro_len equ $ - msg_t10_ro
 msg_t10_fail:    db "T10 unlink FAIL", 0x0A
 msg_t10_fail_len equ $ - msg_t10_fail
 msg_t11:    db "T11 clone tid="

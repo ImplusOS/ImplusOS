@@ -446,6 +446,8 @@ static void reset_process_slot(process_t *proc)
     proc->clear_child_tid = 0;
     proc->robust_list_head = 0;
     proc->robust_list_length = 0;
+    proc->rseq_area = 0;
+    proc->rseq_sig = 0;
 }
 
 static void release_thread_resources(process_t *proc, int unmap_user_stack)
@@ -533,6 +535,8 @@ static void release_process_resources(process_t *proc)
     proc->clear_child_tid = 0;
     proc->robust_list_head = 0;
     proc->robust_list_length = 0;
+    proc->rseq_area = 0;
+    proc->rseq_sig = 0;
 }
 
 static process_t *process_memory_owner_locked(process_t *proc)
@@ -1352,6 +1356,123 @@ int process_set_robust_list(uint64_t head, uint64_t length)
     return 0;
 }
 
+int process_rseq_register(uint64_t area, uint32_t sig)
+{
+    if (area == 0u) {
+        return -22;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+    process_t *proc = &g_processes[current_pid_get()];
+    if (proc->rseq_area != 0u) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -16;
+    }
+    proc->rseq_area = area;
+    proc->rseq_sig = sig;
+    uint64_t cr3 = proc->cr3;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    if (cr3 != 0u &&
+        paging_is_user_range_mapped(cr3, area, PROCESS_RSEQ_AREA_SIZE)) {
+        uint32_t cpu = smp_get_current_cpu_id();
+        memcpy((void *)(uintptr_t)(area + PROCESS_RSEQ_CPU_ID_START),
+               &cpu, sizeof(cpu));
+        memcpy((void *)(uintptr_t)(area + PROCESS_RSEQ_CPU_ID),
+               &cpu, sizeof(cpu));
+    }
+    return 0;
+}
+
+int process_rseq_unregister(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -3;
+    }
+    g_processes[current_pid_get()].rseq_area = 0;
+    g_processes[current_pid_get()].rseq_sig = 0;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+uint64_t process_get_current_rseq_area(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    uint64_t area = 0;
+    if (is_valid_pid(current_pid_get())) {
+        area = g_processes[current_pid_get()].rseq_area;
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return area;
+}
+
+void process_rseq_update_on_preempt_locked(int32_t pid, uint32_t cpu_id)
+{
+    if (!is_valid_pid(pid)) {
+        return;
+    }
+    process_t *proc = &g_processes[pid];
+    if (proc->rseq_area == 0u) {
+        return;
+    }
+    uint64_t area = proc->rseq_area;
+    uint64_t cr3 = proc->cr3;
+    if (cr3 == 0u ||
+        !paging_is_user_range_mapped(cr3, area, PROCESS_RSEQ_AREA_SIZE)) {
+        return;
+    }
+
+    uint32_t cpu = cpu_id;
+    memcpy((void *)(uintptr_t)(area + PROCESS_RSEQ_CPU_ID_START),
+           &cpu, sizeof(cpu));
+    memcpy((void *)(uintptr_t)(area + PROCESS_RSEQ_CPU_ID),
+           &cpu, sizeof(cpu));
+
+    uint64_t rseq_cs = 0;
+    memcpy(&rseq_cs, (const void *)(uintptr_t)(area + PROCESS_RSEQ_CS),
+           sizeof(rseq_cs));
+    if (rseq_cs == 0u) {
+        return;
+    }
+    if (!paging_is_user_range_mapped(cr3, rseq_cs, 8u)) {
+        return;
+    }
+
+    uint32_t cs_sig = 0;
+    uint32_t cs_flags = 0;
+    memcpy(&cs_sig, (const void *)(uintptr_t)(rseq_cs + PROCESS_RSEQ_CS_SIG),
+           sizeof(cs_sig));
+    memcpy(&cs_flags,
+           (const void *)(uintptr_t)(rseq_cs + PROCESS_RSEQ_CS_FLAGS),
+           sizeof(cs_flags));
+    if (cs_sig != proc->rseq_sig) {
+        proc->pending_signals |= (1u << 11u);
+        return;
+    }
+    if ((cs_flags & PROCESS_RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT) != 0u) {
+        return;
+    }
+
+    uint64_t zero = 0;
+    memcpy((void *)(uintptr_t)(area + PROCESS_RSEQ_CS),
+           &zero, sizeof(zero));
+}
+
 static int32_t process_create_user_internal(uint64_t entry,
                                             uint64_t arg1,
                                             uint64_t arg2,
@@ -1792,6 +1913,8 @@ int32_t process_fork(void)
 
     child->capability_mask = parent->capability_mask;
     child->abi_mode = parent->abi_mode;
+    child->rseq_area = parent->rseq_area;
+    child->rseq_sig = parent->rseq_sig;
     child->fs_base = parent->fs_base;
     child->gs_base = parent->gs_base;
     memcpy(child->fpu_state, parent->fpu_state, PROCESS_FPU_STATE_SIZE);
@@ -1947,6 +2070,8 @@ int32_t process_execve(const char *path, const char *const *argv,
 
     uint64_t old_cr3 = proc->cr3;
     proc->cr3 = 0;
+    proc->rseq_area = 0;
+    proc->rseq_sig = 0;
 
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
@@ -2613,7 +2738,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
         uint64_t return_saved_rsp = current->saved_rsp;
         uint64_t return_user_rsp = current->saved_user_rsp;
         current->state = PROCESS_STATE_RUNNING;
-        {
+        if (0) {
             extern void serial_write_uint64(uint64_t value);
             extern void serial_write_string(const char *str);
             if (current->is_thread) {
@@ -2632,6 +2757,8 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
                 serial_write_string("]\n");
             }
         }
+        (void)return_saved_rsp;
+        (void)return_user_rsp;
         
         process_fpu_restore(current->fpu_state);
         activate_process_context(current);
@@ -2679,7 +2806,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
 
     uint64_t next_saved_rsp = next->saved_rsp;
     uint64_t next_user_rsp = next->saved_user_rsp;
-    {
+    if (0) {
         extern void serial_write_uint64(uint64_t value);
         extern void serial_write_string(const char *str);
         if (next->is_thread || g_processes[current_pid_get()].is_thread) {
@@ -2704,6 +2831,8 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
             serial_write_string("]\n");
         }
     }
+    (void)next_saved_rsp;
+    (void)next_user_rsp;
     
     process_fpu_restore(next->fpu_state);
     activate_process_context(next);
@@ -2793,6 +2922,8 @@ int process_run_next_on_current_cpu(void)
     spinlock_lock(&g_process_table_lock);
 
     int32_t current_pid = current_pid_get();
+    process_rseq_update_on_preempt_locked(current_pid,
+                                          smp_get_current_cpu_id());
     int32_t next_pid = process_scheduler_pick_next(g_processes,
                                                    g_process_capacity,
                                                    current_pid);

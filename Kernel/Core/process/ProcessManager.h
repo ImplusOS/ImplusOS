@@ -38,6 +38,14 @@ typedef uint64_t process_capability_mask_t;
 #define PROCESS_CAP_DEFAULT_MASK \
     (PROCESS_CAP_SERIAL | PROCESS_CAP_PROCESS | PROCESS_CAP_FILE | PROCESS_CAP_MEMORY | PROCESS_CAP_INPUT | PROCESS_CAP_SIGNAL | PROCESS_CAP_IPC | PROCESS_CAP_NETWORK | PROCESS_CAP_DISPLAY)
 
+#define PROCESS_RSEQ_AREA_SIZE          32u
+#define PROCESS_RSEQ_CPU_ID_START       0u
+#define PROCESS_RSEQ_CPU_ID             4u
+#define PROCESS_RSEQ_CS                 8u
+#define PROCESS_RSEQ_CS_SIG             0u
+#define PROCESS_RSEQ_CS_FLAGS           4u
+#define PROCESS_RSEQ_CS_FLAG_NO_RESTART_ON_PREEMPT 1u
+
 typedef struct {
     int32_t pid;
     int32_t parent_pid;
@@ -99,6 +107,10 @@ int64_t process_get_main_image_info(uint64_t *phdr_vaddr,
                                     uint64_t *phnum);
 int process_set_clear_child_tid(uint64_t address);
 int process_set_robust_list(uint64_t head, uint64_t length);
+int process_rseq_register(uint64_t area, uint32_t sig);
+int process_rseq_unregister(void);
+uint64_t process_get_current_rseq_area(void);
+void process_rseq_update_on_preempt_locked(int32_t pid, uint32_t cpu_id);
 uint8_t process_get_current_abi_mode(void);
 void process_set_current_abi_mode(uint8_t mode);
 uint64_t process_get_current_saved_rsp(void);
