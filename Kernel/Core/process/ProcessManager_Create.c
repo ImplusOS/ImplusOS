@@ -496,6 +496,9 @@ static void release_process_resources(process_t *proc)
             if (thread != proc && thread->is_thread &&
                 thread->memory_owner_pid == owner_pid &&
                 thread->state != PROCESS_STATE_UNUSED) {
+                if (process_scheduler_pid_in_use_on_any_cpu(i)) {
+                    continue;
+                }
                 release_thread_resources(thread, 0);
                 reset_process_slot(thread);
             }
@@ -665,7 +668,8 @@ static int32_t find_free_slot(void)
         if (g_processes[i].state == PROCESS_STATE_UNUSED) {
             return i;
         }
-        if (g_processes[i].state == PROCESS_STATE_DEAD && i != current_pid_get()) {
+        if (g_processes[i].state == PROCESS_STATE_DEAD &&
+            !process_scheduler_pid_in_use_on_any_cpu(i)) {
             release_process_resources(&g_processes[i]);
             reset_process_slot(&g_processes[i]);
             return i;
@@ -673,7 +677,8 @@ static int32_t find_free_slot(void)
     }
 
     for (int32_t i = 0; i < g_process_capacity; ++i) {
-        if (g_processes[i].state == PROCESS_STATE_ZOMBIE && i != current_pid_get()) {
+        if (g_processes[i].state == PROCESS_STATE_ZOMBIE &&
+            !process_scheduler_pid_in_use_on_any_cpu(i)) {
             int32_t pp = g_processes[i].parent_pid;
             if (pp < 0 || !is_valid_pid(pp) || g_processes[pp].state == PROCESS_STATE_UNUSED || g_processes[pp].state == PROCESS_STATE_DEAD) {
                 release_process_resources(&g_processes[i]);
@@ -1627,6 +1632,7 @@ int32_t process_create_thread(uint64_t entry,
     memcpy(thread->signal_handlers, owner->signal_handlers,
            sizeof(thread->signal_handlers));
     thread->signal_mask = current->signal_mask;
+    thread->abi_mode = owner->abi_mode;
     strncpy(thread->name, owner->name, sizeof(thread->name) - 1);
     thread->name[sizeof(thread->name) - 1] = '\0';
 
@@ -1744,6 +1750,13 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
 
     if (!elf_loader_load_from_path(proc->cr3, path, &policy, &image_info)) {
         const char *elf_err = elf_loader_last_error();
+        extern void serial_write_string(const char *str);
+        extern void serial_write_uint64(uint64_t value);
+        serial_write_string("[spawn-fail] ");
+        serial_write_string(path);
+        serial_write_string(" err=");
+        serial_write_string(elf_err ? elf_err : "?");
+        serial_write_string("\n");
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
         spinlock_lock(&g_process_table_lock);
@@ -1757,7 +1770,26 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
     proc->main_phdr_vaddr = image_info.phdr_vaddr;
     proc->main_phent = image_info.phent;
     proc->main_phnum = image_info.phnum;
-    if (initialize_elf_user_stack(proc, &image_info, path) < 0) {
+    if (proc->abi_mode == PROCESS_ABI_LINUX) {
+        const char *linux_argv[2];
+        linux_argv[0] = name_ptr;
+        uint64_t linux_argc = 1;
+        if (launch_argument) {
+            linux_argv[1] = launch_argument;
+            linux_argc = 2;
+        }
+        if (initialize_elf_user_stack_ex(proc, &image_info, path,
+                                         linux_argc, linux_argv, 0, NULL) < 0) {
+            ipc_cleanup_process_queue(pid);
+            uint64_t irq_flags = irq_save_disable();
+            spinlock_lock(&g_process_table_lock);
+            release_process_resources(proc);
+            reset_process_slot(proc);
+            spinlock_unlock(&g_process_table_lock);
+            irq_restore(irq_flags);
+            return -1;
+        }
+    } else if (initialize_elf_user_stack(proc, &image_info, path) < 0) {
         ipc_cleanup_process_queue(pid);
         uint64_t irq_flags = irq_save_disable();
         spinlock_lock(&g_process_table_lock);
@@ -2362,6 +2394,8 @@ int32_t process_register_boot_process_from_memory(const void *data, uint64_t siz
     return pid;
 }
 
+static int process_group_has_living_member_locked(int32_t leader_pid);
+
 void process_exit_current(void)
 {
     uint64_t irq_flags = irq_save_disable();
@@ -2426,11 +2460,16 @@ void process_exit_current_with_status(int32_t exit_status)
 void process_thread_exit_current(int32_t exit_status)
 {
     uint64_t clear_child_tid = 0;
+    int32_t group_leader = -1;
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
     int32_t tid = current_pid_get();
     if (is_valid_pid(tid) && g_processes[tid].is_thread) {
         process_t *thread = &g_processes[tid];
+        process_t *owner = process_memory_owner_locked(thread);
+        if (owner != NULL) {
+            group_leader = (int32_t)(owner - g_processes);
+        }
         clear_child_tid = thread->clear_child_tid;
         thread->clear_child_tid = 0;
         thread->exit_status = exit_status;
@@ -2447,6 +2486,34 @@ void process_thread_exit_current(int32_t exit_status)
             (void)syscall_futex(clear_child_tid, 1u, 1u, 0u, 0u, 0u);
         }
     }
+
+    if (group_leader >= 0 &&
+        !process_group_has_living_member_locked(group_leader)) {
+        process_exit_current();
+    }
+}
+
+static int process_group_has_living_member_locked(int32_t leader_pid)
+{
+    if (!is_valid_pid(leader_pid)) {
+        return 0;
+    }
+    process_t *leader = &g_processes[leader_pid];
+    if (leader->state != PROCESS_STATE_UNUSED &&
+        leader->state != PROCESS_STATE_DEAD &&
+        leader->state != PROCESS_STATE_ZOMBIE) {
+        return 1;
+    }
+    for (int32_t i = 1; i < g_process_capacity; ++i) {
+        process_t *thread = &g_processes[i];
+        if (thread->is_thread && thread->memory_owner_pid == leader_pid &&
+            thread->state != PROCESS_STATE_UNUSED &&
+            thread->state != PROCESS_STATE_DEAD &&
+            thread->state != PROCESS_STATE_ZOMBIE) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int32_t process_get_current_pid(void)
@@ -2503,6 +2570,12 @@ int process_thread_join(int32_t tid)
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return -11;
+    }
+    if (process_scheduler_pid_in_use_on_any_cpu(tid)) {
+        thread->state = PROCESS_STATE_DEAD;
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return 0;
     }
 
     release_thread_resources(thread, 1);
@@ -2590,6 +2663,37 @@ uint64_t process_get_current_cr3(void)
     return cr3;
 }
 
+const char *process_get_current_name_str(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return "none";
+    }
+    const char *name = g_processes[current_pid_get()].name;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return name;
+}
+
+uint64_t process_get_current_kernel_stack_base(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return 0;
+    }
+    uint64_t base = (uint64_t)(uintptr_t)
+        g_processes[current_pid_get()].kernel_stack_base;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return base;
+}
+
 void process_debug_dump_current(void)
 {
     uint64_t irq_flags = irq_save_disable();
@@ -2632,6 +2736,39 @@ void process_debug_dump_current(void)
     serial_write_string("\n");
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
+}
+
+void process_debug_dump_slot_no_lock(int32_t pid)
+{
+    extern void serial_write_string(const char *str);
+    extern void serial_write_uint64(uint64_t value);
+    if (!is_valid_pid(pid)) {
+        return;
+    }
+    process_t *proc = &g_processes[pid];
+    serial_write_string("[SLOT] pid=");
+    serial_write_uint64((uint64_t)(uint32_t)pid);
+    serial_write_string(" name=");
+    serial_write_string(proc->name);
+    serial_write_string(" is_thread=");
+    serial_write_uint64((uint64_t)proc->is_thread);
+    serial_write_string(" owner=");
+    serial_write_uint64((uint64_t)(uint32_t)proc->memory_owner_pid);
+    serial_write_string(" parent=");
+    serial_write_uint64((uint64_t)(uint32_t)proc->parent_pid);
+    serial_write_string(" state=");
+    serial_write_uint64((uint64_t)(uint32_t)proc->state);
+    serial_write_string(" saved_rsp=");
+    serial_write_uint64(proc->saved_rsp);
+    serial_write_string(" saved_user_rsp=");
+    serial_write_uint64(proc->saved_user_rsp);
+    serial_write_string(" kstack_base=");
+    serial_write_uint64((uint64_t)(uintptr_t)proc->kernel_stack_base);
+    serial_write_string(" kstack_top=");
+    serial_write_uint64(proc->kernel_stack_top);
+    serial_write_string(" cr3=");
+    serial_write_uint64(proc->cr3);
+    serial_write_string("\n");
 }
 
 void process_debug_dump_pid(int32_t pid)
@@ -2698,6 +2835,7 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
 
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
+    process_scheduler_clear_leaving_pid();
     uint64_t now_ns = process_perf_now_ns();
     int do_switch = (request_switch & PROCESS_SCHEDULE_REQUEST_SWITCH) != 0;
     int involuntary = (request_switch & PROCESS_SCHEDULE_REQUEST_INVOLUNTARY) != 0;
@@ -2798,6 +2936,11 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
                                                current_pid_get());
     }
 
+    int32_t old_pid = current_pid_get();
+    if (next_pid >= 0 && next_pid != old_pid && old_pid >= 0) {
+        process_scheduler_set_leaving_pid(old_pid);
+    }
+
     current_pid_set(next_pid);
     process_t *next = &g_processes[current_pid_get()];
     process_deliver_pending_signals_locked(next);
@@ -2806,10 +2949,10 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
 
     uint64_t next_saved_rsp = next->saved_rsp;
     uint64_t next_user_rsp = next->saved_user_rsp;
-    if (0) {
-        extern void serial_write_uint64(uint64_t value);
-        extern void serial_write_string(const char *str);
-        if (next->is_thread || g_processes[current_pid_get()].is_thread) {
+        if (0) {
+            extern void serial_write_uint64(uint64_t value);
+            extern void serial_write_string(const char *str);
+            if (next->is_thread || g_processes[current_pid_get()].is_thread) {
             serial_write_string("[SW> pid=");
             serial_write_uint64((uint64_t)(uint32_t)current_pid_get());
             serial_write_string(" srs=");
@@ -2854,6 +2997,7 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
 
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
+    process_scheduler_clear_leaving_pid();
     uint64_t now_ns = process_perf_now_ns();
 
     if (!is_valid_pid(current_pid_get())) {
@@ -2871,6 +3015,11 @@ uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out)
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         halt_forever();
+    }
+
+    int32_t old_pid = current_pid_get();
+    if (next_pid >= 0 && next_pid != old_pid && old_pid >= 0) {
+        process_scheduler_set_leaving_pid(old_pid);
     }
 
     current_pid_set(next_pid);
@@ -2920,6 +3069,7 @@ int process_run_next_on_current_cpu(void)
 
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
+    process_scheduler_clear_leaving_pid();
 
     int32_t current_pid = current_pid_get();
     process_rseq_update_on_preempt_locked(current_pid,
@@ -2931,6 +3081,10 @@ int process_run_next_on_current_cpu(void)
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return 0;
+    }
+
+    if (next_pid != current_pid && current_pid >= 0) {
+        process_scheduler_set_leaving_pid(current_pid);
     }
 
     current_pid_set(next_pid);
@@ -3456,6 +3610,122 @@ int process_signal_deliver(int32_t pid, int32_t signum)
     return 0;
 }
 
+static int process_signal_blocked_locked(const process_t *proc, int32_t signum)
+{
+    if (signum == 9 || signum == 19) {
+        return 0;
+    }
+    return (proc->signal_mask & (1ULL << ((uint32_t)signum - 1u))) != 0u;
+}
+
+int process_signal_validate_group(int32_t tgid, int32_t tid)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    int valid = 0;
+    if (is_valid_pid(tgid) && is_valid_pid(tid)) {
+        process_t *thread = &g_processes[tid];
+        if (thread->state != PROCESS_STATE_UNUSED &&
+            thread->state != PROCESS_STATE_DEAD &&
+            thread->state != PROCESS_STATE_ZOMBIE) {
+            process_t *owner = process_memory_owner_locked(thread);
+            if (owner != NULL &&
+                (int32_t)(owner - g_processes) == tgid) {
+                valid = 1;
+            }
+        }
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return valid;
+}
+
+int process_signal_deliver_group(int32_t pid, int32_t signum)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (pid == 0) {
+        pid = current_pid_get();
+        if (is_valid_pid(pid)) {
+            process_t *owner =
+                process_memory_owner_locked(&g_processes[pid]);
+            if (owner != NULL) {
+                pid = (int32_t)(owner - g_processes);
+            }
+        }
+    }
+    if (!is_valid_pid(pid)) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    process_t *leader = &g_processes[pid];
+    if (leader->state == PROCESS_STATE_UNUSED ||
+        leader->state == PROCESS_STATE_DEAD ||
+        leader->state == PROCESS_STATE_ZOMBIE) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    leader = process_memory_owner_locked(leader);
+    if (leader == NULL) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    int32_t leader_pid = (int32_t)(leader - g_processes);
+
+    if (signum == 0) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return 0;
+    }
+    if (signum < 0 || signum >= PROCESS_SIGNAL_MAX) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    if (!process_signal_blocked_locked(leader, signum)) {
+        leader->pending_signals |= (1u << (uint32_t)signum);
+    } else {
+        int32_t target = leader_pid;
+        for (int32_t i = 1; i < g_process_capacity; ++i) {
+            process_t *thread = &g_processes[i];
+            if (thread->state == PROCESS_STATE_UNUSED ||
+                thread->state == PROCESS_STATE_DEAD ||
+                thread->state == PROCESS_STATE_ZOMBIE) {
+                continue;
+            }
+            if (!thread->is_thread || thread->memory_owner_pid != leader_pid) {
+                continue;
+            }
+            if (!process_signal_blocked_locked(thread, signum)) {
+                target = i;
+                break;
+            }
+        }
+        g_processes[target].pending_signals |= (1u << (uint32_t)signum);
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return 0;
+}
+
+int process_is_current_thread(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    int is_thread = is_valid_pid(current_pid_get()) &&
+                    g_processes[current_pid_get()].is_thread;
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return is_thread;
+}
+
 int process_is_guard_page_fault(uint64_t fault_addr)
 {
     uint64_t irq_flags = irq_save_disable();
@@ -3670,7 +3940,8 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
             irq_restore(irq_flags);
             return -1;
         }
-        if (g_processes[pid].state == PROCESS_STATE_ZOMBIE) {
+        if (g_processes[pid].state == PROCESS_STATE_ZOMBIE &&
+            !process_scheduler_pid_in_use_on_any_cpu(pid)) {
             int32_t exit_code = g_processes[pid].exit_status;
             release_process_resources(&g_processes[pid]);
             reset_process_slot(&g_processes[pid]);
@@ -3689,7 +3960,8 @@ int32_t process_waitpid(int32_t pid, int32_t *status_out, int32_t options)
     for (int32_t i = 0; i < g_process_capacity; ++i) {
         if (g_processes[i].state == PROCESS_STATE_ZOMBIE &&
             !g_processes[i].is_thread &&
-            g_processes[i].parent_pid == my_pid) {
+            g_processes[i].parent_pid == my_pid &&
+            !process_scheduler_pid_in_use_on_any_cpu(i)) {
             int32_t exit_code = g_processes[i].exit_status;
             int32_t child_pid = i;
             release_process_resources(&g_processes[i]);
@@ -3766,7 +4038,9 @@ int32_t process_terminate(int32_t pid)
     }
 
     proc->state = PROCESS_STATE_DEAD;
-    release_process_resources(proc);
+    if (!process_scheduler_pid_in_use_on_any_cpu(pid)) {
+        release_process_resources(proc);
+    }
 
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);

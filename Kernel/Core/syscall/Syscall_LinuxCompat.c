@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "Core/process/ProcessManager.h"
+#include "Core/process/ProcessScheduler.h"
 #include "Core/syscall/Syscall_File.h"
 #include "Core/syscall/Syscall_Socket.h"
 #include "Core/syscall/Syscall_Epoll.h"
@@ -15,6 +16,8 @@
 #include "Core/vfs/VFS.h"
 #include "Crypto/Crypto.h"
 #include "Debug/serial/Serial.h"
+
+int64_t write(int fd, const void *buf, uint64_t count);
 #include "Drivers/RTC/RTC.h"
 #include "kernel/status.h"
 #include "mmu/Paging_Main.h"
@@ -187,6 +190,9 @@ int64_t syscall_readv(int32_t fd, uint64_t iov, int32_t iovcnt)
         while (offset < vector.length) {
             uint64_t want = vector.length - offset;
             if (want > sizeof(chunk)) want = sizeof(chunk);
+            if (fd <= 2) {
+                return (int64_t)total;
+            }
             int64_t count = syscall_file_read(fd, chunk, want);
             if (count < 0) return total != 0u ? (int64_t)total : count;
             if (count == 0) return (int64_t)total;
@@ -230,7 +236,15 @@ int64_t syscall_writev(int32_t fd, uint64_t iov, int32_t iovcnt)
                                want) != 0u) {
                 return total != 0u ? (int64_t)total : LINUX_EFAULT;
             }
-            int64_t count = syscall_file_write(fd, chunk, want);
+            int64_t count;
+            if (fd <= 2) {
+                for (uint64_t i = 0; i < want; ++i) {
+                    serial_write_char((char)chunk[i]);
+                }
+                count = (int64_t)want;
+            } else {
+                count = syscall_file_write(fd, chunk, want);
+            }
             if (count < 0) return total != 0u ? (int64_t)total : count;
             offset += (uint64_t)count;
             total += (uint64_t)count;
@@ -1660,6 +1674,15 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             break;
 
         case LINUX_SYS_EXIT:
+            if (process_is_current_thread()) {
+                process_thread_exit_current((int32_t)arg1 & 0xFF);
+            } else {
+                process_exit_current_with_status((int32_t)arg1 & 0xFF);
+            }
+            result = 0;
+            request_switch = 1;
+            break;
+
         case LINUX_SYS_EXIT_GROUP:
             process_exit_current_with_status((int32_t)arg1 & 0xFF);
             result = 0;
@@ -1671,8 +1694,8 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             break;
 
         case LINUX_SYS_KILL:
-            result = (int64_t)process_signal_deliver((int32_t)arg1,
-                                                     (int32_t)arg2);
+            result = (int64_t)process_signal_deliver_group((int32_t)arg1,
+                                                           (int32_t)arg2);
             break;
 
         case LINUX_SYS_UNAME:
@@ -1872,10 +1895,25 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             result = linux_epoll_ctl(arg1, arg2, arg3, arg4);
             break;
 
-        case LINUX_SYS_TGKILL:
-            result = (int64_t)process_signal_deliver((int32_t)arg2,
-                                                     (int32_t)arg3);
+        case LINUX_SYS_TGKILL: {
+            int32_t tgid = (int32_t)arg1;
+            int32_t tid = (int32_t)arg2;
+            int32_t signum = (int32_t)arg3;
+            if (!process_signal_validate_group(tgid, tid)) {
+                result = LINUX_ESRCH;
+                break;
+            }
+            if (signum == 0) {
+                result = 0;
+                break;
+            }
+            if (signum < 0 || signum >= (int32_t)PROCESS_SIGNAL_MAX) {
+                result = LINUX_EINVAL;
+                break;
+            }
+            result = (int64_t)process_signal_deliver(tid, signum);
             break;
+        }
 
         case LINUX_SYS_OPENAT: {
             if ((int64_t)arg1 != -100) {

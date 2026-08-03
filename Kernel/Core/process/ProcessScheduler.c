@@ -4,6 +4,7 @@
 
 static int32_t g_current_pid_per_cpu[OS_CONFIG_SMP_MAX_CPUS];
 static int32_t g_last_pick_per_cpu[OS_CONFIG_SMP_MAX_CPUS];
+static int32_t g_leaving_pid_per_cpu[OS_CONFIG_SMP_MAX_CPUS];
 static uint8_t g_resched_per_cpu[OS_CONFIG_SMP_MAX_CPUS];
 static uint32_t g_timeslice_ticks = 4;
 static uint64_t g_cpu_idle_ns[OS_CONFIG_SMP_MAX_CPUS];
@@ -39,9 +40,36 @@ void process_scheduler_init(uint32_t timeslice_ticks)
     for (uint32_t i = 0; i < OS_CONFIG_SMP_MAX_CPUS; ++i) {
         g_current_pid_per_cpu[i] = -1;
         g_last_pick_per_cpu[i] = -1;
+        g_leaving_pid_per_cpu[i] = -1;
         g_resched_per_cpu[i] = 0;
         g_cpu_idle_ns[i] = 0;
     }
+}
+
+void process_scheduler_set_leaving_pid(int32_t pid)
+{
+    uint32_t cpu = scheduler_cpu_id();
+    g_leaving_pid_per_cpu[cpu] = pid;
+}
+
+void process_scheduler_clear_leaving_pid(void)
+{
+    uint32_t cpu = scheduler_cpu_id();
+    g_leaving_pid_per_cpu[cpu] = -1;
+}
+
+int process_scheduler_pid_in_use_on_any_cpu(int32_t pid)
+{
+    if (pid < 0) {
+        return 0;
+    }
+    for (uint32_t cpu = 0; cpu < OS_CONFIG_SMP_MAX_CPUS; ++cpu) {
+        if (g_current_pid_per_cpu[cpu] == pid ||
+            g_leaving_pid_per_cpu[cpu] == pid) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int32_t process_scheduler_current_pid(void)
@@ -169,4 +197,20 @@ uint64_t process_scheduler_get_idle_ns(uint32_t cpu)
 uint32_t process_scheduler_max_cpus(void)
 {
     return (uint32_t)OS_CONFIG_SMP_MAX_CPUS;
+}
+
+void process_scheduler_debug_dump_cpus(void)
+{
+    extern void serial_write_string(const char *str);
+    extern void serial_write_uint64(uint64_t value);
+    serial_write_string("[CPUS] ");
+    for (uint32_t cpu = 0; cpu < OS_CONFIG_SMP_MAX_CPUS; ++cpu) {
+        if (cpu != 0u) {
+            serial_write_string(" ");
+        }
+        serial_write_uint64((uint64_t)(uint32_t)g_current_pid_per_cpu[cpu]);
+        serial_write_string("/");
+        serial_write_uint64((uint64_t)(uint32_t)g_leaving_pid_per_cpu[cpu]);
+    }
+    serial_write_string("\n");
 }

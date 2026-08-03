@@ -116,6 +116,8 @@ void process_set_current_abi_mode(uint8_t mode);
 uint64_t process_get_current_saved_rsp(void);
 uint64_t process_get_current_user_rsp(void);
 uint64_t process_get_current_cr3(void);
+const char *process_get_current_name_str(void);
+uint64_t process_get_current_kernel_stack_base(void);
 uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
                                      uint64_t current_user_rsp,
                                      int request_switch,
@@ -135,6 +137,9 @@ uint64_t process_signal_get_handler(int32_t signum);
 uint64_t process_signal_get_mask(void);
 int process_signal_set_mask(uint64_t mask);
 int process_signal_deliver(int32_t pid, int32_t signum);
+int process_signal_deliver_group(int32_t pid, int32_t signum);
+int process_signal_validate_group(int32_t tgid, int32_t tid);
+int process_is_current_thread(void);
 uint64_t process_get_current_pending_signals(void);
 int process_consume_pending_signal(int32_t signum);
 int process_set_current_name(const char *name, uint32_t max_len);
@@ -153,6 +158,7 @@ int process_get_capabilities(int32_t pid, process_capability_mask_t *capabilitie
 void process_on_timer_tick(void);
 int  process_timeslice_expired(void);
 int process_run_next_on_current_cpu(void);
+void process_debug_dump_slot_no_lock(int32_t pid);
 void process_debug_dump_current(void);
 void process_debug_dump_pid(int32_t pid);
 int32_t current_pid_get(void);

@@ -5,6 +5,7 @@
 #include "MemoryManagement/Memory_Main.h"
 #include "mmu/Paging_Main.h"
 #include "Core/process/ProcessManager.h"
+#include "Core/process/ProcessScheduler.h"
 #include "Platform/interrupt/Interrupts.h"
 #include "smp/SMP_Main.h"
 #include "Debug/serial/Serial.h"
@@ -96,7 +97,29 @@ static void panic_exception(const char *name,
     uint64_t cr3 = hal_cpu_read_cr(3);
     uint64_t cr4 = hal_cpu_read_cr(4);
 
-    serial_write_string("\n[OS] [PANIC] Fatal exception\n");
+    {
+        extern void serial_write_string(const char *str);
+        extern void serial_write_uint64(uint64_t value);
+        extern int32_t process_get_current_pid(void);
+        extern const char *process_get_current_name_str(void);
+        extern uint64_t process_get_current_kernel_stack_base(void);
+        extern void process_debug_dump_slot_no_lock(int32_t pid);
+        extern void process_scheduler_debug_dump_cpus(void);
+        int32_t p = process_get_current_pid();
+        serial_write_string("\n[OS] [PANIC] Fatal exception\n");
+        process_scheduler_debug_dump_cpus();
+        if (p >= 0) {
+            const char *pn = process_get_current_name_str();
+            serial_write_string("[OS] [PANIC] proc pid=");
+            serial_write_uint64((uint64_t)(uint32_t)p);
+            serial_write_string(" name=");
+            serial_write_string(pn ? pn : "?");
+            serial_write_string(" kstack=");
+            serial_write_uint64(process_get_current_kernel_stack_base());
+            serial_write_string("\n");
+            process_debug_dump_slot_no_lock(p);
+        }
+    }
     serial_write_string("[OS] [PANIC] name: ");
     serial_write_string(name);
     serial_write_string("\n");
@@ -150,6 +173,41 @@ static void panic_exception(const char *name,
 
     memory_dump_virtual((const void *)(uintptr_t)rsp,
                         PANIC_STACK_DUMP_QWORDS * (uint32_t)sizeof(uint64_t));
+    panic_dump_stack_words(rsp);
+    panic_dump_stack_trace(rbp);
+
+    {
+        extern void serial_write_string(const char *str);
+        extern void serial_write_uint64(uint64_t value);
+        serial_write_string("[OS] [PANIC] rip bytes:");
+        if (paging_is_user_range_mapped(cr3, rip & ~0x7ULL, 16u)) {
+            const uint8_t *p = (const uint8_t *)(uintptr_t)(rip & ~0x7ULL);
+            for (uint32_t i = 0; i < 16; ++i) {
+                serial_write_string(" ");
+                serial_write_uint64(p[i]);
+            }
+        } else {
+            serial_write_string(" unmapped");
+        }
+        serial_write_string("\n");
+    }
+
+    if ((cs & 3) == 3) {
+        extern void serial_write_string(const char *str);
+        extern void serial_write_uint64(uint64_t value);
+        serial_write_string("[OS] [PANIC] user-rip bytes: ");
+        if (paging_is_user_range_mapped(cr3, rip & ~0x7ULL, 16u)) {
+            const uint8_t *p = (const uint8_t *)(uintptr_t)(rip & ~0x7ULL);
+            for (uint32_t i = 0; i < 16; ++i) {
+                uint32_t b = p[i];
+                serial_write_string(" ");
+                serial_write_uint64(b);
+            }
+        } else {
+            serial_write_string(" unmapped");
+        }
+        serial_write_string("\n");
+    }
 
     while (1) {
         hal_cpu_halt();
@@ -327,6 +385,22 @@ int32_t page_fault_handler(uint64_t error_code,
     }
 
     int32_t pid = process_get_current_pid();
+    {
+        extern void serial_write_string(const char *str);
+        extern void serial_write_uint64(uint64_t value);
+        extern const char *process_get_current_name_str(void);
+        extern uint64_t process_get_current_kernel_stack_base(void);
+        extern void process_scheduler_debug_dump_cpus(void);
+        serial_write_string("[OS] [PF] pid=");
+        serial_write_uint64((uint64_t)(uint32_t)pid);
+        serial_write_string(" name=");
+        const char *pn = process_get_current_name_str();
+        serial_write_string(pn ? pn : "?");
+        serial_write_string(" kstack=");
+        serial_write_uint64(process_get_current_kernel_stack_base());
+        serial_write_string("\n");
+        process_scheduler_debug_dump_cpus();
+    }
     if ((error_code & PF_USER) && pid >= 0) {
         uint64_t cr3 = process_get_current_cr3();
         int swap_rc = paging_handle_swap_fault(cr3, cr2);

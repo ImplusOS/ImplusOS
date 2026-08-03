@@ -2,6 +2,7 @@
 #include "Protocol/ATA/Protocol_ATA.h"
 #include "Protocol/USB_MassStorage/Protocol_USB_MassStorage.h"
 #include "Drivers/Module/BlockManager.h"
+#include "Core/sync/Spinlock.h"
 #include "Debug/serial/Serial.h"
 #include "Debug/printf/printf.h"
 #include "Drivers/Module/DriverManager.h"
@@ -74,6 +75,7 @@ static const block_device_t *g_detected_disks[IO_MAX_DISKS];
 static uint32_t              g_detected_disks_indices[IO_MAX_DISKS];
 static uint32_t              g_detected_disk_count  = 0;
 static bool                  g_disk_scan_done       = false;
+static spinlock_t            g_disk_lock;
 
 typedef struct {
     const char *selected_name;
@@ -580,6 +582,7 @@ bool disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type) {
     g_current_block_device = NULL;
     g_current_device_index = 0;
     g_disk_scan_done       = false;
+    spinlock_init(&g_disk_lock);
 
     io_protocol_type_t requested_protocol = IO_PROTOCOL_TYPE_NONE;
     if      (boot_drive_type == BOOT_DRIVE_TYPE_IDE)
@@ -616,11 +619,13 @@ bool disk_io_init(uint64_t partition_lba, uint32_t boot_drive_type) {
 bool disk_read(uint64_t lba, uint8_t *buffer, uint32_t sectors)
 {
     if (!g_current_block_device) return false;
+    spinlock_lock(&g_disk_lock);
     if (g_current_block_device->select_device)
         g_current_block_device->select_device(g_current_device_index);
+    bool ok = false;
     if (g_current_block_device->read) {
         uint64_t start_ns = timer_monotonic_ns();
-        bool ok = g_current_block_device->read(lba, buffer, sectors);
+        ok = g_current_block_device->read(lba, buffer, sectors);
         uint64_t end_ns = timer_monotonic_ns();
         uint64_t latency_ns = end_ns >= start_ns ? end_ns - start_ns : 0u;
         g_disk_debug_stats.read_count++;
@@ -632,18 +637,21 @@ bool disk_read(uint64_t lba, uint8_t *buffer, uint32_t sectors)
         if (!ok) {
             g_disk_debug_stats.read_failures++;
         }
-        return ok;
     }
-    return false;
+    spinlock_unlock(&g_disk_lock);
+    return ok;
 }
 
 bool disk_write(uint64_t lba, const uint8_t *buffer, uint32_t sectors) {
     if (!g_current_block_device) return false;
+    spinlock_lock(&g_disk_lock);
+    bool ok = false;
     if (g_current_block_device->select_device)
         g_current_block_device->select_device(g_current_device_index);
     if (g_current_block_device->write)
-        return g_current_block_device->write(lba, buffer, sectors);
-    return false;
+        ok = g_current_block_device->write(lba, buffer, sectors);
+    spinlock_unlock(&g_disk_lock);
+    return ok;
 }
 
 bool disk_io_is_working(void) {

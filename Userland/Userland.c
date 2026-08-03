@@ -1108,6 +1108,21 @@ void _start(void) {
     spawn_with_fallbacks(com_ImplusOS_linuxhello, 1);
     sleep_ms(500);
 
+    serial_write_string("[init] spawning busybox ls (Linux ABI)\n");
+    int32_t bb_pid = process_spawn_with_arg("/Userland/UserApps/busybox/busybox", "ls");
+    serial_write_string("[init] busybox ls pid=");
+    serial_write_uint64((uint64_t)bb_pid);
+    serial_write_string("\n");
+    sleep_ms(500);
+
+    serial_write_string("[init] spawning busybox uname (Linux ABI)\n");
+    process_spawn_with_arg("/Userland/UserApps/busybox/busybox", "uname");
+    sleep_ms(500);
+
+    serial_write_string("[init] spawning busybox no-arg (Linux ABI)\n");
+    process_spawn("/Userland/UserApps/busybox/busybox");
+    sleep_ms(500);
+
     if (g_bg_cache) {
         free(g_bg_cache);
         g_bg_cache = NULL;

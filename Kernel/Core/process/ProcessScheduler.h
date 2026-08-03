@@ -98,6 +98,9 @@ typedef struct __attribute__((aligned(16))) {
 void process_scheduler_init(uint32_t timeslice_ticks);
 int32_t process_scheduler_current_pid(void);
 void process_scheduler_set_current_pid(int32_t pid);
+void process_scheduler_set_leaving_pid(int32_t pid);
+void process_scheduler_clear_leaving_pid(void);
+int process_scheduler_pid_in_use_on_any_cpu(int32_t pid);
 int32_t process_scheduler_pick_next(process_t *processes,
                                     int32_t capacity,
                                     int32_t current_pid);
@@ -108,3 +111,4 @@ void process_scheduler_prepare_run(process_t *proc);
 void process_scheduler_add_idle_ns(uint64_t ns);
 uint64_t process_scheduler_get_idle_ns(uint32_t cpu);
 uint32_t process_scheduler_max_cpus(void);
+void process_scheduler_debug_dump_cpus(void);

@@ -410,6 +410,7 @@ t11: ; clone with CLONE_PARENT_SETTID|CLONE_CHILD_SETTID (56)
     syscall
     cmp rax, 0
     jl t11_fail
+    je t11_child
     mov [rel child_pid], rax
     lea rsi, [rel msg_t11]
     mov rdx, msg_t11_len
@@ -418,13 +419,95 @@ t11: ; clone with CLONE_PARENT_SETTID|CLONE_CHILD_SETTID (56)
     syscall
     mov rax, [rel child_pid]
     call print_hex
-    jmp done
-t11_fail:
+    mov rax, [rel child_pid]
+    jmp t12
+t11_child:
+    lea rsi, [rel msg_t11]
+    mov rdx, msg_t11_len
+    mov rax, 1
+    mov rdi, 1
+    syscall
+    mov rax, 0
+    call print_hex
+    xor rax, rax
+    jmp t12
+ t11_fail:
     lea rsi, [rel msg_t11_fail]
     mov rdx, msg_t11_fail_len
     mov rax, 1
     mov rdi, 1
     syscall
+    jmp done
+
+t12: ; thread group: T11 child (rax==0) runs checks, T11 parent verifies
+    cmp rax, 0
+    je t12_child
+    jl t12_fail
+    mov [rel t12_parent_sees_tid], rax
+t12_parent_wait:
+    cmp qword [rel t12_child_done], 0
+    jne t12_check
+    lea rdi, [rel t12_sleep]     ; nanosleep 10ms
+    mov rsi, 0
+    mov rax, 35
+    syscall
+    jmp t12_parent_wait
+t12_check:
+    mov rax, 39                  ; getpid: must equal child's getpid
+    syscall
+    cmp rax, [rel t12_getpid]
+    jne t12_fail
+    mov rax, [rel t12_gettid]
+    cmp rax, [rel t12_parent_sees_tid]
+    jne t12_fail
+    cmp qword [rel t12_tgkill_ok], 0
+    jne t12_fail
+    cmp qword [rel t12_tgkill_bad], -3
+    jne t12_fail
+    cmp qword [rel t12_kill0], 0
+    jne t12_fail
+    lea rsi, [rel msg_t12]
+    mov rdx, msg_t12_len
+    mov rax, 1
+    mov rdi, 1
+    syscall
+    jmp done
+t12_child:
+    mov rax, 39                  ; getpid
+    syscall
+    mov [rel t12_getpid], rax
+    mov rax, 186                 ; gettid
+    syscall
+    mov [rel t12_gettid], rax
+    mov rax, 234                 ; tgkill(tgid, tid, 0) -> 0
+    mov rdi, [rel t12_getpid]
+    mov rsi, [rel t12_gettid]
+    mov rdx, 0
+    syscall
+    mov [rel t12_tgkill_ok], rax
+    mov rax, 234                 ; tgkill(wrong tgid, tid, 0) -> ESRCH
+    mov rdi, [rel t12_getpid]
+    add rdi, 100
+    mov rsi, [rel t12_gettid]
+    mov rdx, 0
+    syscall
+    mov [rel t12_tgkill_bad], rax
+    mov rax, 62                  ; kill(0, 0) -> 0 (own group exists)
+    mov rdi, 0
+    mov rsi, 0
+    syscall
+    mov [rel t12_kill0], rax
+    mov qword [rel t12_child_done], 1
+    mov rax, 60                  ; exit(0): thread exit only, leader survives
+    mov rdi, 0
+    syscall
+t12_fail:
+    lea rsi, [rel msg_t12_fail]
+    mov rdx, msg_t12_fail_len
+    mov rax, 1
+    mov rdi, 1
+    syscall
+    jmp done
 
 done:
     mov rax, 231            ; exit_group(0)
@@ -515,6 +598,10 @@ msg_t11:    db "T11 clone tid="
 msg_t11_len equ $ - msg_t11
 msg_t11_fail:    db "T11 clone FAIL", 0x0A
 msg_t11_fail_len equ $ - msg_t11_fail
+msg_t12:    db "T12 thread group ok", 0x0A
+msg_t12_len equ $ - msg_t12
+msg_t12_fail:    db "T12 thread group FAIL", 0x0A
+msg_t12_fail_len equ $ - msg_t12_fail
 msg_ok:    db " OK", 0x0A
 msg_ok_len equ $ - msg_ok
 msg_fail:    db " FAIL", 0x0A
@@ -553,3 +640,11 @@ parent_tid:     resq 1
 child_tid:      resq 1
 child_pid:      resq 1
 child_stack:    resb 8192
+t12_getpid:         resq 1
+t12_gettid:         resq 1
+t12_tgkill_ok:      resq 1
+t12_tgkill_bad:     resq 1
+t12_kill0:          resq 1
+t12_child_done:     resq 1
+t12_parent_sees_tid: resq 1
+t12_sleep:          dq 0, 10000000

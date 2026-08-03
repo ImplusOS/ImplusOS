@@ -13,7 +13,7 @@ all: $(ELF)
 
 $(BUILD_DIR)/hello.o: hello.s
 	@mkdir -p $(dir $@)
-	$(NASM) -f elf64 $< -o $@
+	$(NASM) -f elf64 -w-error=label-redef-late $< -o $@
 
 $(ELF): $(BUILD_DIR)/hello.o
 	$(LD) -nostdlib -e _start -Ttext 0x400000 --build-id=none -o $@ $<

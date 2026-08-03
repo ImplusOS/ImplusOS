@@ -3,6 +3,7 @@
 #include "DeviceRegistry.h"
 #include "MemoryManagement/DMA_Memory.h"
 #include "Debug/serial/Serial.h"
+#include "Core/sync/Spinlock.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -30,6 +31,7 @@ static uint32_t g_selected;
 static bool g_initialized;
 static BOOT_INFO g_boot_info;
 static bool g_have_boot_identity;
+static spinlock_t g_block_lock;
 
 void block_manager_set_boot_identity(const BOOT_INFO *boot_info)
 {
@@ -148,6 +150,7 @@ bool block_manager_init(void)
     g_provider_count = 0u;
     g_device_count = 0u;
     g_selected = 0u;
+    spinlock_init(&g_block_lock);
 
     for (uint32_t i = 0u;; ++i) {
         const device_t *device =
@@ -221,7 +224,9 @@ bool block_manager_select_device(uint32_t index)
     if (!block_manager_ensure_init() || index >= g_device_count) {
         return false;
     }
+    spinlock_lock(&g_block_lock);
     g_selected = index;
+    spinlock_unlock(&g_block_lock);
     return true;
 }
 
@@ -295,10 +300,11 @@ bool block_manager_flush(uint32_t index)
            entry->storage->flush(entry->local_index);
 }
 
-static bool block_manager_sector_io(uint32_t index, uint64_t sector_lba,
-                                    uint8_t *read_buffer,
-                                    const uint8_t *write_buffer,
-                                    uint32_t sector_count)
+static bool block_manager_sector_io_unlocked(uint32_t index,
+                                             uint64_t sector_lba,
+                                             uint8_t *read_buffer,
+                                             const uint8_t *write_buffer,
+                                             uint32_t sector_count)
 {
     driver_block_info_t info;
     if (!block_manager_get_info(index, &info) ||
@@ -379,6 +385,18 @@ static bool block_manager_sector_io(uint32_t index, uint64_t sector_lba,
     if (bounce != NULL) {
         dma_free(bounce, info.logical_block_size);
     }
+    return ok;
+}
+
+static bool block_manager_sector_io(uint32_t index, uint64_t sector_lba,
+                                    uint8_t *read_buffer,
+                                    const uint8_t *write_buffer,
+                                    uint32_t sector_count)
+{
+    spinlock_lock(&g_block_lock);
+    bool ok = block_manager_sector_io_unlocked(
+        index, sector_lba, read_buffer, write_buffer, sector_count);
+    spinlock_unlock(&g_block_lock);
     return ok;
 }
 
