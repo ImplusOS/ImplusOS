@@ -12,8 +12,6 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Minimal file API (Userland/API/File.h); avoid pulling the whole header
- * set into this low-level helper. */
 extern int32_t file_open(const char *path, uint64_t flags);
 extern int64_t file_read(int32_t fd, void *buffer, uint64_t len);
 extern int32_t file_close(int32_t fd);
@@ -49,15 +47,6 @@ void *service_load(const char *name)
     build_so_path(name, path, sizeof(path));
 
     void *h = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
-    if (h == NULL) {
-        serial_write_string("[service] load failed: ");
-        serial_write_string(path);
-        serial_write_string("\n");
-    } else {
-        serial_write_string("[service] loaded ");
-        serial_write_string(name);
-        serial_write_string("\n");
-    }
     return h;
 }
 
@@ -71,7 +60,6 @@ int service_unload(void *handle)
 {
     if (handle == NULL) return -1;
     int rc = dlclose(handle);
-    if (rc == 0) serial_write_string("[service] unloaded\n");
     return rc;
 }
 
