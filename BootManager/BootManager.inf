@@ -1,0 +1,43 @@
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = BootManager
+  FILE_GUID                      = A229C240-6F18-4811-A687-3F6DE013205A
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = UefiMain
+
+[Sources]
+  BootManager/UEFI/BootManager_UEFI.c
+  BootManager/FAT32.c
+  BootManager/BootManager_libc/source/stdlib.c
+  BootManager/BootManager_libc/source/string.c
+  BootManager/Core/ElfLoader.c
+  BootManager/Core/KASLR_RNG.c
+
+[Sources.AARCH64]
+  BootManager/UEFI/AArch64Trampoline.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  UefiLib
+  UefiApplicationEntryPoint
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  PrintLib
+  MemoryAllocationLib
+  DevicePathLib
+  RegisterFilterLib
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid 
+  gEfiSimpleFileSystemProtocolGuid
+  gEfiGraphicsOutputProtocolGuid
+  gEfiBlockIoProtocolGuid
+  gEfiDevicePathProtocolGuid
+  gEfiPciIoProtocolGuid
+
+[Guids]
+  gEfiFileInfoGuid

@@ -1,0 +1,12 @@
+[submodule "Vendor/Library/libpng"]
+	path = Vendor/Library/libpng
+	url = https://github.com/pnggroup/libpng
+[submodule "Vendor/Library/zlib"]
+	path = Vendor/Library/zlib
+	url = https://github.com/madler/zlib
+[submodule "Vendor/Library/libjpeg"]
+	path = Vendor/Library/libjpeg
+	url = https://github.com/winlibs/libjpeg
+[submodule "Vendor/Library/freetype"]
+	path = Vendor/Library/freetype
+	url = https://github.com/freetype/freetype.git

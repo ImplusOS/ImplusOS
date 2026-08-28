@@ -1,0 +1,16 @@
+# Display name|ELF path|fallback badge
+Terminal|/Userland/com.ImplusOS.shell/com.ImplusOS.shell.ELF|TE
+Files|/Userland/com.ImplusOS.filemanager/com.ImplusOS.filemanager.ELF|FI
+Editor|/Userland/com.ImplusOS.editor/com.ImplusOS.editor.ELF|ED
+Processes|/Userland/com.ImplusOS.procman/com.ImplusOS.procman.ELF|PR
+OS Debug|/Userland/com.ImplusOS.osdebug/com.ImplusOS.osdebug.ELF|DB
+Implus Store|/Userland/com.ImplusOS.ImplusStore/com.ImplusOS.ImplusStore.ELF|ST
+Network|/Userland/com.ImplusOS.NetworkTest/com.ImplusOS.NetworkTest.ELF|NW
+Virtual Machine|/Userland/com.ImplusOS.vm/com.ImplusOS.vm.ELF|VM
+Example|/Userland/com.ImplusOS.exampleApp/com.ImplusOS.exampleApp.ELF|EX
+Dialog Test|/Userland/com.ImplusOS.dialogtest/com.ImplusOS.dialogtest.ELF|DG
+Settings|/Userland/com.ImplusOS.settings/com.ImplusOS.settings.ELF|SE
+System Info|/Userland/com.ImplusOS.version/com.ImplusOS.version.ELF|IN
+Zlib Test|/Userland/com.ImplusOS.zlibTest/com.ImplusOS.zlibTest.ELF|ZT
+PNG Viewer|/Userland/com.ImplusOS.pngTest/com.ImplusOS.pngTest.ELF|PV
+BusyBox|/Userland/busybox/busybox|BB
