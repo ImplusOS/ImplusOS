@@ -7,6 +7,19 @@
 > 確定内容は各該当セクションに反映し、12章にも回答結果を追記してある。実装は
 > この確定内容に基づき着手フェーズ順（1章）で進める。
 
+> **現況追記 (2026-08-29):**
+> - P1〜P7 の成果はコードベースに反映済み（`Kernel/Compat/`, `Kernel/Drivers/`
+>   のフラット化, `Kernel/Core/vfs/VFS.c` の名前非依存化, exFAT 読み取り専用
+>   ドライバ, `Library/Crypto` 等）。
+> - **P8 (CI/CD) は未反映**: `.github/workflows/*` と `.markdownlint.jsonc` は
+>   本ツリーに存在しない。`Kernel/config/arch.mk` の `CI=1`→`-Werror` 昇格
+>   フックのみ実装済み。設計は `Docs/Architecture/CI_CD.md` 参照。
+> - **arm64**: 8章記載の `__trunctfdf2` 未解決リンクエラーは未修正のまま
+>   （`make ARCH=arm64 kernel` は現在も失敗する）。
+> - P7 のドキュメント刷新は 2026-08-29 に再実施
+>   （`README.md` / `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `Docs/Architecture/*`
+>   を現行ソースツリーに合わせて更新）。
+
 ---
 
 ## 0. 背景調査サマリ（着手前に必ず読むこと）

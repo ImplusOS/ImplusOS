@@ -1,11 +1,14 @@
 # Kernel Architecture — ImplusOS
 
+*Last reviewed: 2026-08-29.*
+
 ## 1. Overview
 
 ImplusOS runs a **monolithic kernel** with loadable driver modules on **x86-64 (Long
 Mode)** and **arm64 (AArch64)** hardware. The kernel is a single ELF64 binary
-(`Kernel_Main.ELF`) that is loaded by the UEFI bootloader into physical memory and
-entered in a flat virtual-memory mode with paging already enabled by the firmware.
+(`Kernel_Main.ELF`, linked `-pie`, entry `kernel_main`) that is loaded by the boot
+manager (reached via a UEFI loader shim on both architectures, or the legacy-BIOS
+path on x86-64) into physical memory and entered with paging already enabled.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -30,96 +33,67 @@ entered in a flat virtual-memory mode with paging already enabled by the firmwar
 │  └───────────┘ └─────────┘ └─────┘ └───────┘ └──────────────┘ │
 │                                                                 │
 ├─────────────────────────────────────────────────────────────────┤
-│                UEFI Bootloader (Loader.c)                      │
-│  GOP setup → BMP logo → ELF load → Driver preload             │
+│         Boot Manager (BootManager/)  ← UEFI shim / BIOS        │
+│  framebuffer → logo → ELF load (kernel+drivers+userland)      │
+│  → ACPI/BPB discovery → KASLR → hand off BOOT_INFO            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ## 2. Boot Sequence
 
-### 2.1 UEFI Bootloader (`BootLoader/Loader.c`)
+### 2.1 Loader and boot manager
 
-The bootloader is a UEFI application built with `EDK2`:
+The first-stage loader is a small UEFI application built with EDK2
+(`BootLoader/x86_64/UEFI/Loader.c`, `BootLoader/arm64/UEFI/Loader.c`) — or, on
+x86-64 only, a legacy-BIOS stage (`BootLoader/x86_64/BIOS/BiosLoader.c`). It
+hands control to the second-stage **boot manager** (`BootManager/`), which:
 
-1. **GOP Initialization** — Queries `EFI_GRAPHICS_OUTPUT_PROTOCOL`, selects native resolution
-2. **Boot Logo** — Loads `Resource/Images/BootLogo.bmp` from the ESP, renders on framebuffer
-3. **Font Loading** — Loads `Resource/Fonts/NotoSansJP-Regular.ttf` for boot-time text (stb_truetype)
-4. **SMBIOS Discovery** — Parses SMBIOS 2.x/3.x tables for CPU, manufacturer, product info
-5. **ACPI RSDP Discovery** — Locates ACPI RSDP v1/v2 from UEFI Configuration Table
-6. **Kernel Loading** — Loads `Kernel/Kernel_Main.ELF` from the boot filesystem
-   - Parses ELF64 headers, loads PT_LOAD segments
-   - Supports ET_DYN (PIE) with arch-specific relocations (x86_64: `R_X86_64_RELATIVE`; arm64: `R_AARCH64_RELATIVE`)
-7. **Driver Preloading** — Loads all `*.ELF` files from `Kernel/Driver/` directory
-8. **Userland Preloading** — Loads `Userland/Userland.ELF` and application ELFs
-9. **Partition BPB Capture** — Reads FAT32 BPB from boot partition for filesystem init
-10. **Boot Services Exit** — Calls `ExitBootServices()`, transitions ownership to kernel
-11. **Kernel Entry** — Jumps to `kernel_main()` with `BOOT_INFO` structure
+1. Sets up the framebuffer (UEFI GOP / BIOS VESA) and renders the boot logo + font.
+2. Discovers SMBIOS and the ACPI RSDP (v1/v2).
+3. Loads `Kernel/Kernel_Main.ELF`, the driver `*.ELF` modules, `Userland/Userland.ELF`
+   and the userland ELFs from the boot filesystem. `BootManager/Core/ElfLoader.c`
+   parses ELF64 headers and PT_LOAD segments and supports ET_DYN (PIE) with
+   arch-specific relocations (`R_X86_64_RELATIVE` / `R_AARCH64_RELATIVE`).
+4. Applies KASLR (`BootManager/Core/KASLR_RNG.c`).
+5. Captures the boot partition's BPB / start LBA and the boot-drive type.
+6. On UEFI, calls `ExitBootServices()`. On arm64, drops EL2→EL1 via
+   `BootManager/UEFI/AArch64Trampoline.c`.
+7. Jumps to `kernel_main()` with a `BOOT_INFO` structure.
 
-### 2.2 Kernel Initialization (`Kernel/Core/kernel_main.c`)
+### 2.2 Kernel initialization (`Kernel/Core/kernel_main.c`)
 
-```c
-void kernel_main(BOOT_INFO *boot_info) {
-    // Phase 1: Early hardware
-    arch_ops_get()->disable_interrupts();
-    arch_ops_get()->early_init();
-    serial_init();                    // COM1 serial output (115200 baud)
-    kernel_panic_init(boot_info);     // Panic handler with boot info
-    switch to kernel stack
-    → kernel_main_after_stack_switch(boot_info);
-}
+`kernel_main()` does the minimum to get onto a known-good kernel stack (early
+`arch_ops_t` init, `serial_init()`, `kernel_panic_init()`), then
+`kernel_main_after_stack_switch()` runs **19 instrumented boot phases**, each
+wrapped in `boot_profile_begin()` / `boot_profile_end(name)` and dumped over
+serial by `boot_profile_dump("boot")`.
 
-static void kernel_main_after_stack_switch(BOOT_INFO *boot_info) {
-    // Phase 1b: Boot progress
-    load_bar_init(boot_info);         // Boot progress bar/spinner
-    timer_set_callback(load_spinner_timer);
+| # | Phase | What happens |
+|---|---|---|
+| 0 | `cpu_tables` | GDT/IDT (x86_64) or exception vectors (arm64), via `arch_ops_get()->init_cpu_tables()` |
+| 1 | `pmm` | Bitmap physical page allocator from the UEFI/BIOS memory map |
+| 2 | `paging` | Kernel page tables; remap the boot framebuffer |
+| 3 | `heap` | Kernel heap (`malloc`/`free` backing) |
+| 4 | `acpi_interrupts` | RSDP/MADT parse; IOAPIC/LAPIC or GIC bring-up |
+| 5 | `timer` | System timer HAL (`arch_ops_t.get_timer_hal()`) selection + start |
+| 6 | `syscall` | `SYSCALL`/`SYSRET` MSRs (or `SVC` vectors), per-CPU syscall stacks, `compat_registry` |
+| 7 | `smp` | Application-processor bring-up (AP trampoline / PSCI) |
+| 8 | `driver_module_load` | Scan the boot FS `Kernel/Driver/` for `.ELF` modules and load them; `DeviceRegistry`/`BusRegistry` come into existence here |
+| 9 | `driver_module_critical` | Each module's critical-path init, IRQs disabled |
+| 10 | `input_init` | PS/2 and USB HID input |
+| 11 | `disk_io_init` | Block device probing (AHCI/NVMe/VirtIO-Blk/USB Mass Storage) |
+| 12 | `fs_init` | VFS mount table: FAT32, exFAT, ISO9660, DevFS, TmpFS, ProcFS, EtcFS |
+| 13 | `display_init` | Framebuffer/GPU driver selection |
+| 14 | `process_manager` | Process table, scheduler |
+| 15 | `kernel_services` | `ipc_init()`, `syscall_file_init()`, remaining kernel services |
+| 16 | `userland_elf` | Load and start `Userland.ELF` (the init process) |
+| 17 | `driver_module_deferred` | Non-critical module init deferred from phase 9 |
+| 18 | `audio_network_init` | `audio_manager_init()`, `network_stack_init()`, `network_builtin_drivers_register()` |
 
-    // Phase 2: CPU tables (via arch_ops or direct)
-    init_gdt();                       // Global Descriptor Table (x86_64)
-    init_idt();                       // Interrupt Descriptor Table (x86_64)
-
-    // Phase 3: Memory
-    init_physical_memory();           // Bitmap-based physical page allocator
-    physical_memory_reserve_region(); // Reserve framebuffer physical pages
-    init_paging();                    // 4-level page tables
-    memory_init();                    // Kernel heap (malloc/free/calloc/realloc)
-
-    // Phase 4: Platform
-    acpi_init(boot_info);             // ACPI table parsing (MADT, etc.)
-    platform_interrupts_configure();  // IOAPIC/LAPIC (x86_64) or GIC (arm64)
-    timer_init(timer_hal);            // LAPIC timer or ARM Generic Timer
-    syscall_init();                   // MSR setup for SYSCALL/SYSRET (or SVC)
-    smp_init();                       // Multi-processor initialization (IPI/PSCI)
-    ops->virtualization_init();       // Intel VT-x (x86_64) / no-op on arm64
-    ops->enable_interrupts();
-    timer_switch_lapic();
-    timer_start_clock();
-
-    // Phase 5: Drivers & Subsystems
-    driver_module_manager_init(boot_info);
-    driver_module_init_all();         // Initialize all loaded drivers
-    audio_manager_init();             // Audio subsystem init
-    driver_select_set_boot_framebuffer();
-    debugger_init(boot_info);         // Debugger init
-    input_manager_init();             // Input system init
-    block_manager_set_boot_identity(boot_info);
-    disk_io_init();                   // Disk I/O backend selection
-    all_fs_initialize();              // VFS + FAT32 + ISO9660 mount
-    driver_manager_display_init();    // Display driver selection
-    wm_kernel_init();                 // Window manager kernel side
-    process_manager_init();           // Process table initialization
-    ipc_init();                       // IPC message queues
-    syscall_file_init();              // File descriptor tables
-    network_stack_init();             // Network stack (Ethernet/ARP/IPv4/UDP/TCP)
-    fb_snapshot_create(boot_info);
-    load_bar_finish();
-
-    // Phase 6: Fade animation + enter userland
-    fade-to-black animation
-    process_register_boot_process("/Userland/Userland.ELF");
-    timer_start_services();
-    ops->enter_user_mode(saved_rsp, user_rsp, user_cr3);
-}
-```
+See `Docs/Architecture/Boot_Sequence.md` for a worked `boot_profile_dump()`
+capture and phase-timing discussion. `kernel_main.c` no longer contains
+`#ifdef PLATFORM_*` branches for phase selection — arch differences go through
+`arch_ops_t` (`Kernel/include/interfaces/arch_ops.h`).
 
 ## 3. Memory Management
 
@@ -166,9 +140,9 @@ Both architectures use 4-level page tables:
 
 ### 4.1 Process Model
 
-- Each process has its own CR3 (address space)
-- Max processes: 128 (configurable, range 1–256)
-- Scheduling: Round-robin with timer-driven preemption (60 Hz tick)
+- Each process has its own address space (x86_64 CR3 / arm64 TTBR0_EL1)
+- Max processes: 256 (`OS_CONFIG_PROCESS_MAX_COUNT`, range 1–256)
+- Scheduling: Round-robin with timer-driven preemption
 - Process creation: `process_create_user()`, `process_spawn_user_elf()`
 - Process states tracked via process table
 
@@ -186,14 +160,16 @@ Every process has a bitmask of capabilities:
 | `PROCESS_CAP_SIGNAL` | 5 | Signal handling |
 | `PROCESS_CAP_IPC` | 6 | Inter-process communication |
 | `PROCESS_CAP_NETWORK` | 7 | Network access |
+| `PROCESS_CAP_DISPLAY` | 8 | Display / framebuffer access |
 
 Default: All capabilities granted (`PROCESS_CAP_DEFAULT_MASK`).
 
 ### 4.3 File Descriptors
 
-- Per-process FD table (max 32 FDs by default, configurable)
+- Per-process FD table (`OS_CONFIG_FILE_MAX_FD` = 256 by default, range 4–256)
 - Operations: open, read, write, close, seek, stat, pipe, dup/dup2
-- Directory handles: opendir/readdir/closedir (max 32 handles)
+- Directory handles: opendir/readdir/closedir
+  (`OS_CONFIG_FILE_MAX_DIR_HANDLE` = 256 by default)
 
 ## 5. System Call Interface
 
@@ -234,8 +210,14 @@ arm64 convention:
 | 212–219 | Evdev + Block | evdev open/read/ioctl/close, disk count, raw block read/write, boot font |
 | 220–229 | Unix Socket | socket, bind, listen, accept, connect, send, recv, sendmsg, recvmsg, close |
 | 230–234 | Audio | audio open, get_info, write, drain, close |
+| 235–236 | Process Sched | get_cpu_usage, set_process_priority |
 | 240–243 | KVM | open, ioctl, close, mmap |
 | 250–254 | System | shutdown, reboot, shutdown broadcast, get total/used memory |
+| 260–261 | Debug | get_proc_debug_info, get_os_debug_info |
+| 262–267 | Wi-Fi / DHCP | wifi scan_start / get_scan_results / connect / disconnect / get_status, net_get_dhcp_dns |
+
+Exact numbers and any additions live in `Kernel/Core/syscall/Syscall_Main.h`
+(the ranges above are not fully contiguous).
 
 ### 5.3 Error Handling
 
@@ -248,8 +230,8 @@ All syscalls return `os_status_t` (int64_t):
 ### 6.1 Message Passing
 
 - Ring-buffer queue per process
-- Max message size: 256 bytes
-- Max messages per process queue: 16
+- Max message size: 256 bytes (`IPC_MESSAGE_MAX_SIZE`)
+- Max messages per process queue: 128 (`IPC_MAX_MESSAGES_PER_PROCESS`)
 - Sender PID attached to each message automatically
 
 ### 6.2 API
@@ -319,8 +301,16 @@ The window manager uses IPC messages for all GUI operations:
 - **UDP**: Connectionless datagrams, port binding
 - **TCP**: Full connection lifecycle (connect, listen, accept, send, recv, close, state machine)
 - **ICMP**: Echo request/reply (ping)
-- **DHCP**: Client for dynamic IP configuration
-- **DNS**: Resolver (userland, `Userland/NetworkStack/DNS/`)
+- **DHCP**: Client for dynamic IP configuration, driven centrally from
+  `network_stack_on_timer_tick()` (see `Docs/Architecture/Network_Stack.md`)
+- **DNS**: Resolver (userland, `Userland/Service/com.ImplusOS.netstack/DNS/`)
+- **TLS**: Record layer + TLS 1.3 key schedule and the underlying crypto
+  primitives live in `Library/Crypto/` (shared kernel/userland source)
+
+Each `Kernel/Network/` protocol layer is also registered into `DeviceRegistry`
+under `DEVICE_TYPE_NET_PROTOCOL` with a real vtable and a `deps[]` list by
+`Kernel/Drivers/Module/NetworkBuiltinDrivers.c` — a hybrid step toward fully
+modular protocol drivers (`Docs/Architecture/Network_Stack.md` §2).
 
 ### 8.3 Configuration
 
@@ -459,14 +449,16 @@ All compile-time configuration in `Kernel/include/kernel/config.h`:
 
 | Macro | Default | Range | Description |
 |---|---|---|---|
-| `OS_CONFIG_PROCESS_MAX_COUNT` | 128 | 1–256 | Max concurrent processes |
-| `OS_CONFIG_FILE_MAX_FD` | 32 | 4–256 | Max file descriptors per process |
-| `OS_CONFIG_FILE_MAX_DIR_HANDLE` | 32 | 4–256 | Max directory handles per process |
-| `OS_CONFIG_SMP_MAX_CPUS` | 4 | — | Max CPU cores |
+| `OS_CONFIG_PROCESS_MAX_COUNT` | 256 | 1–256 | Max concurrent processes |
+| `OS_CONFIG_FILE_MAX_FD` | 256 | 4–256 | Max file descriptors per process |
+| `OS_CONFIG_FILE_MAX_DIR_HANDLE` | 256 | 4–256 | Max directory handles per process |
+| `OS_CONFIG_SMP_MAX_CPUS` | 16 | — | Max CPU cores |
 | `OS_CONFIG_SMP_ENABLED` | 1 | — | Enable SMP |
+| `OS_CONFIG_DRIVER_MODULE_MAX_COUNT` | 64 | — | Max loadable driver modules |
 | `OS_CONFIG_LOG_FILE_MAX_BYTES` | 512K | — | Max kernel log size |
+| `OS_CONFIG_BOOT_FADE` | 0 | — | Fade-to-black transition to userland (disabled) |
 | `OS_CONFIG_SIGNAL_HANDLER_MAX_PER_PROCESS` | 32 | — | Max signal handlers |
-| `OS_CONFIG_PENDING_SIGNAL_MAX_PER_PROCESS` | 64 | — | Max pending signals |
+| `OS_CONFIG_PENDING_SIGNAL_MAX_PER_PROCESS` | 32 | — | Max pending signals |
 | `OS_CONFIG_NET_IPV4_ADDR` | 10.0.2.15 | — | Static IPv4 address |
 | `OS_CONFIG_NET_IPV4_MASK` | 255.255.255.0 | — | IPv4 netmask |
 | `OS_CONFIG_NET_IPV4_GATEWAY` | 10.0.2.2 | — | IPv4 gateway |

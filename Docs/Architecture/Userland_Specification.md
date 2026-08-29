@@ -1,5 +1,7 @@
 # Userland Specification — ImplusOS
 
+*Last reviewed: 2026-08-29.*
+
 ## 1. Overview
 
 The ImplusOS userland runs in Ring 3 (x86_64) / EL0 (arm64) with a separate
@@ -13,15 +15,18 @@ The init process is the first user-space process loaded by the kernel.
 
 ### Boot Sequence
 
-1. Clear the display (gradient fill)
-2. Load system font
-3. Display welcome message and boot count
-4. Spawn system apps:
-   - `com.ImplusOS.windowmanager` — Window manager
-   - `com.ImplusOS.version` — Version display
-5. Enter idle loop (`process_yield()` forever)
+1. Render the boot screen (framebuffer snapshot / gradient fill), load the
+   system font, show the localized welcome text and boot count, fade in.
+2. `service_load_all()` — load every service listed in
+   `Userland/Service/services.list` (currently `com.ImplusOS.posix`,
+   `com.ImplusOS.netstack`) via `Userland/Service/service_client.h`.
+3. Spawn `com.ImplusOS.windowmanager` and set its priority; poll
+   `window_get_wm_pid()` until it registers.
+4. Once the WM is up, spawn `com.ImplusOS.sysnotif` (notification daemon).
+5. Free boot-time buffers and enter the idle loop (`sleep_ms()` forever).
 
-Each spawn is followed by yield loops to give the spawned process time to initialize.
+`spawn_with_fallbacks()` tries a list of candidate ELF paths in order, so a
+component can move without breaking init.
 
 ### Entry Point
 
@@ -50,8 +55,15 @@ The userland exposes typed C wrapper functions for each syscall category:
 | `Audio.h` | Audio | `audio_open()`, `audio_get_info()`, `audio_write()`, `audio_drain()`, `audio_close()` |
 | `SystemInfo.h` | System Info | `get_cpu_info()`, `get_memory_info()`, `get_disk_info()`, `get_device_info()`, `get_graphics_info()`, `get_arch_info()`, `get_system_info()` |
 | `KVM.h` | Virtualization | `kvm_open()`, `kvm_ioctl()`, `kvm_close()`, `kvm_mmap()` |
+| `WiFi.h` | Wi-Fi | `wifi_scan_start()`, `wifi_get_scan_results()`, `wifi_connect()`, `wifi_disconnect()`, `wifi_get_status()` |
+| `OSDebug.h` | Debug | `get_proc_debug_info()`, `get_os_debug_info()` (boot profiler, per-process stats) |
+| `PnP.h` | Devices | Plug-and-play / device enumeration helpers |
 | `Error.h` | Errors | `os_errno` definitions |
 | `WM_Protocol.h` | WM Protocol | Window manager message definitions |
+
+Helper libraries also live under `Userland/API/`: `FreeType.c/.h` (font
+rendering), `Jpeg.c/.h` (libjpeg wrapper), `Zlib.h` (zlib wrapper) and
+`XMLParser.c/.h` (UI-layout parser).
 
 ### Syscall Mechanism (x86_64)
 
@@ -80,9 +92,12 @@ The arm64 variant uses `SVC #0` with the syscall number in register `X8` and
 arguments in `X0`–`X5`. The arch-specific implementation lives in
 `libc/I_libc/src/sys/$(ARCH)/hal_syscall.c`.
 
-## 4. POSIX Compatibility Layer (`Userland/POSIX/`)
+## 4. POSIX Compatibility Layer (`Userland/Service/com.ImplusOS.posix/`)
 
-A comprehensive POSIX API mapping layer enabling portable C programs.
+A comprehensive POSIX API mapping layer enabling portable C programs. It is
+built as a **hot-loadable service** (`com.ImplusOS.posix.so`), loaded at init
+from `services.list` and unloadable at runtime via `service_unload()`. See
+`Userland/Service/com.ImplusOS.posix/README_POSIX.md`.
 
 ### Supported APIs
 
@@ -123,98 +138,85 @@ A comprehensive POSIX API mapping layer enabling portable C programs.
 
 ### Directory Convention
 
+Applications follow reverse-domain naming (`com.ImplusOS.<appname>`) and each
+lives directly under `Userland/Application/` with its own `Makefile`:
+
 ```
 Userland/Application/
-├── SystemApps/
-│   ├── com.ImplusOS.shell/
-│   │   ├── Makefile
-│   │   └── Shell.c
-│   ├── com.ImplusOS.version/
-│   │   ├── Makefile
-│   │   └── main.c
-│   └── com.ImplusOS.windowmanager/
-│       ├── Makefile
-│       ├── Resource/
-│       │   ├── Background.png
-│       │   └── Fonts/NotoSansJP-Regular.ttf
-│       ├── WindowManager.c
-│       └── WindowManager.h
-└── UserApps/
-    ├── com.ImplusOS.editor/
-    ├── com.ImplusOS.exampleApp/
-    ├── com.ImplusOS.filemanager/
-    ├── com.ImplusOS.ImplusStore/
-    ├── com.ImplusOS.NetworkTest/
-    ├── com.ImplusOS.procman/
-    ├── com.ImplusOS.settings/
-    └── com.ImplusOS.vm/
+├── com.ImplusOS.windowmanager/   compositing window manager
+│   ├── Makefile
+│   ├── Core/  Compositor/  SceneGraph/  Decoration/  Animation/
+│   ├── Input/  IPC/  Font/  Theme/  UI/  Tests/
+│   └── Resource/{Background.png, Fonts/, Icons/, Themes/, Apps/apps.list}
+├── com.ImplusOS.sysnotif/        notification daemon
+└── BusyBox/                      BusyBox port (Resource/busybox binary)
 ```
 
-### Naming Convention
-
-Applications follow reverse-domain naming: `com.ImplusOS.<appname>`
+The hot-loadable **services** are a separate tree, `Userland/Service/`
+(`com.ImplusOS.ldso`, `com.ImplusOS.dynmain`, `com.ImplusOS.posix`,
+`com.ImplusOS.netstack`), each with its own `Makefile` including
+`Userland/Service/Common.mk`.
 
 ### Build System
 
-Each application has its own `Makefile` that includes `AppCommon.mk`:
-
-```makefile
-include ../../AppCommon.mk
-```
-
-`AppCommon.mk` provides common object files (libc, syscalls, XMLParser, DNS).
+Each application `Makefile` is `include ../../AppCommon.mk`
+(i.e. `Userland/AppCommon.mk`), which provides the common objects (libc,
+`Syscalls.c`, `Userland/API/*` helpers, `Library/` crypto/unicode). Services
+include `Userland/Service/Common.mk`.
 
 ### Application ELF Loading
 
-1. Application ELF files are placed on the boot filesystem under `Userland/` or `Userland/`
-2. The init process spawns them via `process_spawn(path)` syscall
-3. The kernel loads the ELF, creates a new process with separate address space
-4. Application entry point: `_start()` (not `main()`)
+1. App/service ELFs are staged onto the boot filesystem under `/Userland/…`.
+2. Init spawns apps via `process_spawn(path)`; services are brought in by
+   `service_load_all()` (which resolves `/Userland/Service/<name>/<name>.so`).
+3. The kernel loads the ELF and creates a process with a separate address space.
+4. Entry point is `_start()` (not `main()`).
 
 ## 6. System Applications
 
 ### Window Manager (`com.ImplusOS.windowmanager`)
 
-- Registers as the WM service via `window_register_service()` syscall
-- Manages window stacking, focus, and input routing
-- Renders desktop background (PNG), window decorations, taskbar
-- Forwards keyboard/mouse events to focused window via IPC
-- Uses direct framebuffer access for rendering
+- Registers as the WM service via the `window_register_service()` syscall.
+- Compositor with a scene graph, window decorations, animation, themes and a
+  taskbar/app launcher (`Resource/Apps/apps.list`).
+- Manages window stacking and focus; forwards keyboard/mouse events to the
+  focused window over IPC.
+- Renders via direct framebuffer access.
 
-### Shell (`com.ImplusOS.shell`)
+### Notification Daemon (`com.ImplusOS.sysnotif`)
 
-- Terminal emulator with command input
-- Communicates with WM for window and input
+- Spawned by init once the WM has registered.
+- Displays system notifications / toasts through the WM.
 
-### Version (`com.ImplusOS.version`)
+### BusyBox (`Userland/Application/BusyBox/`)
 
-- Displays OS version information
+- BusyBox port; the launcher entry in `apps.list` points at
+  `/Userland/BusyBox/BusyBox.ELF`. The `busybox` binary resource is gitignored
+  and supplied at build time.
 
-## 7. User Applications
-
-| Application | Description |
-|---|---|---|
-| `com.ImplusOS.editor` | Text editor |
-| `com.ImplusOS.exampleApp` | Demo app (XML layout, resource loading) |
-| `com.ImplusOS.filemanager` | File manager (directory listing, file ops) |
-| `com.ImplusOS.ImplusStore` | App store prototype |
-| `com.ImplusOS.NetworkTest` | Network testing tool |
-| `com.ImplusOS.procman` | Process manager / system monitor |
-| `com.ImplusOS.settings` | System settings application |
-| `com.ImplusOS.vm` | Virtual machine application (uses KVM syscalls) |
-
-## 8. Utility Libraries
+## 7. Utility Libraries
 
 ### XML Parser (`Userland/API/XMLParser.c`)
 
-Simple XML parser for UI layout files. Used by applications that load `layout.xml` resources.
+Simple XML parser for UI layout files, used by apps that load `layout.xml`
+resources.
 
 ### DNS Resolver (`Userland/Service/com.ImplusOS.netstack/DNS/DNS.c`)
 
-Userland DNS resolver that performs DNS queries over UDP. Built as the
-hot-loadable `com.ImplusOS.netstack` service.
+Userland DNS resolver that performs queries over UDP. Built as the hot-loadable
+`com.ImplusOS.netstack` service.
 
-## 9. libc (`libc/I_libc/`)
+### Dynamic Linker (`com.ImplusOS.ldso` + `com.ImplusOS.dynmain`)
+
+Userland dynamic-linking support for ELF `.so` loading.
+
+### Shared crypto / Unicode (`Library/`)
+
+`Library/Crypto`, `Library/Unicode`, `Library/Identifier` are compiled into
+userland binaries (and the kernel) — TLS primitives, hashes, signatures,
+CP932/UTF-8 conversion, UUIDs.
+
+## 8. libc (`libc/I_libc/`)
 
 Minimal freestanding C library providing:
 
@@ -233,7 +235,10 @@ Additional POSIX-compatible headers:
 - `netinet/in.h`, `arpa/inet.h`
 - `dirent.h`, `poll.h`
 
-## 10. Linker Script (`Userland/Userland.ld`)
+The architecture-specific trap sequence is in
+`libc/I_libc/src/sys/{x86_64,arm64}/hal_syscall.c`.
+
+## 9. Linker Script (`Userland/Userland.ld`)
 
 The userland linker script is shared across architectures and sets:
 - Entry point: `_start`

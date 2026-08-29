@@ -1,6 +1,7 @@
 # Boot Sequence — ImplusOS
 
-*Last reviewed: 2026-08-24 (reflects P3/P4/P5 of `Docs/Others/TODO_OS_Refactor.md`)*
+*Last reviewed: 2026-08-29 (reflects P3/P4/P5 of `Docs/Others/TODO_OS_Refactor.md`;
+the 19-phase list re-verified against `Kernel/Core/kernel_main.c`).*
 
 ## 1. From firmware to `kernel_main`
 

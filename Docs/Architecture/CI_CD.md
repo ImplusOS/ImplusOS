@@ -1,8 +1,17 @@
 # CI/CD — ImplusOS
 
-*Last reviewed: 2026-08-24 (phase P8 of `Docs/Others/TODO_OS_Refactor.md`, lowest
-priority — implemented last, once P1–P7 were done, per the project owner's
-explicit decision that CI/CD isn't very important for this project)*
+*Last reviewed: 2026-08-29 (phase P8 of `Docs/Others/TODO_OS_Refactor.md`, lowest
+priority — planned last, once P1–P7 were done, per the project owner's explicit
+decision that CI/CD isn't very important for this project).*
+
+> **Current status (2026-08-29): the `.github/` directory is not committed to
+> this tree.** The workflow files described below (`build.yml`,
+> `boot-smoke-test.yml`, `docs-lint.yml`, `static-analysis.yml`) and the
+> `.markdownlint.jsonc` do not exist here yet — this document is the design
+> spec for them. What *is* already wired in is the build-side hook:
+> `Kernel/config/arch.mk` accepts `make CI=1 ...` to promote warnings to
+> `-Werror` (§3), and its comments reference the intended `build.yml`. Adding
+> the actual workflow files is the remaining P8 work.
 
 ## 1. Workflows
 

@@ -1,6 +1,7 @@
 # VFS and Filesystems — ImplusOS
 
-*Last reviewed: 2026-08-24 (post phase P2 of `Docs/Others/TODO_OS_Refactor.md`)*
+*Last reviewed: 2026-08-29 (post phase P2 of `Docs/Others/TODO_OS_Refactor.md`;
+re-verified against `Kernel/Core/vfs/VFS.c` and `Kernel/Drivers/FileSystem/`).*
 
 ## 1. Overview
 

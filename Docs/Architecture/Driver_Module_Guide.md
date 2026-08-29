@@ -1,5 +1,7 @@
 # Driver Module Guide — ImplusOS
 
+*Last reviewed: 2026-08-29.*
+
 ## 1. Overview
 
 ImplusOS uses a **loadable driver module system**. Drivers are compiled as **PIC
@@ -64,9 +66,16 @@ driver's API.
 | Display | `DEVICE_TYPE_DISPLAY` | `ImplusOS_Generic_Display_Driver.ELF`, `VirtIO_Driver.ELF` | `driver_display_t` |
 | Input | `DEVICE_TYPE_INPUT` | `PS2_Driver.ELF` | `driver_input_t` |
 | USB Host | `DEVICE_TYPE_USB` | `USB_Driver.ELF` | `usb_master_vtable_t` |
-| NIC | `DEVICE_TYPE_NIC` | `VirtIO_Driver.ELF` | `driver_nic_t` |
+| NIC | `DEVICE_TYPE_NIC` | `VirtIONet_Driver.ELF`, `I219V` (Intel I219-V), `WiFi` / `AX900_Driver.ELF` (Wi-Fi, with `Firmware/AX900` blob) | `driver_nic_t` |
 | Block | `DEVICE_TYPE_BLOCK` | `AHCI_Driver.ELF`, `NVMe_Driver.ELF`, `VirtIOBlk_Driver.ELF` | `driver_storage_t` |
 | Audio | `DEVICE_TYPE_AUDIO` | `AC97_Driver.ELF`, `HDA_Driver.ELF`, `VirtIOSound_Driver.ELF` | (audio API) |
+| Serial / RTC | (platform) | `Kernel/Drivers/Serial/`, `Kernel/Drivers/RTC/` | — |
+
+Source layout: driver modules live under `Kernel/Drivers/<Category>/<Driver>/`
+(`Audio/`, `Block/`, `Bus/{PCI,USB}/`, `Display/`, `FileSystem/`, `Input/`,
+`NIC/`, `Wi-Fi/`, `Serial/`, `RTC/`). `Kernel/Drivers/ExampleDriver/` is a
+minimal template. The on-demand USB/PCI VID→module map is
+`Kernel/Drivers/Manifest/DriverDB.txt`.
 
 ## 4. Kernel API (`driver_binary_t`)
 
@@ -371,11 +380,29 @@ typedef struct {
 - Device classes: HID (keyboard/mouse), Mass Storage
 - Hub enumeration and device setup
 
-### VirtIO Driver (`VirtIO_Driver.ELF`)
+### VirtIO GPU Driver (`VirtIO_Driver.ELF`)
 
-- Source: `Kernel/Drivers/Display/VirtIO/` and `Kernel/Drivers/NIC/VirtIONet/`
+- Source: `Kernel/Drivers/Display/VirtIO/`
 - VirtIO-GPU display driver (double-buffered)
+
+### VirtIO-Net Driver (`VirtIONet_Driver.ELF`)
+
+- Source: `Kernel/Drivers/NIC/VirtIONet/`
 - VirtIO-Net NIC driver (Ethernet frame send/receive)
+
+### Intel I219-V Driver
+
+- Source: `Kernel/Drivers/NIC/I219V/`
+- Intel I219-V (e1000e-class) wired NIC
+
+### AX900 Wi-Fi Driver
+
+- Source: `Kernel/Drivers/Wi-Fi/AX900/` (also `Kernel/Drivers/NIC/WiFi/`)
+- Wi-Fi NIC presenting a `driver_nic_t`; needs the firmware blob staged from
+  `Kernel/Drivers/Firmware/AX900/`. WPA/association crypto comes from
+  `Library/Crypto/`. This is the driver that already uses the newer
+  `bus_matches[]` + `probe()` binding model (see
+  `Docs/Others/TODO_OS_Refactor.md` §5.3)
 
 ### Generic Display Driver (`ImplusOS_Generic_Display_Driver.ELF`)
 

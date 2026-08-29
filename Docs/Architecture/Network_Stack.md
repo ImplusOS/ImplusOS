@@ -1,6 +1,7 @@
 # Network Stack — ImplusOS
 
-*Last reviewed: 2026-08-24 (post phase P5 of `Docs/Others/TODO_OS_Refactor.md`)*
+*Last reviewed: 2026-08-29 (post phase P5 of `Docs/Others/TODO_OS_Refactor.md`;
+re-verified against `Kernel/Network/` and `Kernel/Drivers/Module/NetworkBuiltinDrivers.c`).*
 
 ## 1. Layers and where they live
 

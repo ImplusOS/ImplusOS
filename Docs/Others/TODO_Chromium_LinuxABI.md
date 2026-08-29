@@ -1,6 +1,19 @@
 # ImplusOS に Chromium を実用動作させるための TODO リスト
 
-> 対象: `Kernel/Core/syscall/Syscall_LinuxCompat.c` を中心とする Linux ABI 互換レイヤー
+> **現況追記 (2026-08-29):**
+> - Linux ABI 互換レイヤーの実体は P6 リファクタで移動済み。現在のパスは
+>   **`Kernel/Compat/Linux/Syscall_LinuxCompat.c`**（本文中の
+>   `Kernel/Core/syscall/Syscall_LinuxCompat.c` は旧パス）。ABI 判定は
+>   `Kernel/Core/elf/ELF_Loader.c`、ディスパッチ分岐は `compat_registry`
+>   経由（`Docs/Architecture/Compat_Layers.md` 参照）。
+> - **本ツリーには `libc/glibc` サブモジュールも `chrome-linux/` も存在しない。**
+>   本文の §9 以降が前提とする glibc 同梱・ビルド済み Chromium 同梱
+>   （`Userland/Application/com.ImplusOS.chrome/`、`WITH_GLIBC=1` /
+>   `WITH_CHROME=1` イメージ経路）は未反映。カーネル側の Linux syscall
+>   実装（バケット A + 一部 B/C、`OS_CONFIG_FILE_MAX_FD=256` 等）は反映済み。
+> - QEMU での実起動完走テストは未実施のまま。
+
+> 対象: `Kernel/Compat/Linux/Syscall_LinuxCompat.c` を中心とする Linux ABI 互換レイヤー
 > 前提: x86-64 Long Mode + UEFI ブート、モノリシックカーネル、SYSCALL/SYSRET ABI
 > 本ドキュメントの調査基準日: 2026-08-20
 > 最終更新: 2026-08-28 — バケット A（自己完結型 syscall）を実装しカーネルをコンパイル検証、glibc 2.41 を `libc/glibc` に submodule 化しフルビルド完走（§9）。バケット B/C は根拠を明記して見送り（§4ter）。追加で `FUTEX_LOCK_PI`/`UNLOCK_PI`（§3.6）、`-DLINUX_SYSCALL_TRACE` syscall トレース（§6）、glibc 用 `/etc` テキストファイル群（§9.2）を実装。
@@ -303,10 +316,10 @@ Chromium を ImplusOS で"実用的に"動かすための現実的な方針:
 | `Kernel/Core/elf/ELF_Loader.c` | linux_abi 判定 + PT_INTERP |
 | `Kernel/Core/vfs/VFS.c` | VFS (procfs/devfs 追加先) |
 | `Kernel/include/kernel/config.h` | リソース上限のコンパイル時定義 |
-| `Userland/POSIX/src/posix_fdtable.c` | ユーザー側 FD テーブル (1024) |
-| `Userland/POSIX/src/posix_io.c` | select/poll/fcntl |
+| `Userland/Service/com.ImplusOS.posix/src/posix_fdtable.c` | ユーザー側 FD テーブル (1024) |
+| `Userland/Service/com.ImplusOS.posix/src/posix_io.c` | select/poll/fcntl |
 | `libc/I_libc/src/posix.c` | POSIX 名ラッパー層 (4275 行) |
-| `Userland/NetworkStack/DNS/DNS.c` | ユーザー側 DNS resolver (UDP/TCP) |
+| `Userland/Service/com.ImplusOS.netstack/DNS/DNS.c` | ユーザー側 DNS resolver (UDP/TCP) |
 | `libc/glibc/` | **glibc submodule**（upstream, pinned `glibc-2.41`） |
 | `libc/build-glibc.sh` | glibc クロスビルド／ステージングスクリプト |
 | `libc/README-glibc.md` | glibc 移植方針・ビルド手順 |
