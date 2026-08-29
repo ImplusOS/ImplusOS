@@ -38,6 +38,11 @@ typedef struct __attribute__((packed)) {
     uint64_t gdtr_base;
     uint16_t idtr_limit;
     uint64_t idtr_base;
+    /* Offset 44. The trampoline (SMP_Trampoline.asm) only touches bytes
+     * 0..43; the AP raises this from ap_entry_c once it is running on its
+     * own stack, i.e. once it has finished consuming everything above.
+     * The BSP waits on it before reusing this page for the next AP. */
+    volatile uint32_t ap_started;
 } smp_shared_t;
 
 typedef struct __attribute__((packed)) {
@@ -125,6 +130,15 @@ void ap_entry_c(void)
 
     if (!found) {
         while (1) { hal_cpu_halt(); }
+    }
+
+    /* We are past the real-mode trampoline and running on the kernel stack
+     * it handed us, so SMP_SHARED_PHYS has been fully consumed and the BSP
+     * may now overwrite it for the next AP. */
+    {
+        volatile smp_shared_t *sh =
+            (volatile smp_shared_t *)(uintptr_t)SMP_SHARED_PHYS;
+        __atomic_store_n(&sh->ap_started, 1u, __ATOMIC_SEQ_CST);
     }
 
     g_current_pid_per_cpu[cpu_idx] = -1;
@@ -240,13 +254,31 @@ void smp_init(void)
 
         uint64_t ap_stack_top = ((uint64_t)(uintptr_t)(ap_stack_base + AP_KERNEL_STACK_SIZE)) & ~0xFULL;
 
+        volatile smp_shared_t *sh =
+            (volatile smp_shared_t *)(uintptr_t)SMP_SHARED_PHYS;
+
         smp_fill_shared(bsp_cr3, ap_entry_c, ap_stack_top);
+        __atomic_store_n(&sh->ap_started, 0u, __ATOMIC_SEQ_CST);
 
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
         uint32_t expected =
             __atomic_load_n(&g_cpu_online, __ATOMIC_ACQUIRE) + 1u;
         smp_send_init_sipi_sipi(aid, trampoline_vector);
+
+        /* Do not touch the shared hand-off page again until this AP has
+         * left the trampoline and copied it out (it sets ap_started from
+         * ap_entry_c). Otherwise a slow AP would pick up the *next* AP's
+         * stack pointer here and two CPUs would run on one stack. The
+         * cap (matching the online-wait below) only trips for a CPU that
+         * never starts at all -- in which case there is no straggler left
+         * to corrupt anyway. ap_started is raised before the AP bumps
+         * g_cpu_online, so this never waits longer than the online wait. */
+        uint32_t consume_timeout = 200;
+        while (consume_timeout-- > 0) {
+            if (__atomic_load_n(&sh->ap_started, __ATOMIC_ACQUIRE) != 0u) break;
+            smp_delay_ms(1);
+        }
 
         uint32_t timeout = 200;
         while (timeout-- > 0) {

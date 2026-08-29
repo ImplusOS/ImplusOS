@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "kernel/interfaces/fs_module_ops.h"
+
 #define ISO9660_SECTOR_SIZE                 2048u
 #define ISO9660_PATH_MAX                    512u
 #define ISO9660_NAME_MAX                    260u
@@ -48,14 +50,6 @@ int32_t  iso9660_readdir(int32_t handle, ISO9660_DIRENT *out);
 int32_t  iso9660_closedir(int32_t handle);
 void     iso9660_list_root_files(void);
 
-typedef struct {
-    bool     (*init)(void);
-    bool     (*find_file)(const char *, ISO9660_FILE *);
-    bool     (*read_file)(ISO9660_FILE *, uint8_t *);
-    bool     (*read_at)(ISO9660_FILE *, uint32_t, uint8_t *, uint32_t);
-    uint32_t (*get_file_size)(ISO9660_FILE *);
-    void     (*list_root_files)(void);
-    int32_t  (*opendir)(const char *);
-    int32_t  (*readdir)(int32_t, ISO9660_DIRENT *);
-    int32_t  (*closedir)(int32_t);
-} iso9660_driver_t;
+/* The module exports a generic fs_module_ops_t (see
+ * kernel/interfaces/fs_module_ops.h) as its driver_module_descriptor_t
+ * .driver_api; FS_VFS_Bridge.c is the sole consumer. */

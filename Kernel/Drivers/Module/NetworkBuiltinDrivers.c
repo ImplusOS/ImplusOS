@@ -13,9 +13,7 @@
 /*
  * See NetworkBuiltinDrivers.h for the hybrid design this implements
  * (Docs/Others/TODO_OS_Refactor.md phase P5, 9.2). Each layer gets its own
- * vtable type (matching this codebase's existing convention of one
- * `*_driver_t` struct per driver rather than a forced-generic shape --
- * compare fat32_driver_t/iso9660_driver_t/exfat_driver_t) populated with
+ * vtable type populated with
  * that layer's *actual* public entry points, so a lookup through
  * DeviceRegistry returns something genuinely callable, not just a
  * name/description pair.

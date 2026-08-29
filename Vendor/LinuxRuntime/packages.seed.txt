@@ -1,0 +1,135 @@
+# packages.seed.txt — 閉包解決の起点にする Debian(trixie) パッケージ名
+#
+# resolve.sh は本来 Resource/chrome の DT_NEEDED から Debian の Contents 索引で
+# パッケージを逆引きするが、索引取得に失敗した場合のフォールバック兼
+# 人間向けクロスチェックとして、chrome の直接 DT_NEEDED に対応する
+# trixie パッケージ名をここに列挙しておく（soname -> package）。
+#
+# 空行と '#' 始まりは無視。1 行 1 パッケージ。
+#
+# glibc（libc.so.6 / libm / libdl / libpthread / librt / libresolv /
+# ld-linux-x86-64.so.2）はすべて libc6 に含まれる。
+
+libc6
+libgcc-s1
+
+# GLib / GIO / GObject
+libglib2.0-0t64
+
+# NSS / NSPR
+libnspr4
+libnss3
+
+# D-Bus
+libdbus-1-3
+
+# CUPS
+libcups2t64
+
+# expat
+libexpat1
+
+# X client libraries
+libx11-6
+libxcb1
+libxext6
+libxcomposite1
+libxdamage1
+libxfixes3
+libxrandr2
+libxkbcommon0
+
+# ALSA
+libasound2t64
+
+# GBM (Mesa)
+libgbm1
+
+# ATK / AT-SPI accessibility
+libatk1.0-0t64
+libatk-bridge2.0-0t64
+libatspi2.0-0t64
+
+# Cairo / Pango
+libcairo2
+libpango-1.0-0
+
+# udev
+libudev1
+
+# --- 検証マイルストーン用（M3）。resolve では閉包に含めるが chrome とは無関係 ---
+dash
+
+# ---------------------------------------------------------------------------
+# GTK3 / Wayland 外来バイナリ検証用（TODO_GTK3_Wayland_LinuxABI.md）
+#   起点: gtk-3-examples の /usr/bin/gtk3-demo / gtk3-widget-factory。
+#   resolve.sh がこれらの実行体 NEEDED から libgtk-3 / libgdk-3 / libpango /
+#   libcairo / libgdk_pixbuf / libepoxy / libharfbuzz / libwayland-client /
+#   libxkbcommon / libX* … を推移的に閉包へ取り込む。
+#   dlopen されるだけで NEEDED に出ないもの（データ pkg 含む）は明示列挙する。
+# ---------------------------------------------------------------------------
+gtk-3-examples
+libgtk-3-0t64
+libgtk-3-common
+libgdk-pixbuf-2.0-0
+libgdk-pixbuf2.0-common
+gsettings-desktop-schemas
+libwayland-client0
+libwayland-cursor0
+libwayland-egl1
+libepoxy0
+libpangocairo-1.0-0
+libpangoft2-1.0-0
+libcairo-gobject2
+libharfbuzz0b
+libthai0
+libxi6
+libxcursor1
+libxinerama1
+libxrender1
+fonts-dejavu-core
+
+# ---------------------------------------------------------------------------
+# Doom 外来バイナリ検証用（Userland/Application/Doom）
+#   起点: Resource/linuxxdoom-x86_64（EVV1E/DOOM, 無改変）。
+#   直接 DT_NEEDED: libX11 libm libopenal.so.1 libGL.so.1 libGLEW.so.2.2
+#                   libfluidsynth.so.3 libasound libc
+#   libX11 / libasound / libm(libc6) は既存閉包にある。以下が Doom で新規:
+#     libGL.so.1        -> libgl1  (+ libglx0 / libglvnd0 を推移的に)
+#     libGLEW.so.2.2    -> libglew2.2
+#     libopenal.so.1    -> libopenal1
+#     libfluidsynth.so.3-> libfluidsynth3 (libsndfile1 / libinstpatch / libgomp1 … を推移的に)
+#   resolve.sh は linuxxdoom-x86_64 の NEEDED から上記を推移的に取り込むが、
+#   人間向けクロスチェックとして直接依存パッケージを明示列挙しておく。
+# ---------------------------------------------------------------------------
+libgl1
+libglx0
+libglvnd0
+libglew2.2
+libopenal1
+libfluidsynth3
+# libfluidsynth.so.3 は libSDL2-2.0.so.0 を直接 DT_NEEDED する（fluidsynth の
+# SDL2 オーディオドライバがリンク時依存）。実体を含む古典 SDL2 を固定。
+libsdl2-2.0-0
+
+# ---------------------------------------------------------------------------
+# X サーバスタック（TODO_Doom_Xorg_Method_A.md / 方法A）
+#   Doom は無改変で X11 + GLX クライアントとして動く。ImplusOS には X が無いので
+#   Debian trixie の Xorg 本体（modesetting DDX 内蔵）＋ Mesa ソフト GL を無改変で
+#   同梱し、カーネルの KMS shim を /dev/dri/card0 として見せて接続する。
+#   resolve.sh は Xorg 実行体と各 xorg モジュール .so の NEEDED を推移的に取り込む。
+#   NEEDED に出ない dlopen/データ（xkb・フォント・DRI メガドライバ）は明示列挙。
+# ---------------------------------------------------------------------------
+xserver-xorg-core
+xserver-xorg-legacy
+xserver-xorg-input-evdev
+libgl1-mesa-dri
+libglx-mesa0
+libxcvt0
+libxfont2
+libpciaccess0
+xkb-data
+x11-xkb-utils
+xfonts-base
+xfonts-encodings
+xfonts-utils

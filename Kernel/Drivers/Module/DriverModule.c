@@ -4,7 +4,6 @@
 #include "Core/sync/Spinlock.h"
 
 #include "Drivers/Module/PCI_Main.h"
-#include "Drivers/FileSystem/FAT32/FAT32_Main.h"
 #include "Drivers/Display/Display_Driver.h"
 #include "Core/elf/ELF_Loader.h"
 #include "Core/vfs/VFS.h"

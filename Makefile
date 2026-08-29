@@ -6,7 +6,7 @@ export MTOOLSRC := /dev/null
 
 .PHONY: all kernel app_build service_build driver_build driver_stage recovery_build install_payload \
         image image_livecd qemu_input_status run_uefi_usb run_uefi_cdrom run_bios_cdrom \
-        qemu_disks clean edk2_bootloader edk2_bootmanager vendor_libs
+        qemu_disks clean edk2_bootloader edk2_bootmanager vendor_libs linux_runtime_stage
 
 # ── Host OS detection ──────────────────────────────────────────────
 HOST_OS := $(shell uname -s 2>/dev/null || echo Unknown)
@@ -77,11 +77,21 @@ INSTALL_PAYLOAD_ROOT := $(INSTALL_PAYLOAD_DIR)/root
 INSTALL_PAYLOAD_TGZ  := $(INSTALL_PAYLOAD_DIR)/ImplusOS-root.tar.gz
 INSTALL_DISK_IMAGE   := $(INSTALL_PAYLOAD_DIR)/ImplusOS-install.img
 INSTALL_MANIFEST     := $(INSTALL_PAYLOAD_DIR)/MANIFEST.txt
-INSTALL_DISK_IMAGE_SIZE_MB ?= 256
+# Bumped from 256: the install-media FAT image now also carries the Chromium
+# resource tree (~660 MiB) + the external Linux runtime .so closure (~250 MiB)
+# + C.UTF-8 (Docs/Others/TODO_glibc_Port.md §7-3). Shrink once measured.
+INSTALL_DISK_IMAGE_SIZE_MB ?= 2560
 
 IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
 ESP_IMAGE       := $(IMAGE_DIR)/esp-$(ARCH).img
 RECOVERY_ESP_IMAGE_SIZE_MB ?= 16
+
+# External Linux runtime (glibc dynamic linker + .so closure + C.UTF-8) staged
+# for external Linux-ABI binaries such as Chromium. x86_64 only; always bundled
+# (Docs/Others/TODO_glibc_Port.md §7-3 -- no opt-out). Build rules live in
+# Vendor/LinuxRuntime/Makefile; this file only delegates.
+LINUX_RUNTIME_DIR   := Vendor/LinuxRuntime
+LINUX_RUNTIME_STAGE := $(BUILD_DIR)/LinuxRuntime/stage
 LIVECD_ESP_IMAGE_SIZE_MB ?= 16
 
 LIVECD_IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH)-LiveCD.iso
@@ -301,8 +311,24 @@ all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel vendor_libs app_build service_b
 vendor_libs:
 	@$(MAKE) -C Vendor/Library ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) TOP_BUILD_DIR="$(abspath $(BUILD_DIR))"
 
+# Stage the external Linux runtime (fetch pinned Debian .debs, extract .so
+# closure, generate C.UTF-8) into $(LINUX_RUNTIME_STAGE). x86_64 only; on
+# arm64 it is a no-op (Chromium/chrome is an x86_64 binary). The first run
+# needs network; afterwards Vendor/LinuxRuntime/cache/ satisfies it offline.
+# gtkdata: GTK3 demo runtime data;  xorgdata: Xorg + Mesa-DRI + xkb + fonts +
+# xorg.conf for the Doom (Method A) X path.
+linux_runtime_stage:
+ifeq ($(ARCH),x86_64)
+	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata locale \
+		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
+		CHROME_BIN="$(abspath Userland/Application/Chromium/Resource/chrome)"
+else
+	@echo "linux_runtime_stage: skipped for ARCH=$(ARCH)"
+endif
+
 kernel:
-	@$(MAKE) -C Kernel ARCH=$(ARCH) BUILD_DIR=$(abspath $(BUILD_DIR))
+	@$(MAKE) -C Kernel ARCH=$(ARCH) BUILD_DIR=$(abspath $(BUILD_DIR)) \
+		EXTRA_KERNEL_CFLAGS="$(EXTRA_KERNEL_CFLAGS)"
 
 # ── Userland services ─────────────────────────────────────────────
 # Each Userland/Service/<name>/ builds one hot-loadable component
@@ -395,7 +421,7 @@ driver_stage: driver_build
 			-exec cp {} $(DRIVER_STAGE_DIR)/ \; ; \
 	fi
 
-install_payload: all
+install_payload: all linux_runtime_stage
 	@rm -rf $(INSTALL_PAYLOAD_ROOT)
 	@mkdir -p \
 		$(INSTALL_PAYLOAD_ROOT)/EFI/BOOT \
@@ -418,6 +444,10 @@ install_payload: all
 	done
 	@[ -f Userland/Service/services.list ] && cp Userland/Service/services.list $(INSTALL_PAYLOAD_ROOT)/Userland/Service/ || true
 	@cp -a $(BOOT_RESOURCE_DIR) $(INSTALL_PAYLOAD_ROOT)/BootManager/
+	@if [ "$(ARCH)" = "x86_64" ]; then \
+		cp -a $(LINUX_RUNTIME_STAGE)/lib64 $(INSTALL_PAYLOAD_ROOT)/; \
+		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(INSTALL_PAYLOAD_ROOT)/; \
+	fi
 	@$(call STAGE_DRIVER_ELFS,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_FIRMWARE,$(INSTALL_PAYLOAD_ROOT))
 	@cp $(DRIVER_DB_SRC) $(INSTALL_PAYLOAD_ROOT)/Kernel/Driver/DriverDB.txt
@@ -451,6 +481,10 @@ install_payload: all
 	mcopy -o -i $$PART_IMG $(KERNEL_ELF) ::/Kernel/Kernel_Main.ELF; \
 	mcopy -o -i $$PART_IMG $(USERLAND_INIT_ELF) ::/Userland/Userland.ELF; \
 	mcopy -s -i $$PART_IMG $(INSTALL_PAYLOAD_ROOT)/Userland ::/Userland; \
+	if [ "$(ARCH)" = "x86_64" ]; then \
+		mcopy -s -o -i $$PART_IMG $(INSTALL_PAYLOAD_ROOT)/lib64 ::/; \
+		mcopy -s -o -i $$PART_IMG $(INSTALL_PAYLOAD_ROOT)/usr ::/; \
+	fi; \
 	for f in $(DRIVER_STAGE_DIR)/*.ELF; do \
 		[ -e "$$f" ] || continue; \
 		base=$$(basename "$$f"); \
@@ -512,7 +546,7 @@ image: install_payload recovery_build
 		-o $(IMAGE) \
 		$(IMAGE_STAGE_DIR)
 
-image_livecd: all
+image_livecd: all linux_runtime_stage
 	@mkdir -p $(IMAGE_DIR)
 	@rm -f $(LIVECD_IMAGE) $(ESP_IMAGE)
 	@dd if=/dev/zero of=$(ESP_IMAGE) bs=1M count=64 status=none
@@ -549,6 +583,10 @@ image_livecd: all
 		cp -a "$(BUILD_DIR)/Userland/Service/$$name" "$(IMAGE_STAGE_DIR)/Userland/Service/"; \
 	done
 	@[ -f Userland/Service/services.list ] && cp Userland/Service/services.list $(IMAGE_STAGE_DIR)/Userland/Service/ || true
+	@if [ "$(ARCH)" = "x86_64" ]; then \
+		cp -a $(LINUX_RUNTIME_STAGE)/lib64 $(IMAGE_STAGE_DIR)/; \
+		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(IMAGE_STAGE_DIR)/; \
+	fi
 	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTX64.EFI; \
@@ -580,6 +618,25 @@ endif
 QEMU_DISPLAY ?= gtk
 QEMU_EXTRA ?=
 QEMU_DISK_SIZE ?= 128M
+
+# Stop instead of silently rebooting on a triple fault. Without this a triple
+# fault (fault during double-fault delivery -- e.g. a kernel-stack overflow that
+# corrupts the exception path) resets the VM, which looks like a "boot loop"
+# and scrolls the last serial output away. With -no-reboot QEMU halts so the
+# panic/last log stays on screen. Override with QEMU_NO_REBOOT= to allow reboot.
+QEMU_NO_REBOOT ?= -no-reboot
+
+# Hardware acceleration. Pure TCG emulation is ~10-50x slower than KVM, which
+# matters a lot for the large glibc/Chromium userland. Auto-enable KVM when the
+# host exposes a usable /dev/kvm; override with QEMU_ACCEL= to disable. The CPU
+# model is left at QEMU's conservative default (qemu64: SSE2, no AVX / XSAVE /
+# FSGSBASE) so glibc does not pick instruction paths the kernel hasn't enabled
+# (CR4.OSXSAVE / CR4.FSGSBASE are not set) -- do NOT add -cpu host here.
+ifeq ($(ARCH),x86_64)
+QEMU_ACCEL ?= $(shell [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo "-enable-kvm")
+else
+QEMU_ACCEL ?=
+endif
 QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
 QEMU_SYSTEM_X86_64 ?= qemu-system-x86_64
 QEMU_INPUT_DEVICES := \
@@ -592,6 +649,8 @@ QEMU_NET_DEVICES ?= \
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE) \
+	$(QEMU_ACCEL) \
+	$(QEMU_NO_REBOOT) \
 	-smp 16,sockets=1,cores=4,threads=4 \
 	-m 8192 \
 	-device ich9-ahci,id=sata \

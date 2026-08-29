@@ -6,6 +6,9 @@
 #include "Core/timer/Timer.h"
 #include "Crypto/Crypto.h"
 #include "Debug/serial/Serial.h"
+#include "Core/drm/DRM_Kms.h"
+#include "Core/usercopy/Usercopy.h"
+#include "Drivers/Module/Evdev_Client.h"
 
 /* Devices exposed by this driver. Sizes are deliberately bounded (rather
  * than "infinite") because the generic VFS read path in Syscall_File.c
@@ -20,6 +23,12 @@ typedef enum {
     DEVFS_KIND_URANDOM,
     DEVFS_KIND_RANDOM,
     DEVFS_KIND_TTY,
+    /* character devices for the foreign X-server path (Method A). These use
+     * the vfs_driver_t dev_* hooks rather than read_at/write_at. */
+    DEVFS_KIND_DRM_CARD,      /* /dev/dri/card0  -> DRM/KMS shim */
+    DEVFS_KIND_DRM_RENDER,    /* /dev/dri/renderD128 -> same shim, render-only */
+    DEVFS_KIND_INPUT_EVENT0,  /* /dev/input/event0 -> evdev keyboard */
+    DEVFS_KIND_INPUT_EVENT1,  /* /dev/input/event1 -> evdev pointer */
     DEVFS_KIND_COUNT
 } devfs_kind_t;
 
@@ -39,6 +48,10 @@ static const devfs_entry_t g_devfs_entries[] = {
     { "/dev/urandom", DEVFS_KIND_URANDOM, DEVFS_STREAM_SIZE, 1u },
     { "/dev/random",  DEVFS_KIND_RANDOM,  DEVFS_STREAM_SIZE, 1u },
     { "/dev/tty",     DEVFS_KIND_TTY,     0u,                1u },
+    { "/dev/dri/card0",        DEVFS_KIND_DRM_CARD,     0u, 1u },
+    { "/dev/dri/renderD128",   DEVFS_KIND_DRM_RENDER,   0u, 1u },
+    { "/dev/input/event0",     DEVFS_KIND_INPUT_EVENT0, 0u, 1u },
+    { "/dev/input/event1",     DEVFS_KIND_INPUT_EVENT1, 0u, 1u },
 };
 
 #define DEVFS_ENTRY_COUNT (sizeof(g_devfs_entries) / sizeof(g_devfs_entries[0]))
@@ -241,8 +254,92 @@ static int32_t devfs_vfs_closedir(int32_t handle)
 
 static bool devfs_vfs_close_file(vfs_file_t *file)
 {
-    (void)file;
+    if (file != NULL) {
+        devfs_kind_t kind = (devfs_kind_t)(uintptr_t)file->driver_data;
+        if (kind == DEVFS_KIND_DRM_CARD || kind == DEVFS_KIND_DRM_RENDER) {
+            drm_kms_close();
+        }
+    }
     return true; /* No per-open allocation to release. */
+}
+
+/* ---- character-device hooks (DRM / evdev) --------------------------------- */
+
+static int32_t devfs_evdev_fd(devfs_kind_t kind)
+{
+    if (kind == DEVFS_KIND_INPUT_EVENT0) return EVDEV_FD_BASE + 0;
+    if (kind == DEVFS_KIND_INPUT_EVENT1) return EVDEV_FD_BASE + 1;
+    return -1;
+}
+
+static int64_t devfs_vfs_dev_ioctl(vfs_file_t *file, uint64_t request, uint64_t arg)
+{
+    if (file == NULL) return -25;
+    devfs_kind_t kind = (devfs_kind_t)(uintptr_t)file->driver_data;
+    switch (kind) {
+        case DEVFS_KIND_DRM_CARD:
+        case DEVFS_KIND_DRM_RENDER:
+            return drm_kms_ioctl(request, arg);
+        case DEVFS_KIND_INPUT_EVENT0:
+        case DEVFS_KIND_INPUT_EVENT1:
+            return evdev_ioctl(devfs_evdev_fd(kind), request, arg);
+        default:
+            return -25; /* ENOTTY */
+    }
+}
+
+static int64_t devfs_vfs_dev_read(vfs_file_t *file, uint8_t *buffer,
+                                  uint64_t length, uint32_t nonblock)
+{
+    if (file == NULL || buffer == NULL) return -14;
+    devfs_kind_t kind = (devfs_kind_t)(uintptr_t)file->driver_data;
+    switch (kind) {
+        case DEVFS_KIND_DRM_CARD:
+        case DEVFS_KIND_DRM_RENDER:
+            return drm_kms_read(buffer, length, nonblock);
+        case DEVFS_KIND_INPUT_EVENT0:
+        case DEVFS_KIND_INPUT_EVENT1: {
+            /* evdev_read() writes its dest directly; `buffer` here is a user
+             * pointer (linux_read passes it straight through). Bounce. */
+            uint8_t tmp[24 * 32];
+            uint64_t want = length < sizeof(tmp) ? length : sizeof(tmp);
+            int64_t n = evdev_read(devfs_evdev_fd(kind), tmp, want);
+            if (n <= 0) return n;
+            if (copy_to_user(buffer, tmp, (uint64_t)n) != 0u) return -14;
+            return n;
+        }
+        default:
+            return -14;
+    }
+}
+
+static uint32_t devfs_vfs_dev_poll(vfs_file_t *file, uint32_t events)
+{
+    if (file == NULL) return 0;
+    devfs_kind_t kind = (devfs_kind_t)(uintptr_t)file->driver_data;
+    switch (kind) {
+        case DEVFS_KIND_DRM_CARD:
+        case DEVFS_KIND_DRM_RENDER:
+            return drm_kms_poll(events);
+        case DEVFS_KIND_INPUT_EVENT0:
+        case DEVFS_KIND_INPUT_EVENT1:
+            /* evdev has no poll entry point; report readable and let the
+             * blocking-ish read() sort it out (X's evdev uses SIGIO/select). */
+            return events & 0x1u;
+        default:
+            return 0;
+    }
+}
+
+static int64_t devfs_vfs_dev_mmap(vfs_file_t *file, uint64_t offset,
+                                  uint64_t length, uint64_t prot, uint64_t flags)
+{
+    if (file == NULL) return -25;
+    devfs_kind_t kind = (devfs_kind_t)(uintptr_t)file->driver_data;
+    if (kind == DEVFS_KIND_DRM_CARD || kind == DEVFS_KIND_DRM_RENDER) {
+        return drm_kms_mmap(offset, length, prot, flags);
+    }
+    return -25;
 }
 
 static bool devfs_vfs_unlink(const char *path)
@@ -286,6 +383,10 @@ static const vfs_driver_t g_devfs_vfs_driver = {
     .list_root = devfs_vfs_list_root,
     .set_case_sensitive = devfs_vfs_set_case_sensitive,
     .get_case_sensitive = devfs_vfs_get_case_sensitive,
+    .dev_ioctl = devfs_vfs_dev_ioctl,
+    .dev_read = devfs_vfs_dev_read,
+    .dev_poll = devfs_vfs_dev_poll,
+    .dev_mmap = devfs_vfs_dev_mmap,
 };
 
 void devfs_init(void)

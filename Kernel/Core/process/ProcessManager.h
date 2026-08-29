@@ -11,6 +11,22 @@
 #define USER_STACK_BASE   (USER_STACK_TOP - USER_STACK_SIZE)
 #define USER_HEAP_LIMIT   USER_STACK_BASE
 
+/*
+ * Anonymous mmap() arena. Separate from the (eagerly-committed, bump-managed)
+ * heap so that mmap() can hand out multi-GiB *lazily-committed* reservations:
+ * pages here are not backed by physical frames until first touch, which is
+ * serviced demand-zero by paging_handle_swap_fault() from the #PF handler
+ * (both user- and kernel-mode faults). Chromium's PartitionAlloc reserves
+ * ~48 GiB of PROT_NONE address space up front and commits sub-ranges via
+ * mprotect(); that is impossible against the eager heap allocator.
+ *
+ * 1 TiB..16 TiB -> its own PML4 slots (index 2..31), clear of the code/heap/
+ * stack regions which all live in PML4[0] (< 512 GiB). Well inside the 47-bit
+ * canonical user half.
+ */
+#define USER_MMAP_BASE    0x0000010000000000ULL
+#define USER_MMAP_LIMIT   0x0000100000000000ULL
+
 #if (USER_CODE_BASE >= USER_CODE_LIMIT)
 #error "Invalid user code range"
 #endif
@@ -21,6 +37,10 @@
 
 #if (USER_STACK_BASE >= USER_STACK_TOP)
 #error "Invalid user stack range"
+#endif
+
+#if (USER_MMAP_BASE >= USER_MMAP_LIMIT) || (USER_MMAP_BASE < USER_STACK_TOP)
+#error "Invalid user mmap range"
 #endif
 
 typedef uint64_t process_capability_mask_t;
@@ -90,14 +110,23 @@ int32_t process_create_thread(uint64_t entry,
 /* Same as process_create_thread(), but when has_tls is non-zero the new
  * thread's FS base (x86-64 TLS pointer) is set to tls_fs_base atomically
  * with making the thread schedulable (see clone(2) CLONE_SETTLS) -
- * TODO_Chromium_LinuxABI.md section 3.6. */
+ * TODO_Chromium_LinuxABI.md section 3.6.
+ *
+ * user_stack: if non-zero, the new thread's initial user RSP. It is set
+ * before the thread becomes schedulable, so an SMP peer that dispatches
+ * the thread immediately still sees the caller-provided stack. Used by
+ * the Linux clone(2) path, where glibc's __clone has already pushed the
+ * child's fn/arg onto this stack - the kernel must not touch its
+ * contents. Pass 0 to have the kernel allocate/prepare a fresh raw
+ * user stack (native ImplusOS threads). */
 int32_t process_create_thread_ex(uint64_t entry,
                                  uint64_t arg1,
                                  uint64_t arg2,
                                  uint64_t arg3,
                                  uint64_t arg4,
                                  int has_tls,
-                                 uint64_t tls_fs_base);
+                                 uint64_t tls_fs_base,
+                                 uint64_t user_stack);
 int32_t process_spawn_user_elf(const char *path);
 int32_t process_spawn_user_elf_with_arg(const char *path,
                                         const char *launch_argument);
@@ -105,6 +134,7 @@ int32_t process_fork(void);
 int32_t process_execve(const char *path, const char *const *argv,
                        const char *const *envp);
 int32_t process_copy_launch_argument(char *out, uint32_t capacity);
+int32_t process_copy_exe_path(char *out, uint32_t capacity);
 void process_exit_current_with_status(int32_t exit_status);
 void process_exit_current_signaled(int32_t signum);
 void process_exit_current(void);
@@ -138,12 +168,19 @@ uint64_t process_schedule_on_syscall(uint64_t current_saved_rsp,
 uint64_t process_schedule_after_exit(uint64_t *next_user_rsp_out);
 int process_user_buffer_is_valid(const void *ptr, uint64_t len);
 int process_user_cstring_length(const char *str, uint64_t max_len, uint64_t *len_out);
-void *process_user_alloc(uint32_t size);
+void *process_user_alloc(uint64_t size);
 uint64_t process_get_heap_cursor(void);
 int process_set_heap_cursor(uint64_t addr);
 void process_set_thread_user_rsp(int32_t tid, uint64_t user_rsp);
 int process_user_free(void *ptr);
 void *process_user_mmap(uint64_t length, uint64_t flags);
+
+/* Lazily-committed anonymous reservation from the USER_MMAP arena. Returns a
+ * page-aligned base for `length` bytes with NO physical backing; pages fault
+ * in demand-zero on first access. `length` is not capped at 4 GiB. NULL on
+ * exhaustion. See USER_MMAP_BASE above. */
+void *process_user_reserve(uint64_t length);
+int   process_user_addr_in_mmap_arena(uint64_t addr, uint64_t length);
 int process_user_munmap(void *ptr, uint64_t length);
 uint64_t process_signal_set_handler(int32_t signum, uint64_t handler);
 uint64_t process_signal_get_handler(int32_t signum);
@@ -168,6 +205,7 @@ uint64_t process_signal_get_mask(void);
 int process_signal_set_mask(uint64_t mask);
 int process_signal_deliver(int32_t pid, int32_t signum);
 int process_signal_deliver_group(int32_t pid, int32_t signum);
+int process_signal_maybe_self_terminate(int32_t signum);
 int process_signal_validate_group(int32_t tgid, int32_t tid);
 int process_is_current_thread(void);
 uint64_t process_get_current_pending_signals(void);

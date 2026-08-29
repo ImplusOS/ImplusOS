@@ -28,8 +28,14 @@
  *
  * Default 0: the eager full-copy fork is slower but known-good, whereas COW
  * touches PTE aliasing + SMP TLB coherence + the physical allocator at once
- * and has NOT been validated on real hardware / QEMU in this tree. Flip to 1
- * (or build with -DKERNEL_COW_FORK=1) once it has been boot-tested. */
+ * and has NOT been validated on real hardware / QEMU in this tree.
+ *
+ * (Was briefly flipped to 1 on 2026-08-29 for multiprocess Chromium -- see
+ * TODO_glibc_Port.md G7 -- and reverted the same day: it made boot unstable
+ * (intermittent pre-userland triple-fault reboots, __stack_chk_fail during
+ * kernel init). Multiprocess Chromium must instead wait for COW to get a
+ * dedicated QEMU boot-regression pass, or run eager-copy with more guest
+ * RAM.) Flip to 1 (or -DKERNEL_COW_FORK=1) only after that validation. */
 #ifndef KERNEL_COW_FORK
 #define KERNEL_COW_FORK 0
 #endif

@@ -194,6 +194,11 @@
 #define SYSCALL_WIFI_DISCONNECT        265
 #define SYSCALL_WIFI_GET_STATUS        266
 #define SYSCALL_NET_GET_DHCP_DNS       267
+#define SYSCALL_READ_KERNEL_LOG        268
+/* Given a memfd fd, return the shared-memory handle backing it (or <0).
+ * Lets a native process map a memfd received via SCM_RIGHTS with
+ * os_shared_memory_map(). */
+#define SYSCALL_MEMFD_SHM_HANDLE       269
 
 #define SYSCALL_KVM_OPEN          240
 #define SYSCALL_KVM_IOCTL         241

@@ -3,6 +3,7 @@
 
 #include "IPC/IPC_Main.h"
 #include "IPC/PnP_Notifications.h"
+#include "IPC/UnixSocket.h"
 #include "Core/elf/ELF_Loader.h"
 #include "Core/memory/SharedMemory.h"
 #include "Core/vfs/VFS.h"
@@ -234,8 +235,22 @@ static int align_up_u64_checked(uint64_t value, uint64_t align, uint64_t *result
 
 static int is_valid_user_entry(uint64_t entry)
 {
+    /* A thread/clone entry point is legitimate anywhere executable code can be
+     * mapped in the user half:
+     *   - the code+heap span [0x1000, USER_STACK_BASE): glibc's pthread_create
+     *     passes start_thread() from libc.so.6, and the Linux-ABI loader
+     *     file-maps the whole .so closure into the heap window (~0x41_0000_0000,
+     *     observed with gtk3-demo), well above USER_CODE_LIMIT;
+     *   - the lazy mmap arena [USER_MMAP_BASE, USER_MMAP_LIMIT): anonymous
+     *     JIT / trampoline pages, and any .so ld.so places there.
+     * The stack region and kernel space stay excluded. Restricting this to
+     * USER_CODE_LIMIT (or, before that, to the mmap arena) made every glibc
+     * pthread_create() fail with EAGAIN, which GLib's mandatory pool-spawner
+     * thread turns into a fatal g_error() ("Resource temporarily unavailable").
+     * See Docs/Others/TODO_GTK3_Wayland_LinuxABI.md G6. */
     return (entry >= 0x1000) &&
-           (entry < USER_CODE_LIMIT);
+           ((entry < USER_STACK_BASE) ||
+            (entry >= USER_MMAP_BASE && entry < USER_MMAP_LIMIT));
 }
 
 static int process_table_ready(void)
@@ -435,6 +450,7 @@ static void reset_process_slot(process_t *proc)
     proc->user_heap_guard_page = 0;
     proc->user_stack_base = 0;
     proc->user_stack_top = 0;
+    proc->user_mmap_cursor = 0;
     proc->user_stack_guard_page = 0;
     proc->timeslice = 0;
     proc->total_ticks = 0;
@@ -442,6 +458,7 @@ static void reset_process_slot(process_t *proc)
     memset(proc->name, 0, sizeof(proc->name));
     memset(proc->cwd, 0, sizeof(proc->cwd));
     proc->cwd[0] = '/';
+    memset(proc->exe_path, 0, sizeof(proc->exe_path));
     memset(proc->launch_argument, 0, sizeof(proc->launch_argument));
     proc->parent_pid = -1;
     proc->memory_owner_pid = -1;
@@ -548,6 +565,7 @@ static void release_process_resources(process_t *proc)
     proc->user_heap_guard_page = 0;
     proc->user_stack_base = 0;
     proc->user_stack_top = 0;
+    proc->user_mmap_cursor = 0;
     proc->user_stack_guard_page = 0;
     for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
         proc->user_allocs[i].used = 0;
@@ -1133,34 +1151,77 @@ static int32_t find_free_slot(void)
         return -1;
     }
 
+    /* Reclaim EVERY freeable slot on each call, not just the first one hit.
+     * A dead thread/process holds a 128 KiB kernel stack, an 8 MiB eager user
+     * stack, its page tables and any committed mmap-arena pages until its slot
+     * is reused -- and Chromium churns dozens of threads per attempt, so
+     * "free lazily when this exact index is needed" let physical memory leak
+     * until demand-zero faults started failing (PMM OOM). A full 256-entry
+     * sweep here is cheap and keeps memory bounded to what is actually live. */
     for (int32_t i = 1; i < g_process_capacity; ++i) {
-        if (g_processes[i].state == PROCESS_STATE_UNUSED) {
-            return i;
-        }
         if (g_processes[i].state == PROCESS_STATE_DEAD &&
             !process_scheduler_pid_in_use_on_any_cpu(i)) {
             release_process_resources(&g_processes[i]);
             reset_process_slot(&g_processes[i]);
-            return i;
+        } else if (g_processes[i].state == PROCESS_STATE_ZOMBIE &&
+                   !process_scheduler_pid_in_use_on_any_cpu(i)) {
+            int32_t pp = g_processes[i].parent_pid;
+            if (pp < 0 || !is_valid_pid(pp) ||
+                g_processes[pp].state == PROCESS_STATE_UNUSED ||
+                g_processes[pp].state == PROCESS_STATE_DEAD) {
+                release_process_resources(&g_processes[i]);
+                reset_process_slot(&g_processes[i]);
+            }
         }
     }
 
-    for (int32_t i = 0; i < g_process_capacity; ++i) {
-        if (g_processes[i].state == PROCESS_STATE_ZOMBIE &&
-            !process_scheduler_pid_in_use_on_any_cpu(i)) {
-            int32_t pp = g_processes[i].parent_pid;
-            if (pp < 0 || !is_valid_pid(pp) || g_processes[pp].state == PROCESS_STATE_UNUSED || g_processes[pp].state == PROCESS_STATE_DEAD) {
-                release_process_resources(&g_processes[i]);
-                reset_process_slot(&g_processes[i]);
-                return i;
-            }
+    for (int32_t i = 1; i < g_process_capacity; ++i) {
+        if (g_processes[i].state == PROCESS_STATE_UNUSED) {
+            return i;
         }
     }
     return -1;
 }
 
+/* Write the overflow sentinel to the lowest 16 bytes of a freshly allocated
+ * kernel stack. Call once right after kernel_stack_base is assigned. */
+static void process_kstack_arm(process_t *proc)
+{
+    if (proc == NULL || proc->kernel_stack_base == NULL) {
+        return;
+    }
+    volatile uint64_t *bottom = (volatile uint64_t *)(uintptr_t)proc->kernel_stack_base;
+    bottom[0] = PROCESS_KSTACK_CANARY;
+    bottom[1] = PROCESS_KSTACK_CANARY;
+}
+
+/* Panic deterministically if a process's kernel stack has been written past its
+ * bottom. Cheap enough (two loads) to run on every context switch; turns what
+ * would otherwise be silent heap corruption -> a random later reboot into a
+ * clear, immediate diagnosis. */
+static void process_kstack_canary_check(const process_t *proc)
+{
+    if (proc == NULL || proc->kernel_stack_base == NULL) {
+        return;
+    }
+    const volatile uint64_t *bottom =
+        (const volatile uint64_t *)(uintptr_t)proc->kernel_stack_base;
+    if (bottom[0] != PROCESS_KSTACK_CANARY || bottom[1] != PROCESS_KSTACK_CANARY) {
+        extern void kernel_panic(const char *module_name, const char *message);
+        serial_write_string("[OS] [KSTACK] kernel stack overflow pid=");
+        serial_write_uint64((uint64_t)(uint32_t)(int32_t)(proc - g_processes));
+        serial_write_string(" name=");
+        serial_write_string(proc->name[0] ? proc->name : "?");
+        serial_write_string(" base=");
+        serial_write_uint64((uint64_t)(uintptr_t)proc->kernel_stack_base);
+        serial_write_string("\n");
+        kernel_panic("KSTACK", "kernel stack overflow");
+    }
+}
+
 static void activate_process_context(process_t *proc)
 {
+    process_kstack_canary_check(proc);
     if (paging_get_active_cr3() != proc->cr3) {
         paging_switch_cr3(proc->cr3);
     }
@@ -1372,10 +1433,33 @@ static int initialize_elf_user_stack_ex(
     uint64_t auxv_count = sizeof(auxv) / sizeof(auxv[0]);
     uint64_t auxv_words = auxv_count * 2U;
 
+    /* Lay out the initial process stack: [argc][argv..][NULL][envp..][NULL]
+     * [auxv..][0], then set the entry %rsp to point at argc.
+     *
+     * The required entry alignment of %rsp differs by ABI and there is NO
+     * single value that works for both:
+     *   - Linux ABI (glibc's _start / the ld.so RTLD_START): a real crt stub
+     *     that is JUMPed to, so it wants %rsp % 16 == 0 with %rsp pointing
+     *     straight at argc. A misaligned %rsp #GPs the dynamic linker on its
+     *     first `movaps ...,-0x80(%rbp)`.
+     *   - Native ImplusOS apps: _start is a plain `void _start(void)` C
+     *     function with no asm crt, so GCC's prologue assumes it was CALLed,
+     *     i.e. %rsp % 16 == 8 on entry (a return address had been pushed).
+     *
+     * So: build the block, align %rsp to 16, and for the native ABI drop it
+     * by 8 more. (The historic unconditional `sp -= 8` happened to be right
+     * for native and wrong for Linux; making it unconditionally 16-aligned
+     * fixed Linux but broke native _start -- e.g. the window manager #GP'd on
+     * a `movdqa` off a now-misaligned frame.) */
+    uint64_t stack_words_total =
+        1ULL + argc + 1ULL + envc + 1ULL + auxv_words + 1ULL;
+
     sp &= ~0xFULL;
-    
-    sp -= 8ULL;
-    sp -= (1ULL + argc + 1ULL + envc + 1ULL + auxv_words + 1ULL) * sizeof(uint64_t);
+    sp -= stack_words_total * sizeof(uint64_t);
+    sp &= ~0xFULL;
+    if (!image_info->linux_abi) {
+        sp -= 8ULL; /* native C _start expects %rsp % 16 == 8 on entry */
+    }
 
     uint64_t *stack_words = (uint64_t *)(uintptr_t)sp;
     uint64_t idx = 0;
@@ -1424,6 +1508,7 @@ static int initialize_process_memory(process_t *proc,
         return -1;
     }
     proc->kernel_stack_top = ((uint64_t)(uintptr_t)(proc->kernel_stack_base + PROCESS_KERNEL_STACK_SIZE)) & ~0xFULL;
+    process_kstack_arm(proc);
 
     proc->cr3 = paging_create_process_space();
     if (!proc->cr3) {
@@ -1437,6 +1522,7 @@ static int initialize_process_memory(process_t *proc,
     proc->user_heap_limit = USER_HEAP_LIMIT;
     proc->user_stack_base = USER_STACK_BASE;
     proc->user_stack_top = USER_STACK_TOP;
+    proc->user_mmap_cursor = USER_MMAP_BASE;
     proc->capability_mask = PROCESS_CAP_DEFAULT_MASK;
 
     if (proc->user_code_limit <= proc->user_code_base ||
@@ -1534,11 +1620,80 @@ void *process_user_mmap(uint64_t length, uint64_t flags)
         return NULL;
     }
 
-    if (aligned_len == 0 || aligned_len > UINT32_MAX) {
+    if (aligned_len == 0) {
         return NULL;
     }
 
-    return process_user_alloc((uint32_t)aligned_len);
+    return process_user_alloc(aligned_len);
+}
+
+/* --- USER_MMAP arena: lazily-committed anonymous reservations -------------- */
+
+int process_user_addr_in_mmap_arena(uint64_t addr, uint64_t length)
+{
+    if (length == 0u) {
+        return addr >= USER_MMAP_BASE && addr < USER_MMAP_LIMIT;
+    }
+    if (addr < USER_MMAP_BASE) {
+        return 0;
+    }
+    if (addr > (0xFFFFFFFFFFFFFFFFULL - length)) {
+        return 0;
+    }
+    return (addr + length) <= USER_MMAP_LIMIT;
+}
+
+void *process_user_reserve(uint64_t length)
+{
+    if (length == 0u) {
+        return NULL;
+    }
+
+    uint64_t aligned_len = 0;
+    if (align_up_u64_checked(length, PAGE_SIZE, &aligned_len) < 0 ||
+        aligned_len == 0u) {
+        return NULL;
+    }
+
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return NULL;
+    }
+    process_t *proc =
+        process_memory_owner_locked(&g_processes[current_pid_get()]);
+    if (proc == NULL) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return NULL;
+    }
+
+    uint64_t cursor = proc->user_mmap_cursor;
+    if (cursor < USER_MMAP_BASE || cursor >= USER_MMAP_LIMIT) {
+        cursor = USER_MMAP_BASE; /* first use / uninitialised */
+    }
+    /* 64 KiB granularity keeps things comfortably page-aligned and matches
+     * what glibc/PartitionAlloc expect from an mmap() base. */
+    cursor = (cursor + 0xFFFFULL) & ~0xFFFFULL;
+
+    if (aligned_len > (USER_MMAP_LIMIT - cursor)) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return NULL; /* arena exhausted */
+    }
+
+    uint64_t base = cursor;
+    proc->user_mmap_cursor = cursor + aligned_len;
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    /* Deliberately map nothing: pages fault in demand-zero (RW|USER) via
+     * paging_handle_swap_fault() from the #PF handler on first touch. */
+    return (void *)(uintptr_t)base;
 }
 
 static int range_within(uint64_t addr, uint64_t len, uint64_t start, uint64_t end)
@@ -2054,7 +2209,8 @@ int32_t process_create_thread_ex(uint64_t entry,
                                  uint64_t arg3,
                                  uint64_t arg4,
                                  int has_tls,
-                                 uint64_t tls_fs_base)
+                                 uint64_t tls_fs_base,
+                                 uint64_t user_stack)
 {
     if (!process_table_ready() || !is_valid_user_entry(entry)) {
         return -1;
@@ -2119,6 +2275,7 @@ int32_t process_create_thread_ex(uint64_t entry,
     thread->user_stack_guard_page = region_base;
     thread->user_stack_base = region_base + PROCESS_GUARD_PAGE_SIZE;
     thread->user_stack_top = region_top;
+    thread->user_mmap_cursor = owner->user_mmap_cursor;
     thread->thread_stack_region_base = region_base;
     thread->thread_stack_region_size = PROCESS_THREAD_STACK_REGION_SIZE;
     memcpy(thread->signal_handlers, owner->signal_handlers,
@@ -2152,6 +2309,7 @@ int32_t process_create_thread_ex(uint64_t entry,
     thread->kernel_stack_top =
         ((uint64_t)(uintptr_t)(thread->kernel_stack_base +
                                PROCESS_KERNEL_STACK_SIZE)) & ~0xFULL;
+    process_kstack_arm(thread);
 
     if (paging_map_user_range_alloc(thread->cr3,
                                     thread->user_stack_base,
@@ -2189,7 +2347,15 @@ int32_t process_create_thread_ex(uint64_t entry,
     thread->saved_rsp = (uint64_t)(uintptr_t)kstack;
 #endif
 
-    if (initialize_raw_user_stack(thread) < 0) {
+    if (user_stack != 0u) {
+        /* Linux clone(2): glibc's __clone has already laid out the child's
+         * fn/arg on this stack. Adopt it verbatim - set before the thread is
+         * READY so an SMP peer can't dispatch it against a stale raw stack
+         * (that race made the child jump through a zero fn pointer -> #PF at
+         * RIP=0). Do NOT run initialize_raw_user_stack(), which would both
+         * pick a different stack and scribble a 0 into it. */
+        thread->saved_user_rsp = user_stack;
+    } else if (initialize_raw_user_stack(thread) < 0) {
         goto fail;
     }
 #if defined(__aarch64__)
@@ -2236,7 +2402,7 @@ int32_t process_create_thread(uint64_t entry,
                               uint64_t arg3,
                               uint64_t arg4)
 {
-    return process_create_thread_ex(entry, arg1, arg2, arg3, arg4, 0, 0u);
+    return process_create_thread_ex(entry, arg1, arg2, arg3, arg4, 0, 0u, 0u);
 }
 
 int32_t process_spawn_user_elf_with_arg(const char *path,
@@ -2258,6 +2424,30 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
     }
     strncpy(proc->name, name_ptr, sizeof(proc->name) - 1);
     proc->name[sizeof(proc->name) - 1] = '\0';
+    strncpy(proc->exe_path, path, sizeof(proc->exe_path) - 1u);
+    proc->exe_path[sizeof(proc->exe_path) - 1u] = '\0';
+
+    /* Start the child with cwd = directory component of the executable path.
+     * Foreign Linux binaries (Method A: Doom's linuxxdoom) locate sibling data
+     * relative to ".", e.g. IdentifyVersion() -> access("./doom1.wad"), and we
+     * have no way to pass DOOMWADDIR through process_spawn. Falls back to "/"
+     * when path has no directory part. */
+    {
+        uint32_t slash = 0u;
+        for (uint32_t i = 0u; path[i] != '\0' && i < sizeof(proc->cwd) - 1u; ++i) {
+            if (path[i] == '/') {
+                slash = i;
+            }
+        }
+        if (slash == 0u) {
+            proc->cwd[0] = '/';
+            proc->cwd[1] = '\0';
+        } else {
+            memcpy(proc->cwd, path, slash);
+            proc->cwd[slash] = '\0';
+        }
+    }
+
     if (launch_argument) {
         strncpy(proc->launch_argument, launch_argument,
                 sizeof(proc->launch_argument) - 1u);
@@ -2298,21 +2488,111 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
     proc->main_phent = image_info.phent;
     proc->main_phnum = image_info.phnum;
     if (proc->abi_mode == PROCESS_ABI_LINUX) {
-        const char *linux_argv[2];
+        /* Split launch_argument on whitespace into argv[1..]. A caller that
+         * needs to pass several flags to a Linux binary (e.g. Chromium's
+         * "--single-process --no-sandbox ...") packs them into the one launch
+         * argument string; a value with no spaces still arrives as a single
+         * argv[1], matching the old behaviour. */
+        #define LINUX_ARGV_MAX 32u
+        const char *linux_argv[LINUX_ARGV_MAX];
+        char argsplit[sizeof(proc->launch_argument)];
         linux_argv[0] = name_ptr;
         uint64_t linux_argc = 1;
-        if (launch_argument) {
-            linux_argv[1] = launch_argument;
-            linux_argc = 2;
+        if (launch_argument != NULL && launch_argument[0] != '\0') {
+            strncpy(argsplit, launch_argument, sizeof(argsplit) - 1u);
+            argsplit[sizeof(argsplit) - 1u] = '\0';
+            char *s = argsplit;
+            while (*s != '\0' && linux_argc < LINUX_ARGV_MAX) {
+                while (*s == ' ' || *s == '\t' || *s == '\n') {
+                    *s++ = '\0';
+                }
+                if (*s == '\0') {
+                    break;
+                }
+                linux_argv[linux_argc++] = s;
+                while (*s != '\0' && *s != ' ' && *s != '\t' && *s != '\n') {
+                    ++s;
+                }
+            }
         }
         /* Default environment for Linux-ABI processes (used by the
-           ld.so interpreter; ignored by static binaries). */
-        static const char *linux_envp[] = {
+           ld.so interpreter; ignored by static binaries).
+
+           Two interpreter families reach this path:
+             - the in-tree ImplusOS test ld.so (com.ImplusOS.dynmain /
+               com.ImplusOS.ldso), exercised by the dynmain test app, which
+               wants LD_LIBRARY_PATH pointed at its own lib dir + libpreload;
+             - real glibc /lib64/ld-linux-x86-64.so.2 (external Linux
+               binaries such as Chromium; Vendor/LinuxRuntime stages it at
+               /lib64 with its .so closure under /usr/lib/x86_64-linux-gnu).
+           The glibc loader chokes on the dynmain-specific vars, so pick the
+           environment from the PT_INTERP path. See
+           Docs/Others/TODO_glibc_Port.md G3. */
+        static const char *implus_ld_envp[] = {
             "PATH=/bin:/usr/bin",
             "LD_LIBRARY_PATH=/Userland/Service/com.ImplusOS.dynmain/lib",
             "LD_PRELOAD=libpreload.so",
             NULL,
         };
+        static const char *glibc_envp[] = {
+            "PATH=/bin:/usr/bin",
+            "LD_LIBRARY_PATH=/lib64:/usr/lib/x86_64-linux-gnu:/usr/lib",
+            "LANG=C.UTF-8",
+            "LC_ALL=C.UTF-8",
+            "TZ=UTC",
+            "HOME=/tmp",
+            /* XDG base dirs: glibc GUI stacks (GTK, GLib/GIO) and Chromium all
+               expect these. No real per-user runtime dir exists, so point the
+               runtime/cache dirs at /tmp (TmpFS). See
+               Docs/Others/TODO_GTK3_Wayland_LinuxABI.md G4. */
+            "XDG_RUNTIME_DIR=/tmp",
+            "XDG_CACHE_HOME=/tmp/.cache",
+            "XDG_CONFIG_HOME=/tmp/.config",
+            "XDG_DATA_DIRS=/usr/share",
+            "XDG_CONFIG_DIRS=/etc/xdg",
+            /* GTK3: try the Wayland backend, then X11. ImplusOS has neither a
+               Wayland compositor nor an X server yet, so gdk_display_open()
+               is expected to fail with "cannot open display" - reaching that
+               point already proves the whole glibc + GTK3 .so closure loaded
+               and initialised. Compositor: TODO_GTK3_Wayland_LinuxABI.md G5. */
+            "GDK_BACKEND=wayland,x11",
+            "GSETTINGS_SCHEMA_DIR=/usr/share/glib-2.0/schemas",
+            "GSETTINGS_BACKEND=memory",
+            "FONTCONFIG_PATH=/etc/fonts",
+            "FONTCONFIG_FILE=/etc/fonts/fonts.conf",
+            /* Doom (Method A: TODO_Doom_Xorg_MethodA.md). The X client
+               (linuxxdoom) connects to :0 with no DISPLAY set; the Xorg we
+               spawn runs modesetting on /dev/dri/card0 (kernel KMS shim).
+               Mesa must use the software rasteriser (llvmpipe) since there is
+               no real GPU; the X core keyboard needs xkb-data's rules root. */
+            "LIBGL_ALWAYS_SOFTWARE=1",
+            "GALLIUM_DRIVER=llvmpipe",
+            "XKB_CONFIG_ROOT=/usr/share/X11/xkb",
+            /* Doom pulls libopenal (+ SDL2 via libfluidsynth). ImplusOS has no
+               PipeWire/PulseAudio/ALSA device; letting OpenAL-soft probe them
+               makes libpulse's pa_make_fd_cloexec() abort the process. Force
+               the null / dummy backends -- audio is silent, Doom runs. */
+            "ALSOFT_DRIVERS=null",
+            "SDL_AUDIODRIVER=dummy",
+            "PULSE_SERVER=none",
+            /* Doom locates its IWAD relative to DOOMWADDIR (else "."); its
+               soundfont from SOUNDFONT. Both data files live beside the
+               binary in /Userland/Doom/Resource. */
+            "DOOMWADDIR=/Userland/Doom/Resource",
+            "SOUNDFONT=/Userland/Doom/Resource/soundfont.sf2",
+            NULL,
+        };
+        const char **linux_envp = implus_ld_envp;
+        {
+            const char *ip = image_info.interp_path;
+            for (uint32_t i = 0; i + 2 < sizeof(image_info.interp_path) &&
+                                 ip[i] != '\0'; ++i) {
+                if (ip[i] == 'l' && ip[i + 1] == 'd' && ip[i + 2] == '-') {
+                    linux_envp = glibc_envp; /* ".../ld-linux-..." */
+                    break;
+                }
+            }
+        }
         uint64_t linux_envc = 0;
         while (linux_envp[linux_envc] != NULL) {
             ++linux_envc;
@@ -2471,6 +2751,7 @@ int32_t process_fork(void)
     child->kernel_stack_top =
         (((uint64_t)(uintptr_t)(child->kernel_stack_base +
                                  PROCESS_KERNEL_STACK_SIZE)) & ~0xFULL);
+    process_kstack_arm(child);
 
     child->cr3 = paging_create_process_space();
     if (!child->cr3) goto fail_free_kstack;
@@ -2484,6 +2765,7 @@ int32_t process_fork(void)
     child->user_heap_guard_page = parent->user_heap_guard_page;
     child->user_stack_base = parent->user_stack_base;
     child->user_stack_top = parent->user_stack_top;
+    child->user_mmap_cursor = parent->user_mmap_cursor;
     child->user_stack_guard_page = parent->user_stack_guard_page;
 
     if (process_clone_address_space(child, parent) < 0) goto fail_free_space;
@@ -2529,6 +2811,7 @@ int32_t process_fork(void)
 
     memcpy(child->name, parent->name, sizeof(child->name));
     memcpy(child->cwd, parent->cwd, sizeof(child->cwd));
+    memcpy(child->exe_path, parent->exe_path, sizeof(child->exe_path));
     memcpy(child->launch_argument, parent->launch_argument,
            sizeof(child->launch_argument));
 
@@ -2810,6 +3093,7 @@ int32_t process_execve(const char *path, const char *const *argv,
     proc->user_heap_limit = USER_HEAP_LIMIT;
     proc->user_stack_base = USER_STACK_BASE;
     proc->user_stack_top = USER_STACK_TOP;
+    proc->user_mmap_cursor = USER_MMAP_BASE;
 
     proc->user_heap_guard_page = proc->user_heap_limit - PROCESS_GUARD_PAGE_SIZE;
     proc->user_heap_limit -= PROCESS_GUARD_PAGE_SIZE;
@@ -2851,6 +3135,8 @@ int32_t process_execve(const char *path, const char *const *argv,
     }
     strncpy(proc->name, name_ptr, sizeof(proc->name) - 1);
     proc->name[sizeof(proc->name) - 1] = '\0';
+    strncpy(proc->exe_path, path_buf, sizeof(proc->exe_path) - 1u);
+    proc->exe_path[sizeof(proc->exe_path) - 1u] = '\0';
 
     for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
         proc->user_allocs[i].used = 0;
@@ -2963,6 +3249,30 @@ int32_t process_copy_launch_argument(char *out, uint32_t capacity)
     while (length + 1u < capacity &&
            proc->launch_argument[length] != '\0') {
         out[length] = proc->launch_argument[length];
+        ++length;
+    }
+    out[length] = '\0';
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return (int32_t)length;
+}
+
+int32_t process_copy_exe_path(char *out, uint32_t capacity)
+{
+    if (!out || capacity == 0u) return -1;
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    int32_t pid = current_pid_get();
+    process_t *proc = is_valid_pid(pid) ? &g_processes[pid] : NULL;
+    proc = process_memory_owner_locked(proc);
+    if (!proc) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    uint32_t length = 0u;
+    while (length + 1u < capacity && proc->exe_path[length] != '\0') {
+        out[length] = proc->exe_path[length];
         ++length;
     }
     out[length] = '\0';
@@ -3122,6 +3432,7 @@ void process_exit_current(void)
     uint32_t closed_dirs = 0;
     syscall_file_close_all_for_pid(pid_to_exit, &closed_fds, &closed_dirs);
     syscall_socket_close_all_for_pid(pid_to_exit);
+    unix_socket_close_all_for_pid(pid_to_exit);
     shared_memory_cleanup_process(pid_to_exit);
 
     irq_flags = irq_save_disable();
@@ -3934,6 +4245,15 @@ int process_user_buffer_is_valid(const void *ptr, uint64_t len)
     uint8_t  abi_mode       = proc->abi_mode;
     irq_restore(irq_flags);
 
+    /* The lazily-committed mmap arena is valid as a syscall buffer even when
+     * pages are not yet resident: copy_to/from_user()'s memcpy takes a
+     * kernel-mode #PF that the handler services demand-zero (see
+     * page_fault_handler / process_user_reserve). Requiring residency here
+     * would EFAULT every write into a fresh PartitionAlloc region. */
+    if (range_within(addr, len, USER_MMAP_BASE, USER_MMAP_LIMIT)) {
+        return 1;
+    }
+
     if (abi_mode == PROCESS_ABI_LINUX) {
         if (addr < 0x1000) {
             return 0;
@@ -3994,7 +4314,7 @@ int process_user_cstring_length(const char *str, uint64_t max_len, uint64_t *len
     return -1;
 }
 
-void *process_user_alloc(uint32_t size)
+void *process_user_alloc(uint64_t size)
 {
     if (size == 0) {
         return NULL;
@@ -4027,7 +4347,7 @@ void *process_user_alloc(uint32_t size)
     }
     uint64_t alloc_size = 0;
     if (align_up_u64_checked((uint64_t)size, 16ULL, &alloc_size) < 0 ||
-        alloc_size == 0 || alloc_size > UINT32_MAX) {
+        alloc_size == 0) {
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
         return NULL;
@@ -4038,7 +4358,7 @@ void *process_user_alloc(uint32_t size)
         if (!slot->used && slot->size != 0 && slot->size >= alloc_size) {
             slot->used = 1;
             uint64_t addr = slot->addr;
-            uint32_t slot_size = slot->size;
+            uint64_t slot_size = slot->size;
             uint64_t cr3 = proc->cr3;
             spinlock_unlock(&g_process_table_lock);
             irq_restore(irq_flags);
@@ -4100,7 +4420,7 @@ void *process_user_alloc(uint32_t size)
     proc->user_heap_cursor = next;
     proc->user_allocs[new_slot].used = 1;
     proc->user_allocs[new_slot].addr = addr;
-    proc->user_allocs[new_slot].size = (uint32_t)alloc_size;
+    proc->user_allocs[new_slot].size = alloc_size;
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
 
@@ -4119,7 +4439,7 @@ void *process_user_alloc(uint32_t size)
             if (rollback_proc->cr3 == cr3 &&
                 rollback_slot->used &&
                 rollback_slot->addr == addr &&
-                rollback_slot->size == (uint32_t)alloc_size) {
+                rollback_slot->size == alloc_size) {
                 rollback_slot->used = 0;
                 rollback_slot->addr = 0;
                 rollback_slot->size = 0;
@@ -4164,7 +4484,7 @@ int process_user_free(void *ptr)
         user_alloc_t *slot = &proc->user_allocs[i];
         if (slot->used && slot->addr == addr) {
             uint64_t cr3 = proc->cr3;
-            uint32_t size = slot->size;
+            uint64_t size = slot->size;
             slot->used = 0;
             spinlock_unlock(&g_process_table_lock);
             irq_restore(irq_flags);
@@ -4480,6 +4800,52 @@ int process_signal_set_mask(uint64_t mask)
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return 0;
+}
+
+/* signal(7) default disposition: 1 = terminate the process, 0 = ignore/stop.
+ * Only "terminate" needs acting on when no user handler is installed. */
+static int process_signal_default_terminates(int32_t signum)
+{
+    switch (signum) {
+        case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
+        case 9: case 11: case 13: case 14: case 15: case 24: case 25:
+        case 26: case 27: case 29: case 30: case 31:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* If `signum` was just raised at the current process and its disposition is
+ * SIG_DFL with a default action of "terminate", exit now. Without this,
+ * glibc's abort()/assert()/__stack_chk_fail() -- which raise(SIGABRT) and
+ * expect to die -- return from the syscall and fall through to a privileged
+ * `hlt` (=> #GP). Returns 1 if the process was terminated. Must be called
+ * from syscall context with no locks held. */
+int process_signal_maybe_self_terminate(int32_t signum)
+{
+    if (!process_signal_default_terminates(signum)) {
+        return 0;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    int is_default = 1;
+    if (is_valid_pid(current_pid_get())) {
+        process_t *owner =
+            process_memory_owner_locked(&g_processes[current_pid_get()]);
+        /* signal_handlers[]: 0 = SIG_DFL, 1 = SIG_IGN, else user handler. */
+        if (owner != NULL && owner->signal_handlers[signum] != 0u) {
+            is_default = 0;
+        }
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    if (!is_default) {
+        return 0;
+    }
+    process_exit_current_signaled(signum);
+    return 1;
 }
 
 int process_signal_deliver(int32_t pid, int32_t signum)

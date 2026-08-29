@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "kernel/interfaces/fs_module_ops.h"
+
 /* exFAT (Extended File Allocation Table) -- Microsoft specification
  * "exFAT File System Specification" (August 28, 2019). Read-only for this
  * first implementation; see Docs/Others/TODO_OS_Refactor.md 4. for the
@@ -46,14 +48,6 @@ int32_t  exfat_closedir(int32_t handle);
 
 void     exfat_list_root_files(void);
 
-typedef struct {
-    bool     (*init)(void);
-    bool     (*find_file)(const char *, exFAT_FILE *);
-    bool     (*read_file)(exFAT_FILE *, uint8_t *);
-    bool     (*read_at)(exFAT_FILE *, uint32_t, uint8_t *, uint32_t);
-    uint64_t (*get_file_size)(exFAT_FILE *);
-    void     (*list_root_files)(void);
-    int32_t  (*opendir)(const char *);
-    int32_t  (*readdir)(int32_t, exFAT_DIRENT *);
-    int32_t  (*closedir)(int32_t);
-} exfat_driver_t;
+/* The module exports a generic fs_module_ops_t (see
+ * kernel/interfaces/fs_module_ops.h) as its driver_module_descriptor_t
+ * .driver_api; FS_VFS_Bridge.c is the sole consumer. */

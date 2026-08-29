@@ -304,6 +304,51 @@ int32_t shared_memory_close(int32_t handle)
     return 0;
 }
 
+int32_t shared_memory_addref(int32_t handle)
+{
+    shared_memory_init_once();
+    spinlock_lock(&g_shared_memory_lock);
+    shared_object_t *object = shared_memory_find_locked(handle, NULL);
+    if (!object) {
+        spinlock_unlock(&g_shared_memory_lock);
+        return (int32_t)OS_STATUS_NOT_FOUND;
+    }
+    ++object->references;
+    spinlock_unlock(&g_shared_memory_lock);
+    return 0;
+}
+
+int32_t shared_memory_release(int32_t handle)
+{
+    shared_memory_init_once();
+    spinlock_lock(&g_shared_memory_lock);
+    shared_object_t *object = shared_memory_find_locked(handle, NULL);
+    if (!object) {
+        spinlock_unlock(&g_shared_memory_lock);
+        return (int32_t)OS_STATUS_NOT_FOUND;
+    }
+    int32_t caller = process_get_current_pid();
+    if (object->granted_pid == caller) {
+        object->granted_pid = -1;
+    }
+    if (object->references != 0u) {
+        --object->references;
+    }
+    shared_memory_destroy_locked(object);
+    spinlock_unlock(&g_shared_memory_lock);
+    return 0;
+}
+
+uint32_t shared_memory_size(int32_t handle)
+{
+    shared_memory_init_once();
+    spinlock_lock(&g_shared_memory_lock);
+    shared_object_t *object = shared_memory_find_locked(handle, NULL);
+    uint32_t size = object ? object->size : 0u;
+    spinlock_unlock(&g_shared_memory_lock);
+    return size;
+}
+
 void shared_memory_cleanup_process(int32_t pid)
 {
     if (pid < 0) return;

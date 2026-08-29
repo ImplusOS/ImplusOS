@@ -8,3 +8,9 @@ AAVMF_CODE.fd
 AAVMF_VARS.fd
 *.bin
 Userland/Application/BusyBox/Resource/busybox
+Userland/Application/Chromium
+Userland/Application/Doom
+
+Vendor/LinuxRuntime/cache/
+Vendor/LinuxRuntime/.work/
+Vendor/LinuxRuntime/LICENSES/

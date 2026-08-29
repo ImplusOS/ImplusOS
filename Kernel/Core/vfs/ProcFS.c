@@ -551,10 +551,17 @@ int procfs_readlink(const char *path, char *out, uint32_t capacity)
         return -1;
     }
     if (strcmp(suffix, "exe") == 0) {
-        char arg[512];
-        if (process_copy_launch_argument(arg, sizeof(arg)) < 0 || arg[0] == '\0') {
-            strncpy(arg, "/Userland/Userland.ELF", sizeof(arg) - 1u);
-            arg[sizeof(arg) - 1u] = '\0';
+        /* The real executable path (glibc / Chromium readlink() this to find
+         * their own asset directory: get it wrong and Chromium can't locate
+         * icudtl.dat -> "Invalid file descriptor to ICU data received"). Fall
+         * back to the launch argument, then to the init ELF, only if the exec
+         * path was never recorded. */
+        char arg[256];
+        if (process_copy_exe_path(arg, sizeof(arg)) <= 0 || arg[0] == '\0') {
+            if (process_copy_launch_argument(arg, sizeof(arg)) < 0 || arg[0] == '\0') {
+                strncpy(arg, "/Userland/Userland.ELF", sizeof(arg) - 1u);
+                arg[sizeof(arg) - 1u] = '\0';
+            }
         }
         strncpy(out, arg, capacity - 1u);
         out[capacity - 1u] = '\0';

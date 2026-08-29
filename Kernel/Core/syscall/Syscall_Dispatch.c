@@ -2029,6 +2029,9 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         case SYSCALL_SHM_CLOSE:
             set_syscall_i32(saved_rsp, shared_memory_close((int32_t)arg1));
             break;
+        case SYSCALL_MEMFD_SHM_HANDLE:
+            set_syscall_i32(saved_rsp, syscall_memfd_shm_handle((int32_t)arg1));
+            break;
         case SYSCALL_GET_MAIN_IMAGE_INFO: {
             struct {
                 uint64_t phdr_vaddr;
@@ -2143,7 +2146,8 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         case SYSCALL_UNIX_BIND: {
             extern int64_t unix_socket_bind(int32_t, const char*);
             char kpath[108];
-            if (arg2 == 0 || !copy_user_cstring(kpath, sizeof(kpath), (const char*)(uintptr_t)arg2)) {
+            /* copy_user_cstring() returns 0 on success, <0 on fault. */
+            if (arg2 == 0 || copy_user_cstring(kpath, sizeof(kpath), (const char*)(uintptr_t)arg2) != 0) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_unix_bind_path");
                 break;
             }
@@ -2163,7 +2167,8 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
         case SYSCALL_UNIX_CONNECT: {
             extern int64_t unix_socket_connect(int32_t, const char*);
             char kpath[108];
-            if (arg2 == 0 || !copy_user_cstring(kpath, sizeof(kpath), (const char*)(uintptr_t)arg2)) {
+            /* copy_user_cstring() returns 0 on success, <0 on fault. */
+            if (arg2 == 0 || copy_user_cstring(kpath, sizeof(kpath), (const char*)(uintptr_t)arg2) != 0) {
                 syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_unix_connect_path");
                 break;
             }
@@ -2602,6 +2607,42 @@ uint64_t syscall_dispatch(uint64_t saved_rsp,
             }
             int32_t rc = process_get_os_debug(info_out);
             set_syscall_i32(saved_rsp, rc);
+            break;
+        }
+
+        case SYSCALL_READ_KERNEL_LOG: {
+            /* Copy the tail of the kernel serial log into a userland buffer so a
+             * userland viewer can show boot / driver / Linux-compat output
+             * without a serial cable. arg1 = user buffer, arg2 = its size.
+             * Returns the number of bytes written (excluding the NUL), which is
+             * <= min(arg2 - 1, live log length). */
+            void *ubuf = (void *)(uintptr_t)arg1;
+            uint64_t ucap = arg2;
+            if (ucap == 0u || !user_buffer_ok(ubuf, ucap)) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_klog_buffer");
+                break;
+            }
+
+            static char klog_stage[65536];
+            static spinlock_t klog_stage_lock;
+            uint32_t want = (ucap > sizeof(klog_stage)) ? (uint32_t)sizeof(klog_stage)
+                                                        : (uint32_t)ucap;
+
+            uint64_t f = irq_save_disable();
+            spinlock_lock(&klog_stage_lock);
+            uint32_t got = serial_copy_log(klog_stage, want);
+            spinlock_unlock(&klog_stage_lock);
+            irq_restore(f);
+
+            uint64_t copy_bytes = (uint64_t)got + 1u; /* include NUL */
+            if (copy_bytes > ucap) {
+                copy_bytes = ucap;
+            }
+            if (copy_to_user(ubuf, klog_stage, copy_bytes) != 0u) {
+                syscall_fail(saved_rsp, num, OS_STATUS_FAULT, "invalid_klog_buffer");
+                break;
+            }
+            set_syscall_i32(saved_rsp, (int32_t)got);
             break;
         }
 

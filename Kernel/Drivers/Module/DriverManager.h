@@ -6,7 +6,6 @@
 #include "kernel/interfaces/device.h"
 #include "DriverBinary.h"
 #include "Core/vfs/VFS.h"
-#include "Drivers/FileSystem/ISO9660/ISO9660_Main.h"
 #include "Drivers/Module/PCI_Main.h"
 #include "SerialManager.h"
 
@@ -33,7 +32,6 @@ const device_t *device_manager_find(device_type_t type,
                                    const char *module_name);
 
 const pci_driver_t *driver_manager_get_pci_driver(void);
-const iso9660_driver_t *driver_manager_get_iso9660_driver(void);
 const driver_input_t *driver_manager_get_ps2_driver(void);
 const usb_master_vtable_t *driver_manager_get_usb_driver(void);
 const driver_display_t *driver_manager_get_display_driver(const char *module_name);

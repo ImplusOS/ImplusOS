@@ -237,12 +237,6 @@ const pci_driver_t *driver_manager_get_pci_driver(void)
     return (const pci_driver_t *)driver_manager_get_by_kind(DEVICE_TYPE_PCI);
 }
 
-const iso9660_driver_t *driver_manager_get_iso9660_driver(void)
-{
-    return (const iso9660_driver_t *)driver_manager_get_named(DEVICE_TYPE_FILESYSTEM,
-                                                              "ISO9660_Driver.ELF");
-}
-
 const driver_input_t *driver_manager_get_ps2_driver(void)
 {
     return (const driver_input_t *)driver_manager_get_named(DEVICE_TYPE_INPUT,

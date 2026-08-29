@@ -6,6 +6,7 @@
 
 #include "Core/sync/Mutex.h"
 #include "kernel/interfaces/vfs_file.h"
+#include "kernel/interfaces/vfs_dirent.h"
 
 struct vfs_driver;
 
@@ -28,30 +29,9 @@ typedef struct file {
     mutex_t lock;
 } file_t;
 
-typedef struct vfs_dirent {
-    char name[256];
-    bool is_directory;
-    uint32_t size;
-} vfs_dirent_t;
-
-/*
- * vfs_media_kind_t -- what a mounted vfs_driver_t is backed by, in terms
- * generic enough that VFS.c never needs to know a specific filesystem's name
- * or driver identity to make a boot-time policy decision (e.g. "prefer the
- * optical-media filesystem as the default root when one is mounted" -- see
- * kernel_main.c's all_fs_initialize() and vfs_set_default_fs_by_kind()
- * below). Every filesystem driver's vfs_driver_t bridge fills this in when
- * it registers with vfs_mount(); it is orthogonal to `fs_type`, which stays
- * around only as a human-readable label and for name-based lookups a caller
- * explicitly asks for (vfs_set_default_fs()), not for VFS-internal policy.
- * See Docs/Others/TODO_OS_Refactor.md 6.1 for the background.
- */
-typedef enum {
-    VFS_MEDIA_KIND_UNKNOWN = 0,
-    VFS_MEDIA_KIND_OPTICAL,  /* read-only optical media (ISO9660, ...) */
-    VFS_MEDIA_KIND_DISK,     /* writable disk/removable media (FAT32, exFAT, ...) */
-    VFS_MEDIA_KIND_PSEUDO,   /* in-memory pseudo filesystems (devfs, tmpfs, procfs, etcfs) */
-} vfs_media_kind_t;
+/* vfs_dirent_t and vfs_media_kind_t now live in
+ * kernel/interfaces/vfs_dirent.h (included above) so a filesystem driver
+ * module can see them without dragging in vnode_t/file_t's Mutex.h. */
 
 typedef struct vfs_driver {
     const char *fs_type;
@@ -74,4 +54,22 @@ typedef struct vfs_driver {
     void (*list_root)(void);
     void (*set_case_sensitive)(bool enabled);
     bool (*get_case_sensitive)(void);
+
+    /* Optional character-device hooks (devfs only, all may be NULL). A driver
+     * that sets any of these is telling the syscall file layer that fds opened
+     * on its nodes are character devices: read()/poll() prefer dev_read/dev_poll
+     * over read_at, and ioctl()/mmap() are routed to dev_ioctl/dev_mmap instead
+     * of failing. Used by /dev/dri/card0 (DRM/KMS) and /dev/input/event* (evdev)
+     * for the foreign-X-server path -- see TODO_Doom_Xorg_MethodA.md M2/M3.
+     *   dev_ioctl : Linux _IOC-encoded request; returns >=0 or -errno.
+     *   dev_read  : like read(2); returns byte count or -errno (-11 = EAGAIN).
+     *   dev_poll  : returns POLLIN(0x1)/POLLOUT(0x4)/... bits currently ready.
+     *   dev_mmap  : map device memory for `length` bytes at file `offset` into
+     *               the caller's address space; returns user VA or -errno. */
+    int64_t (*dev_ioctl)(vfs_file_t *file, uint64_t request, uint64_t arg);
+    int64_t (*dev_read)(vfs_file_t *file, uint8_t *buffer, uint64_t length,
+                        uint32_t nonblock);
+    uint32_t (*dev_poll)(vfs_file_t *file, uint32_t events);
+    int64_t (*dev_mmap)(vfs_file_t *file, uint64_t offset, uint64_t length,
+                        uint64_t prot, uint64_t flags);
 } vfs_driver_t;

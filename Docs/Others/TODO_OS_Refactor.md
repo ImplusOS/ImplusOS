@@ -436,6 +436,21 @@ Linux の `struct device_driver` の `probe`/`remove` と `MODULE_DEVICE_TABLE`
       FSごとに必要）。ただし要求の核心である「`VFS_Adapter` ファイルの削除」と
       「3段構成→2段構成への圧縮」は達成しており、`Kernel/Drivers/Client/`・
       `Kernel/Drivers/Server/` は本節の変更をもってディレクトリごと消滅した
+- [x] 6.2 追補 (2026-08-29): FSごとの `*_VFS_Bridge.c/.h`（FAT32/ISO9660/exFAT
+      の計6ファイル）と各FS固有の vtable 型（`fat32_driver_t`/`iso9660_driver_t`/
+      `exfat_driver_t`）を廃止。各FSドライバモジュールは共通の
+      `fs_module_ops_t`（`Kernel/include/kernel/interfaces/fs_module_ops.h`）
+      1種類だけを `driver_module_descriptor_t.driver_api` としてエクスポートし、
+      カーネル側の変換は単一の `Kernel/Drivers/Module/FS_VFS_Bridge.c` に集約。
+      ファイルハンドルは不透明 `void *` + `handle_size` とし、per-open ハンドルの
+      malloc/free と書き込み後の `vfs_file_t.size` 更新をブリッジが担う（§6.2 が
+      「踏み込んでいない」とした汎用化を達成）。`readdir` の `vfs_dirent_t` 変換・
+      exFAT の64bitサイズclamp・FAT属性→ディレクトリ判定はオンディスク形式を
+      知るモジュール側へ移動。init は旧 `FAT32_VFS_Bridge.c` の遅延
+      `driver_manager_find()` 再解決 + init-once パターンに全FS統一。
+      `vfs_dirent_t`/`vfs_media_kind_t` はモジュールから安全に見えるよう
+      `kernel/interfaces/vfs_dirent.h` に分離。FS追加は `g_fs_bridges[]` に1行 +
+      `fs_bridge_id_t` に1定数のみで、新規ブリッジファイル不要
 - [x] 6.3: exFAT 読み取り専用ドライバを実装（`Kernel/Drivers/FileSystem/exFAT/
       exFAT_Main.c/.h` + `Kernel/Drivers/Module/exFAT_VFS_Bridge.c/.h`）。
       Boot Sector 検証、MBR/GPT パーティション検出、FATチェーン走査、

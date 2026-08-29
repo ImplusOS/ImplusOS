@@ -18,6 +18,11 @@ int32_t syscall_epoll_wait(int32_t epfd, epoll_event_t *events,
 int32_t syscall_epoll_wait_ex(int32_t epfd, epoll_event_t *events,
                               int32_t maxevents, int32_t timeout_ms,
                               int *should_switch_out);
+/* One-shot readiness probe for a single fd (regular/pipe/timerfd/memfd/
+ * signalfd/socket/eventfd), for the Linux compat poll(2)/ppoll(2).
+ * `events` and the result use EPOLL* bits (== POLL* bits). Never blocks. */
+uint32_t syscall_poll_one_fd(int32_t fd, uint32_t events);
+
 int32_t syscall_eventfd(uint64_t initval, uint64_t flags);
 int  syscall_eventfd_is_valid(int32_t fd);
 int64_t syscall_eventfd_read(int32_t fd, uint8_t *buffer, uint64_t len);

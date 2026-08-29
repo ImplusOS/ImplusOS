@@ -12,6 +12,7 @@
 #include "Core/process/ProcessManager.h"
 #include "Core/sync/Spinlock.h"
 #include "Core/timer/Timer.h"
+#include "Core/memory/SharedMemory.h"
 #include "Debug/serial/Serial.h"
 
 enum {
@@ -92,10 +93,18 @@ typedef struct {
 typedef struct {
     uint8_t used;
     int32_t owner_pid;
-    uint8_t *data;
+    uint8_t *data;         /* legacy heap backing (only if shm_handle < 0) */
     uint32_t size;
     uint32_t capacity;
     uint32_t offset;
+    /* When >= 0 the memfd is backed by a cross-process shared-memory object
+     * (Kernel/Core/memory/SharedMemory.c) instead of `data`. This is what
+     * makes mmap(MAP_SHARED) coherent between processes and lets the fd be
+     * handed to another process via SCM_RIGHTS - the path Wayland's wl_shm
+     * needs. Promoted on the first non-zero ftruncate(). Each fd referencing
+     * the object holds one shared_memory reference (create/addref on dup,
+     * release on close). */
+    int32_t shm_handle;
 } kernel_memfd_t;
 
 typedef struct {
@@ -258,10 +267,13 @@ static void release_fd_locked(int32_t fd)
         memset(&g_timerfds[fd], 0, sizeof(g_timerfds[fd]));
     } else if (g_files[fd].used == 6) {
         kernel_memfd_t *memfd = &g_memfds[fd];
-        if (memfd->data != NULL) {
+        if (memfd->shm_handle >= 0) {
+            (void)shared_memory_release(memfd->shm_handle);
+        } else if (memfd->data != NULL) {
             free(memfd->data);
         }
         memset(memfd, 0, sizeof(*memfd));
+        memfd->shm_handle = -1;
     } else if (g_files[fd].used == 7) {
         memset(&g_signalfds[fd], 0, sizeof(g_signalfds[fd]));
     }
@@ -391,6 +403,14 @@ int64_t syscall_file_read(int32_t fd, uint8_t *buffer, uint64_t len)
     kernel_open_file_t *file = fd_open_file(fd);
     if (file == NULL) {
         return (int64_t)OS_STATUS_INVALID_ARG;
+    }
+
+    /* Character devices (/dev/dri/card0, /dev/input/event*) manage their own
+     * variable-length record streams; the size/EOF model below does not fit. */
+    if (file->file.fs_driver != NULL && file->file.fs_driver->dev_read != NULL) {
+        uint32_t nonblock =
+            (g_files[fd].status_flags & FILE_O_NONBLOCK) ? 1u : 0u;
+        return vfs_dev_read(&file->file, buffer, len, nonblock);
     }
 
     if (file->offset >= file->file.size) {
@@ -683,6 +703,64 @@ int32_t syscall_file_rename(const char *old_path, const char *new_path)
         0 : (int32_t)OS_STATUS_IO_ERROR;
 }
 
+/* link(2): no true hard links in the pseudo filesystems, so implement it as a
+ * content copy. Sufficient for the one real consumer -- the X server's
+ * LockServer() (os/utils.c) writes /tmp/.tXn-lock then link()s it to
+ * /tmp/.Xn-lock and re-reads the pid. Fails with EXDEV for anything the VFS
+ * cannot both read and (re)create. */
+#define SYSCALL_LINK_MAX_BYTES 65536u
+
+int32_t syscall_file_link(const char *old_path, const char *new_path)
+{
+    if (old_path == NULL || new_path == NULL ||
+        old_path[0] == '\0' || new_path[0] == '\0' ||
+        process_get_current_pid() < 0) {
+        return (int32_t)OS_STATUS_INVALID_ARG;
+    }
+
+    vfs_file_t src;
+    if (!vfs_find_file(old_path, &src)) {
+        return (int32_t)OS_STATUS_NOT_FOUND;
+    }
+    vfs_file_t probe;
+    if (vfs_find_file(new_path, &probe)) {
+        return (int32_t)OS_STATUS_INVALID_ARG; /* EEXIST */
+    }
+
+    uint32_t size = src.size;
+    if (size > SYSCALL_LINK_MAX_BYTES) {
+        return (int32_t)OS_STATUS_IO_ERROR; /* -EXDEV-ish: too big to fake */
+    }
+
+    uint8_t *buf = NULL;
+    if (size > 0u) {
+        buf = (uint8_t *)malloc(size);
+        if (buf == NULL) {
+            return (int32_t)OS_STATUS_LIMIT_REACHED;
+        }
+        if (!vfs_read_at(&src, 0u, buf, size)) {
+            free(buf);
+            return (int32_t)OS_STATUS_IO_ERROR;
+        }
+    }
+
+    if (!vfs_creat(new_path)) {
+        free(buf);
+        return (int32_t)OS_STATUS_IO_ERROR;
+    }
+    if (size > 0u) {
+        vfs_file_t dst;
+        if (!vfs_find_file(new_path, &dst) ||
+            !vfs_write_at(&dst, 0u, buf, size)) {
+            free(buf);
+            (void)vfs_unlink(new_path);
+            return (int32_t)OS_STATUS_IO_ERROR;
+        }
+    }
+    free(buf);
+    return 0;
+}
+
 void syscall_file_close_all_for_pid(int32_t pid, uint32_t *closed_fds_out, uint32_t *closed_dirs_out)
 {
     if (closed_fds_out != NULL) {
@@ -918,6 +996,9 @@ uint32_t syscall_file_poll(int32_t fd, uint32_t events)
     if (g_files[fd].used == 1) {
         kernel_open_file_t *file = fd_open_file(fd);
         if (file == NULL) return POLL_ERROR;
+        if (file->file.fs_driver != NULL && file->file.fs_driver->dev_poll != NULL) {
+            return vfs_dev_poll(&file->file, events);
+        }
         uint32_t ready = 0u;
         if ((events & POLL_IN) != 0u) ready |= POLL_IN;
         if ((events & POLL_OUT) != 0u && file->writable != 0u)
@@ -1016,7 +1097,12 @@ int32_t syscall_file_dup(int32_t oldfd)
 
     memcpy(&g_files[newfd], &g_files[oldfd], sizeof(g_files[newfd]));
     if (g_files[newfd].used == 5) g_timerfds[newfd] = g_timerfds[oldfd];
-    else if (g_files[newfd].used == 6) g_memfds[newfd] = g_memfds[oldfd];
+    else if (g_files[newfd].used == 6) {
+        g_memfds[newfd] = g_memfds[oldfd];
+        if (g_memfds[newfd].shm_handle >= 0) {
+            (void)shared_memory_addref(g_memfds[newfd].shm_handle);
+        }
+    }
     else if (g_files[newfd].used == 7) g_signalfds[newfd] = g_signalfds[oldfd];
     if (open_file != NULL) {
         open_file->refcount++;
@@ -1071,7 +1157,12 @@ int32_t syscall_file_dup2(int32_t oldfd, int32_t newfd)
 
     memcpy(&g_files[newfd], &g_files[oldfd], sizeof(g_files[newfd]));
     if (g_files[newfd].used == 5) g_timerfds[newfd] = g_timerfds[oldfd];
-    else if (g_files[newfd].used == 6) g_memfds[newfd] = g_memfds[oldfd];
+    else if (g_files[newfd].used == 6) {
+        g_memfds[newfd] = g_memfds[oldfd];
+        if (g_memfds[newfd].shm_handle >= 0) {
+            (void)shared_memory_addref(g_memfds[newfd].shm_handle);
+        }
+    }
     else if (g_files[newfd].used == 7) g_signalfds[newfd] = g_signalfds[oldfd];
     if (open_file != NULL) {
         open_file->refcount++;
@@ -1150,20 +1241,36 @@ int32_t syscall_file_truncate(int32_t fd, uint64_t length)
     if (g_files[fd].used == 6) {
         kernel_memfd_t *memfd = &g_memfds[fd];
         uint32_t new_size = (uint32_t)length;
-        if (new_size > memfd->capacity) {
-            uint8_t *resized = malloc(new_size);
-            if (resized == NULL) {
-                return (int32_t)OS_STATUS_LIMIT_REACHED;
+        if (memfd->shm_handle >= 0) {
+            /* Backed by a shared-memory object, which has no resize. Grow is
+             * rejected (the Wayland client must recreate the pool); shrink /
+             * same is a no-op. */
+            if (new_size > memfd->size) {
+                serial_write_string(
+                    "[memfd] ftruncate grow on shm-backed memfd unsupported\n");
+                return (int32_t)OS_STATUS_NOT_SUPPORTED;
             }
-            if (memfd->data != NULL) {
-                memcpy(resized, memfd->data, memfd->size);
-                free(memfd->data);
-            }
-            memfd->data = resized;
-            memfd->capacity = new_size;
+            return 0;
         }
+        if (new_size == 0u) {
+            memfd->size = 0u;
+            memfd->offset = 0u;
+            return 0;
+        }
+        /* First non-zero size: promote to a shared-memory backing so the
+         * mapping is cross-process coherent and the fd is SCM_RIGHTS-able. */
+        int32_t handle = shared_memory_create(new_size);
+        if (handle < 0) {
+            return (int32_t)OS_STATUS_LIMIT_REACHED;
+        }
+        if (memfd->data != NULL) {
+            free(memfd->data);
+            memfd->data = NULL;
+            memfd->capacity = 0u;
+        }
+        memfd->shm_handle = handle;
         memfd->size = new_size;
-        if (memfd->offset > memfd->size) memfd->offset = memfd->size;
+        memfd->offset = 0u;
         return 0;
     }
     if (g_files[fd].used != 1) {
@@ -1292,6 +1399,11 @@ int64_t syscall_timerfd_read(int32_t fd, uint8_t *buffer, uint64_t len)
 int64_t syscall_memfd_read(int32_t fd, uint8_t *buffer, uint64_t len)
 {
     kernel_memfd_t *memfd = &g_memfds[fd];
+    if (memfd->shm_handle >= 0) {
+        /* shm-backed memfds are meant to be mmap'd, not read()/write()'n.
+         * No consumer does this today (Wayland's wl_shm always mmaps). */
+        return (int64_t)OS_STATUS_NOT_SUPPORTED;
+    }
     if (memfd->offset >= memfd->size) {
         return 0;
     }
@@ -1305,6 +1417,9 @@ int64_t syscall_memfd_read(int32_t fd, uint8_t *buffer, uint64_t len)
 int64_t syscall_memfd_write(int32_t fd, const uint8_t *buffer, uint64_t len)
 {
     kernel_memfd_t *memfd = &g_memfds[fd];
+    if (memfd->shm_handle >= 0) {
+        return (int64_t)OS_STATUS_NOT_SUPPORTED;
+    }
     uint64_t end = (uint64_t)memfd->offset + len;
     if (end > (uint64_t)memfd->capacity) {
         uint32_t new_capacity = memfd->capacity == 0u ? 4096u : memfd->capacity;
@@ -1549,6 +1664,58 @@ int32_t syscall_file_create_memfd(const char *name)
             memset(&g_memfds[fd], 0, sizeof(g_memfds[fd]));
             g_memfds[fd].used = 1;
             g_memfds[fd].owner_pid = current_pid;
+            g_memfds[fd].shm_handle = -1;
+            result = fd;
+            break;
+        }
+    }
+    spinlock_unlock(&g_file_table_lock);
+    irq_restore(irq_flags);
+    return result;
+}
+
+/* Handle of the shared-memory object backing memfd `fd` (owned by the
+ * caller), or -1 if `fd` is not an shm-backed memfd. */
+int32_t syscall_memfd_shm_handle(int32_t fd)
+{
+    if (fd < 0 || fd >= FILE_MAX_FD) {
+        return -1;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_file_table_lock);
+    int32_t handle = -1;
+    if (g_files[fd].used == FILE_USED_MEMFD &&
+        g_files[fd].owner_pid == process_get_current_pid()) {
+        handle = g_memfds[fd].shm_handle;
+    }
+    spinlock_unlock(&g_file_table_lock);
+    irq_restore(irq_flags);
+    return handle;
+}
+
+/* Install a fresh memfd fd in the current process wrapping an existing
+ * shared-memory `handle`. The caller must have already ensured a
+ * shared_memory reference is available for this fd to adopt (the SCM_RIGHTS
+ * receiver path transfers the in-flight reference). Returns the new fd or a
+ * negative os_status_t. */
+int32_t syscall_memfd_install_shm(int32_t handle, uint32_t status_flags)
+{
+    int32_t current_pid = process_get_current_pid();
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_file_table_lock);
+    int32_t result = (int32_t)OS_STATUS_LIMIT_REACHED;
+    for (int32_t fd = 3; fd < FILE_MAX_FD; ++fd) {
+        if (g_files[fd].used == 0) {
+            g_files[fd].used = FILE_USED_MEMFD;
+            g_files[fd].owner_pid = current_pid;
+            g_files[fd].open_index = -1;
+            g_files[fd].status_flags = status_flags ? status_flags : FILE_O_RDWR;
+            g_files[fd].descriptor_flags = 0;
+            memset(&g_memfds[fd], 0, sizeof(g_memfds[fd]));
+            g_memfds[fd].used = 1;
+            g_memfds[fd].owner_pid = current_pid;
+            g_memfds[fd].shm_handle = handle;
+            g_memfds[fd].size = shared_memory_size(handle);
             result = fd;
             break;
         }
@@ -1592,4 +1759,43 @@ int32_t syscall_file_signalfd_set_mask(int32_t fd, uint64_t mask)
     }
     g_signalfds[fd].mask = mask;
     return 0;
+}
+
+/* ---- character-device fds (/dev/dri/card0, /dev/input/event*) ------------ */
+
+int32_t syscall_file_is_chardev(int32_t fd)
+{
+    if (fd < 0 || fd >= FILE_MAX_FD || g_files[fd].used != 1 ||
+        !fd_is_owned_by_current_process(fd)) {
+        return 0;
+    }
+    kernel_open_file_t *file = fd_open_file(fd);
+    return (file != NULL && vfs_file_is_chardev(&file->file)) ? 1 : 0;
+}
+
+int64_t syscall_file_ioctl(int32_t fd, uint64_t request, uint64_t arg)
+{
+    if (fd < 0 || fd >= FILE_MAX_FD || g_files[fd].used != 1 ||
+        !fd_is_owned_by_current_process(fd)) {
+        return (int64_t)OS_STATUS_INVALID_ARG;
+    }
+    kernel_open_file_t *file = fd_open_file(fd);
+    if (file == NULL) {
+        return (int64_t)OS_STATUS_INVALID_ARG;
+    }
+    return vfs_dev_ioctl(&file->file, request, arg);
+}
+
+int64_t syscall_file_dev_mmap(int32_t fd, uint64_t offset, uint64_t length,
+                              uint64_t prot, uint64_t flags)
+{
+    if (fd < 0 || fd >= FILE_MAX_FD || g_files[fd].used != 1 ||
+        !fd_is_owned_by_current_process(fd)) {
+        return (int64_t)OS_STATUS_INVALID_ARG;
+    }
+    kernel_open_file_t *file = fd_open_file(fd);
+    if (file == NULL) {
+        return (int64_t)OS_STATUS_INVALID_ARG;
+    }
+    return vfs_dev_mmap(&file->file, offset, length, prot, flags);
 }

@@ -2255,24 +2255,91 @@ void fat32_set_case_sensitive_lookup(bool enabled) { g_case_sensitive_lookup = e
 bool fat32_get_case_sensitive_lookup(void)          { return g_case_sensitive_lookup; }
 
 #ifdef IMPLUS_DRIVER_MODULE
-static const fat32_driver_t g_fat32_driver = {
-    .init                      = fat32_init,
-    .find_file                 = fat32_find_file,
-    .read_file                 = fat32_read_file,
-    .write_file                = fat32_write_file,
-    .read_at                   = fat32_read_at,
-    .write_at                  = fat32_write_at,
-    .get_file_size             = fat32_get_file_size,
-    .list_root_files           = fat32_list_root_files,
-    .creat                     = fat32_creat,
-    .mkdir                     = fat32_mkdir,
-    .opendir                   = fat32_opendir,
-    .readdir                   = fat32_readdir,
-    .closedir                  = fat32_closedir,
-    .unlink                    = fat32_unlink,
-    .truncate                  = fat32_truncate,
-    .set_case_sensitive_lookup = fat32_set_case_sensitive_lookup,
-    .get_case_sensitive_lookup = fat32_get_case_sensitive_lookup,
+
+/* ---- fs_module_ops_t shims: opaque void *handle == FAT32_FILE *, and
+ * FAT32_DIRENT -> vfs_dirent_t (directory bit from the FAT attribute
+ * byte). ---- */
+
+static bool fat32_ops_find_file(const char *path, void *handle,
+                                uint64_t *out_id, uint32_t *out_size)
+{
+    FAT32_FILE *file = (FAT32_FILE *)handle;
+    if (!fat32_find_file(path, file)) {
+        return false;
+    }
+    /* Per-open handle pointer, matching the identity the old bridge used. */
+    *out_id = (uint64_t)(uintptr_t)file;
+    *out_size = file->size;
+    return true;
+}
+
+static bool fat32_ops_read_file(void *handle, uint8_t *buffer)
+{
+    return fat32_read_file((FAT32_FILE *)handle, buffer);
+}
+
+static bool fat32_ops_write_file(void *handle, const uint8_t *buffer)
+{
+    return fat32_write_file((FAT32_FILE *)handle, buffer);
+}
+
+static bool fat32_ops_read_at(void *handle, uint32_t offset,
+                              uint8_t *buffer, uint32_t size)
+{
+    return fat32_read_at((FAT32_FILE *)handle, offset, buffer, size);
+}
+
+static bool fat32_ops_write_at(void *handle, uint32_t offset,
+                               const uint8_t *buffer, uint32_t size)
+{
+    return fat32_write_at((FAT32_FILE *)handle, offset, buffer, size);
+}
+
+static bool fat32_ops_truncate(void *handle, uint32_t new_size)
+{
+    return fat32_truncate((FAT32_FILE *)handle, new_size);
+}
+
+static uint32_t fat32_ops_get_file_size(void *handle)
+{
+    return fat32_get_file_size((FAT32_FILE *)handle);
+}
+
+static int32_t fat32_ops_readdir(int32_t handle, vfs_dirent_t *out_entry)
+{
+    FAT32_DIRENT dirent;
+    memset(&dirent, 0, sizeof(dirent));
+    int32_t result = fat32_readdir(handle, &dirent);
+    if (result <= 0) {
+        return result;
+    }
+    fs_dirent_set_name(out_entry, dirent.name);
+    out_entry->size = dirent.size;
+    out_entry->is_directory = (dirent.attributes & 0x10u) != 0u;
+    return result;
+}
+
+static const fs_module_ops_t g_fat32_driver = {
+    .fs_type            = "fat32",
+    .media_kind         = VFS_MEDIA_KIND_DISK,
+    .handle_size        = (uint32_t)sizeof(FAT32_FILE),
+    .init               = fat32_init,
+    .find_file          = fat32_ops_find_file,
+    .read_file          = fat32_ops_read_file,
+    .write_file         = fat32_ops_write_file,
+    .read_at            = fat32_ops_read_at,
+    .write_at           = fat32_ops_write_at,
+    .truncate           = fat32_ops_truncate,
+    .get_file_size      = fat32_ops_get_file_size,
+    .creat              = fat32_creat,
+    .mkdir              = fat32_mkdir,
+    .unlink             = fat32_unlink,
+    .opendir            = fat32_opendir,
+    .readdir            = fat32_ops_readdir,
+    .closedir          = fat32_closedir,
+    .list_root          = fat32_list_root_files,
+    .set_case_sensitive = fat32_set_case_sensitive_lookup,
+    .get_case_sensitive = fat32_get_case_sensitive_lookup,
 };
 
 static void fat32_driver_shutdown(void)

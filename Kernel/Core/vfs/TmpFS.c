@@ -5,9 +5,35 @@
 
 #include "Core/sync/Spinlock.h"
 
-#define TMPFS_MAX_FILES 64u
+#define TMPFS_MAX_FILES 256u
 #define TMPFS_PATH_MAX  256u
 #define TMPFS_PREFIX    "/dev/shm"
+
+/* TmpFS backs several mount points with one flat, path-keyed namespace:
+ *   /dev/shm  - POSIX shm (wl_shm, glibc)
+ *   /tmp      - X server needs this writable and unchangeable: the X11 unix
+ *               socket dir /tmp/.X11-unix and lock files /tmp/.X{n}-lock are
+ *               compile-time paths in libX11/Xserver. Also HOME / XDG_* point
+ *               here (fontconfig cache, xkb cache, ...).
+ *   /run      - misc runtime state some Linux libs insist on.
+ * Directories are implicit (mkdir is a no-op success); a path is a valid
+ * tmpfs path iff it starts with one of these prefixes followed by '/' or end. */
+static const char *const TMPFS_PREFIXES[] = { "/dev/shm", "/tmp", "/run" };
+
+static bool tmpfs_path_ok(const char *path)
+{
+    if (path == NULL) {
+        return false;
+    }
+    for (uint32_t i = 0; i < sizeof(TMPFS_PREFIXES) / sizeof(TMPFS_PREFIXES[0]); ++i) {
+        size_t plen = strlen(TMPFS_PREFIXES[i]);
+        if (strncmp(path, TMPFS_PREFIXES[i], plen) == 0 &&
+            (path[plen] == '\0' || path[plen] == '/')) {
+            return true;
+        }
+    }
+    return false;
+}
 
 typedef struct {
     uint8_t in_use;
@@ -33,7 +59,7 @@ static tmpfs_slot_t *tmpfs_find_locked(const char *path)
 
 static bool tmpfs_vfs_find_file(const char *path, vfs_file_t *out_file)
 {
-    if (path == NULL || strncmp(path, TMPFS_PREFIX, strlen(TMPFS_PREFIX)) != 0) {
+    if (!tmpfs_path_ok(path)) {
         return false;
     }
     spinlock_lock(&g_tmpfs_lock);
@@ -146,8 +172,7 @@ static uint32_t tmpfs_vfs_get_file_size(vfs_file_t *file)
 
 static bool tmpfs_vfs_creat(const char *path)
 {
-    if (path == NULL || strncmp(path, TMPFS_PREFIX, strlen(TMPFS_PREFIX)) != 0 ||
-        strlen(path) >= TMPFS_PATH_MAX) {
+    if (!tmpfs_path_ok(path) || strlen(path) >= TMPFS_PATH_MAX) {
         return false;
     }
     spinlock_lock(&g_tmpfs_lock);
@@ -170,18 +195,20 @@ static bool tmpfs_vfs_creat(const char *path)
 
 static bool tmpfs_vfs_mkdir(const char *path)
 {
-    (void)path;
-    return false; /* Flat namespace only. */
+    /* Flat namespace: directories are implicit. Report success for any path
+     * under a tmpfs mount so X's mkdir("/tmp/.X11-unix", 01777) etc. do not
+     * abort. A caller that then opendir()s it just gets an empty listing. */
+    return tmpfs_path_ok(path);
 }
 
 #define TMPFS_DIR_HANDLE_MAX 8u
 static uint8_t g_tmpfs_dir_in_use[TMPFS_DIR_HANDLE_MAX];
 static uint32_t g_tmpfs_dir_cursor[TMPFS_DIR_HANDLE_MAX];
+static char g_tmpfs_dir_path[TMPFS_DIR_HANDLE_MAX][TMPFS_PATH_MAX];
 
 static int32_t tmpfs_vfs_opendir(const char *path)
 {
-    if (path == NULL || (strcmp(path, TMPFS_PREFIX) != 0 &&
-                         strcmp(path, TMPFS_PREFIX "/") != 0)) {
+    if (!tmpfs_path_ok(path) || strlen(path) >= TMPFS_PATH_MAX) {
         return -1;
     }
     spinlock_lock(&g_tmpfs_lock);
@@ -189,6 +216,13 @@ static int32_t tmpfs_vfs_opendir(const char *path)
         if (!g_tmpfs_dir_in_use[i]) {
             g_tmpfs_dir_in_use[i] = 1;
             g_tmpfs_dir_cursor[i] = 0;
+            strncpy(g_tmpfs_dir_path[i], path, TMPFS_PATH_MAX - 1u);
+            g_tmpfs_dir_path[i][TMPFS_PATH_MAX - 1u] = '\0';
+            /* strip a single trailing '/' for uniform prefix matching */
+            size_t l = strlen(g_tmpfs_dir_path[i]);
+            if (l > 1u && g_tmpfs_dir_path[i][l - 1u] == '/') {
+                g_tmpfs_dir_path[i][l - 1u] = '\0';
+            }
             spinlock_unlock(&g_tmpfs_lock);
             return (int32_t)i;
         }
@@ -207,24 +241,33 @@ static int32_t tmpfs_vfs_readdir(int32_t handle, vfs_dirent_t *out_entry)
         spinlock_unlock(&g_tmpfs_lock);
         return -1;
     }
+    const char *dir = g_tmpfs_dir_path[handle];
+    size_t dirlen = strlen(dir);
     uint32_t cursor = g_tmpfs_dir_cursor[handle];
-    while (cursor < TMPFS_MAX_FILES && !g_tmpfs_slots[cursor].in_use) {
-        ++cursor;
-    }
-    if (cursor >= TMPFS_MAX_FILES) {
-        g_tmpfs_dir_cursor[handle] = cursor;
+    for (; cursor < TMPFS_MAX_FILES; ++cursor) {
+        if (!g_tmpfs_slots[cursor].in_use) {
+            continue;
+        }
+        const char *p = g_tmpfs_slots[cursor].path;
+        /* direct child of `dir` only: dir + '/' + name, name has no '/' */
+        if (strncmp(p, dir, dirlen) != 0 || p[dirlen] != '/') {
+            continue;
+        }
+        const char *base_name = p + dirlen + 1u;
+        if (base_name[0] == '\0' || strchr(base_name, '/') != NULL) {
+            continue;
+        }
+        strncpy(out_entry->name, base_name, sizeof(out_entry->name) - 1u);
+        out_entry->name[sizeof(out_entry->name) - 1u] = '\0';
+        out_entry->size = g_tmpfs_slots[cursor].size;
+        out_entry->is_directory = false;
+        g_tmpfs_dir_cursor[handle] = cursor + 1u;
         spinlock_unlock(&g_tmpfs_lock);
-        return 0;
+        return 1;
     }
-    tmpfs_slot_t *slot = &g_tmpfs_slots[cursor];
-    const char *base_name = slot->path + strlen(TMPFS_PREFIX) + 1u;
-    strncpy(out_entry->name, base_name, sizeof(out_entry->name) - 1u);
-    out_entry->name[sizeof(out_entry->name) - 1u] = '\0';
-    out_entry->size = slot->size;
-    out_entry->is_directory = false;
-    g_tmpfs_dir_cursor[handle] = cursor + 1u;
+    g_tmpfs_dir_cursor[handle] = cursor;
     spinlock_unlock(&g_tmpfs_lock);
-    return 1;
+    return 0;
 }
 
 static int32_t tmpfs_vfs_closedir(int32_t handle)
@@ -303,6 +346,7 @@ void tmpfs_init(void)
     memset(g_tmpfs_slots, 0, sizeof(g_tmpfs_slots));
     memset(g_tmpfs_dir_in_use, 0, sizeof(g_tmpfs_dir_in_use));
     memset(g_tmpfs_dir_cursor, 0, sizeof(g_tmpfs_dir_cursor));
+    memset(g_tmpfs_dir_path, 0, sizeof(g_tmpfs_dir_path));
 }
 
 const vfs_driver_t *tmpfs_vfs_get_driver(void)

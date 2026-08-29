@@ -33,6 +33,17 @@ bool vfs_read_file(vfs_file_t *file, uint8_t *buffer);
 bool vfs_write_file(vfs_file_t *file, const uint8_t *buffer);
 bool vfs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer, uint32_t size);
 bool vfs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size);
+
+/* Character-device hooks (see vfs_driver_t). vfs_file_is_chardev() is true iff
+ * the backing driver exposes any of them. The *_ioctl/_mmap wrappers return
+ * -ENOTTY (-25) when the driver has no such hook. */
+bool     vfs_file_is_chardev(const vfs_file_t *file);
+int64_t  vfs_dev_ioctl(vfs_file_t *file, uint64_t request, uint64_t arg);
+int64_t  vfs_dev_read(vfs_file_t *file, uint8_t *buffer, uint64_t length,
+                      uint32_t nonblock);
+uint32_t vfs_dev_poll(vfs_file_t *file, uint32_t events);
+int64_t  vfs_dev_mmap(vfs_file_t *file, uint64_t offset, uint64_t length,
+                      uint64_t prot, uint64_t flags);
 bool vfs_truncate(vfs_file_t *file, uint32_t new_size);
 uint32_t vfs_get_file_size(vfs_file_t *file);
 bool vfs_close_file(vfs_file_t *file);

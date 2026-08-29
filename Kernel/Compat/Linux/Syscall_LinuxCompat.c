@@ -13,6 +13,7 @@
 #include "Core/syscall/Syscall_Futex.h"
 #include "Core/syscall/Syscall_VM.h"
 #include "Core/syscall/Syscall_Main.h"
+#include "Core/memory/SharedMemory.h"
 #include "Core/timer/Timer.h"
 #include "Core/usercopy/Usercopy.h"
 #include "Core/vfs/VFS.h"
@@ -378,6 +379,11 @@ int64_t syscall_ioctl_ex(int32_t fd, uint64_t request, uint64_t arg)
     if (tty_rc != LINUX_ENOTSUP) {
         return tty_rc;
     }
+    /* Character devices (DRM/KMS, evdev) handle their own arg validation and
+     * some requests legitimately pass arg == 0 (DRM_IOCTL_SET_MASTER etc.). */
+    if (syscall_file_is_chardev(fd)) {
+        return syscall_file_ioctl(fd, request, arg);
+    }
     if (arg == 0u) return LINUX_EFAULT;
     if (request == LINUX_FIONBIO) {
         int32_t enabled = 0;
@@ -423,9 +429,24 @@ int64_t syscall_fcntl_ex(int32_t fd, int32_t cmd, uint64_t arg)
             return duplicated;
         }
         case LINUX_F_GETFD:
-            return syscall_file_get_descriptor_flags(fd);
+            /* Socket fds live outside the generic file table. libpulse's
+             * pa_make_fd_cloexec() asserts F_GETFD >= 0 on its connection
+             * socket and aborts otherwise, so never return an error here. */
+            if (syscall_socket_fd_in_range(fd)) {
+                return 0;
+            }
+            {
+                int32_t r = syscall_file_get_descriptor_flags(fd);
+                return r < 0 ? 0 : r;
+            }
         case LINUX_F_SETFD:
-            return syscall_file_set_descriptor_flags(fd, (uint32_t)arg);
+            if (syscall_socket_fd_in_range(fd)) {
+                return 0; /* accept; CLOEXEC on sockets is a no-op here */
+            }
+            {
+                int32_t r = syscall_file_set_descriptor_flags(fd, (uint32_t)arg);
+                return r < 0 ? 0 : r;
+            }
         case LINUX_F_GETFL:
             /* Socket fds are outside the generic file table; O_NONBLOCK for
              * them is tracked in the socket layer. Report O_RDWR|<nonblock>. */
@@ -519,13 +540,24 @@ int64_t syscall_access(const char *path, int32_t mode)
 {
     if (path == NULL || (mode & ~7) != 0) return LINUX_EINVAL;
     vfs_file_t file;
-    if (!vfs_find_file(path, &file)) return -2;
-    if ((mode & 1) != 0) return -13;
-    if ((mode & 2) != 0 &&
-        (file.fs_driver == NULL || file.fs_driver->write_at == NULL)) {
-        return -13;
+    if (vfs_find_file(path, &file)) {
+        /* Existing regular file. There is no execute-permission model here,
+         * so X_OK on anything that exists succeeds (xkbcommon / ld.so probe
+         * their data directories with access(dir, R_OK|X_OK) and treat
+         * EACCES as "missing", which previously crashed libxkbcommon). */
+        if ((mode & 2) != 0 &&
+            (file.fs_driver == NULL || file.fs_driver->write_at == NULL)) {
+            return -13; /* W_OK on a read-only filesystem */
+        }
+        return 0;
     }
-    return 0;
+    int32_t dir_handle = vfs_opendir(path);
+    if (dir_handle >= 0) {
+        (void)vfs_closedir(dir_handle);
+        if ((mode & 2) != 0) return -13; /* directories are read-only here */
+        return 0;                        /* F_OK / R_OK / X_OK on a dir */
+    }
+    return -2; /* ENOENT */
 }
 
 int64_t write(int fd, const void *buf, uint64_t count)
@@ -641,8 +673,10 @@ int64_t write(int fd, const void *buf, uint64_t count)
 #define LINUX_SYS_MKDIR         83u
 #define LINUX_SYS_RMDIR         84u
 #define LINUX_SYS_CREAT         85u
+#define LINUX_SYS_LINK          86u
 #define LINUX_SYS_UNLINK        87u
 #define LINUX_SYS_READLINK      89u
+#define LINUX_SYS_LINKAT       265u
 #define LINUX_SYS_GETTIMEOFDAY  96u
 #define LINUX_SYS_GETRLIMIT     97u
 #define LINUX_SYS_SYSINFO       99u
@@ -726,6 +760,8 @@ int64_t write(int fd, const void *buf, uint64_t count)
 #define LINUX_SYS_CLOCK_NANOSLEEP 230u
 #define LINUX_SYS_EPOLL_PWAIT  281u
 #define LINUX_SYS_EPOLL_PWAIT2 441u
+#define LINUX_SYS_POLL          7u
+#define LINUX_SYS_PPOLL        271u
 #define LINUX_SYS_FACCESSAT    269u
 #define LINUX_SYS_FACCESSAT2   439u
 #define LINUX_SYS_PIPE2        293u
@@ -839,9 +875,20 @@ int64_t write(int fd, const void *buf, uint64_t count)
 #define LINUX_SOCK_DGRAM    2u
 #define LINUX_SOL_SOCKET    1u
 #define LINUX_SO_REUSEADDR  2u
+#define LINUX_SO_TYPE       3u
+#define LINUX_SO_ERROR      4u
+#define LINUX_SO_BROADCAST  6u
+#define LINUX_SO_SNDBUF     7u
+#define LINUX_SO_RCVBUF     8u
 #define LINUX_SO_KEEPALIVE  9u
-#define LINUX_SO_SNDTIMEO   21u
+#define LINUX_SO_LINGER     13u
+#define LINUX_SO_REUSEPORT  15u
+#define LINUX_SO_PASSCRED   16u
+#define LINUX_SO_PEERCRED   17u
 #define LINUX_SO_RCVTIMEO   20u
+#define LINUX_SO_SNDTIMEO   21u
+#define LINUX_SO_PROTOCOL   38u
+#define LINUX_SO_PASSSEC    34u
 #define LINUX_SHUT_RD       0
 #define LINUX_SHUT_WR       1
 #define LINUX_SHUT_RDWR     2
@@ -1065,7 +1112,18 @@ static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
     }
     if ((flags & LINUX_MAP_ANONYMOUS) != 0u) {
         if ((flags & LINUX_MAP_FIXED) != 0u) {
-            if (addr == 0u || addr < 0x1000u || length > 0x4000000000ULL - addr) {
+            if (addr == 0u || addr < 0x1000u ||
+                (addr & (PAGE_SIZE - 1u)) != 0u) {
+                return LINUX_EINVAL;
+            }
+            /* MAP_FIXED into the lazily-committed mmap arena (typically a
+             * PartitionAlloc pool sub-range): accept the address, commit
+             * nothing -- demand-zero on first touch. Elsewhere (glibc placing
+             * something into the heap) keep the eager mapping. */
+            if (process_user_addr_in_mmap_arena(addr, length)) {
+                return (int64_t)addr;
+            }
+            if (length > 0x4000000000ULL - addr) {
                 return LINUX_EINVAL;
             }
             uint64_t cr3 = process_get_current_cr3();
@@ -1076,11 +1134,40 @@ static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
             }
             return (int64_t)addr;
         }
-        void *mapped = process_user_mmap(length, flags);
+        /* Anonymous, kernel picks the address: hand out a lazily-committed
+         * reservation from the mmap arena (no 4 GiB cap, no physical backing
+         * until touched). */
+        void *mapped = process_user_reserve(length);
         if (mapped == NULL) {
             return LINUX_ENOMEM;
         }
         return (int64_t)(uintptr_t)mapped;
+    }
+
+    /* memfd promoted to a shared-memory backing (Wayland wl_shm pool): map the
+     * real shared pages so the client's drawing is visible to whoever else
+     * maps the same object (the compositor, after SCM_RIGHTS). The generic
+     * file path below only makes a one-time snapshot copy, which is useless
+     * for shared memory. offset is expected to be 0 for a pool mmap. */
+    {
+        int32_t shm_handle = syscall_memfd_shm_handle((int32_t)fd);
+        if (shm_handle >= 0) {
+            if (offset != 0u) {
+                return LINUX_EINVAL;
+            }
+            void *p = shared_memory_map(shm_handle);
+            if (p == NULL) {
+                return LINUX_ENOMEM;
+            }
+            return (int64_t)(uintptr_t)p;
+        }
+    }
+
+    /* Character device (DRM/KMS): map the dumb buffer whose fake mmap offset
+     * a prior DRM_IOCTL_MODE_MAP_DUMB handed back. See TODO_Doom_Xorg_MethodA.md
+     * M2/M4. */
+    if (syscall_file_is_chardev((int32_t)fd)) {
+        return syscall_file_dev_mmap((int32_t)fd, offset, length, prot, flags);
     }
 
     vfs_file_t vf;
@@ -1193,6 +1280,118 @@ static int64_t linux_epoll_wait(uint64_t epfd, uint64_t events,
                                           (int32_t)maxevents,
                                           (int32_t)timeout_ms,
                                           should_switch_out);
+}
+
+/* poll(2) / ppoll(2).
+ *
+ * glibc's GMainContext (and much other Linux code) drives its event loop
+ * with ppoll(); returning -ENOSYS made GLib fall back to a busy loop that
+ * printed "poll(2) failed: Function not implemented" on every iteration and
+ * pinned the CPU. This does one non-blocking readiness pass over the pollfd
+ * set (reusing the same per-fd probe epoll uses). If nothing is ready and a
+ * non-zero timeout was requested it parks the caller for a short slice and
+ * returns 0 - the same "blocking degrades to a timed poll" compromise
+ * syscall_epoll_wait_ex() uses, since this path can't block internally. */
+#define LINUX_POLLIN   0x0001
+#define LINUX_POLLPRI  0x0002
+#define LINUX_POLLOUT  0x0004
+#define LINUX_POLLERR  0x0008
+#define LINUX_POLLHUP  0x0010
+#define LINUX_POLLNVAL 0x0020
+#define LINUX_POLL_MAX_FDS  256u
+#define LINUX_POLL_SLICE_MS 8u
+
+typedef struct {
+    int32_t fd;
+    int16_t events;
+    int16_t revents;
+} linux_pollfd_t;
+
+static int64_t linux_poll_common(uint64_t fds_ptr, uint64_t nfds,
+                                 int64_t timeout_ms, int *should_switch_out)
+{
+    if (nfds > LINUX_POLL_MAX_FDS) {
+        return LINUX_EINVAL;
+    }
+
+    uint32_t slice_ms = LINUX_POLL_SLICE_MS;
+    if (timeout_ms > 0 && (uint64_t)timeout_ms < slice_ms) {
+        slice_ms = (uint32_t)timeout_ms;
+    }
+
+    if (nfds == 0u) {
+        if (timeout_ms != 0 &&
+            process_sleep_current_ms(slice_ms) == 0 &&
+            should_switch_out != NULL) {
+            *should_switch_out = 1;
+        }
+        return 0;
+    }
+
+    uint64_t bytes = nfds * sizeof(linux_pollfd_t);
+    if (fds_ptr == 0u ||
+        !process_user_buffer_is_valid((void *)(uintptr_t)fds_ptr, bytes)) {
+        return LINUX_EFAULT;
+    }
+
+    linux_pollfd_t pfds[LINUX_POLL_MAX_FDS];
+    if (copy_from_user(pfds, (const void *)(uintptr_t)fds_ptr, bytes) != 0u) {
+        return LINUX_EFAULT;
+    }
+
+    int64_t ready_count = 0;
+    for (uint64_t i = 0; i < nfds; ++i) {
+        pfds[i].revents = 0;
+        if (pfds[i].fd < 0) {
+            continue;
+        }
+        uint32_t want = 0u;
+        if ((pfds[i].events & LINUX_POLLIN) != 0)  want |= 0x1u;
+        if ((pfds[i].events & LINUX_POLLOUT) != 0) want |= 0x4u;
+        uint32_t r = syscall_poll_one_fd(pfds[i].fd,
+                                         want != 0u ? want : (0x1u | 0x4u));
+        uint16_t rev = 0;
+        if ((r & 0x1u) != 0u)  rev |= LINUX_POLLIN;
+        if ((r & 0x4u) != 0u)  rev |= LINUX_POLLOUT;
+        if ((r & 0x8u) != 0u)  rev |= LINUX_POLLERR;
+        if ((r & 0x10u) != 0u) rev |= LINUX_POLLHUP;
+        if ((r & 0x20u) != 0u) rev |= LINUX_POLLNVAL;
+        rev &= (uint16_t)(pfds[i].events |
+                          LINUX_POLLERR | LINUX_POLLHUP | LINUX_POLLNVAL);
+        if (rev != 0) {
+            pfds[i].revents = (int16_t)rev;
+            ++ready_count;
+        }
+    }
+
+    /* Write revents back regardless (Linux updates the array on timeout too). */
+    if (copy_to_user((void *)(uintptr_t)fds_ptr, pfds, bytes) != 0u) {
+        return LINUX_EFAULT;
+    }
+    if (ready_count > 0 || timeout_ms == 0) {
+        return ready_count;
+    }
+    if (process_sleep_current_ms(slice_ms) == 0 && should_switch_out != NULL) {
+        *should_switch_out = 1;
+    }
+    return 0;
+}
+
+static int64_t linux_ppoll(uint64_t fds_ptr, uint64_t nfds, uint64_t tmo_ptr,
+                           int *should_switch_out)
+{
+    int64_t timeout_ms = -1; /* NULL timespec -> block (degrades to a slice) */
+    if (tmo_ptr != 0u) {
+        struct { int64_t sec; int64_t nsec; } ts;
+        if (copy_from_user(&ts, (const void *)(uintptr_t)tmo_ptr,
+                           sizeof(ts)) != 0u) {
+            return LINUX_EFAULT;
+        }
+        timeout_ms = (ts.sec >= 0 && ts.nsec >= 0)
+                         ? (ts.sec * 1000 + (ts.nsec + 999999) / 1000000)
+                         : 0;
+    }
+    return linux_poll_common(fds_ptr, nfds, timeout_ms, should_switch_out);
 }
 
 static int64_t linux_wait4(uint64_t pid, uint64_t status_ptr,
@@ -1351,13 +1550,21 @@ static int64_t linux_clone(uint64_t saved_rsp, uint64_t flags, uint64_t stack,
         return LINUX_EFAULT;
     }
     int has_tls = (flags & LINUX_CLONE_SETTLS) != 0u;
+    /* Pass `stack` as the child's user RSP through the create call so it is
+     * installed before the thread is schedulable. Setting it afterwards
+     * (process_set_thread_user_rsp) raced the SMP scheduler: the child could
+     * start on the raw kernel-picked stack, read a 0 fn pointer and #PF at
+     * RIP=0. glibc's __clone already prepared this stack. */
     int32_t tid = process_create_thread_ex(return_rip, flags, stack,
                                            parent_tid, child_tid,
-                                           has_tls, tls);
+                                           has_tls, tls, stack);
     if (tid < 0) {
-        return -1;
+        /* EAGAIN is the errno glibc/Chromium expect for "couldn't spawn a
+         * thread" (resource exhaustion); -1/EPERM sent them down a fatal
+         * path. */
+        serial_write_string("[lx] clone/thread create failed\n");
+        return LINUX_EAGAIN;
     }
-    process_set_thread_user_rsp(tid, stack);
     if ((flags & LINUX_CLONE_PARENT_SETTID) != 0u && parent_tid != 0u) {
         int32_t tid32 = tid;
         if (copy_to_user_trusted((void *)(uintptr_t)parent_tid,
@@ -1463,6 +1670,31 @@ static int64_t linux_open_path(uint64_t path_ptr, uint64_t flags)
             result = (int64_t)syscall_file_creat(path);
         }
     }
+#ifdef LINUX_SYSCALL_TRACE
+    serial_write_string("[lx] open '");
+    serial_write_string(path);
+    serial_write_string("' -> ");
+    serial_write_uint64((uint64_t)result);
+    if (result >= 0) {
+        /* peek the first 8 bytes so we can tell which file actually got
+         * opened / whether the content is an ELF at all */
+        uint8_t hdr[8] = {0};
+        int64_t saved = syscall_file_seek((int32_t)result, 0, LINUX_SEEK_CUR);
+        (void)syscall_file_seek((int32_t)result, 0, LINUX_SEEK_SET);
+        int64_t n = syscall_file_read((int32_t)result, hdr, sizeof(hdr));
+        if (saved >= 0) {
+            (void)syscall_file_seek((int32_t)result, saved, LINUX_SEEK_SET);
+        }
+        serial_write_string(" hdr[");
+        serial_write_uint64((uint64_t)n);
+        serial_write_string("]=");
+        for (int i = 0; i < 8; ++i) {
+            serial_write_uint64((uint64_t)hdr[i]);
+            serial_write_char(' ');
+        }
+    }
+    serial_write_char('\n');
+#endif
     return result;
 }
 
@@ -1496,10 +1728,15 @@ typedef struct {
     int64_t __unused[3];
 } linux_stat64_t;
 
-static void linux_stat_fill_common(linux_stat64_t *st, uint64_t size)
+/* Distinct per-file st_ino: glibc's ld.so dedups already-loaded shared objects
+ * by (st_dev, st_ino), so a constant inode makes every .so alias the first one
+ * loaded. Callers pass a stable file identity (vfs_file_t.internal_id -- the
+ * ISO9660 extent LBA etc.); 0 means "unknown", keep the legacy 1. */
+static void linux_stat_fill_common_ino(linux_stat64_t *st, uint64_t size,
+                                       uint64_t ino)
 {
     st->st_dev = 0x8200u;
-    st->st_ino = 1;
+    st->st_ino = ino != 0u ? ino : 1u;
     st->st_nlink = 1;
     st->st_uid = 0;
     st->st_gid = 0;
@@ -1509,6 +1746,11 @@ static void linux_stat_fill_common(linux_stat64_t *st, uint64_t size)
     st->st_atime = linux_realtime_seconds();
     st->st_mtime = st->st_atime;
     st->st_ctime = st->st_atime;
+}
+
+static void linux_stat_fill_common(linux_stat64_t *st, uint64_t size)
+{
+    linux_stat_fill_common_ino(st, size, 0u);
 }
 
 static int64_t linux_stat_path(const char *path, uint64_t statbuf_ptr)
@@ -1522,7 +1764,7 @@ static int64_t linux_stat_path(const char *path, uint64_t statbuf_ptr)
     memset(&st, 0, sizeof(st));
     vfs_file_t vf;
     if (vfs_find_file(path, &vf)) {
-        linux_stat_fill_common(&st, vf.size);
+        linux_stat_fill_common_ino(&st, vf.size, vf.internal_id);
         if (devfs_path_is_device(path)) {
             st.st_mode = LINUX_S_IFCHR | 0x1B6u; /* crw-rw-rw- */
             st.st_size = 0;
@@ -1558,7 +1800,7 @@ static int64_t linux_stat_fd(int32_t fd, uint64_t statbuf_ptr)
     vfs_file_t vf;
     uint32_t writable = 0;
     if (syscall_file_get_file_info(fd, &vf, &writable) == 0) {
-        linux_stat_fill_common(&st, vf.size);
+        linux_stat_fill_common_ino(&st, vf.size, vf.internal_id);
         st.st_mode = LINUX_S_IFREG | (writable != 0u ? 0x1A4u : 0x124u);
     } else {
         syscall_socket_info_t info;
@@ -2119,7 +2361,31 @@ static int64_t linux_socket_setsockopt(uint64_t fd, uint64_t level,
                                        uint64_t option, uint64_t value_ptr,
                                        uint64_t value_len)
 {
-    if (value_len != sizeof(int32_t) || value_ptr == 0u) {
+    if (value_ptr == 0u || value_len == 0u) {
+        return LINUX_EINVAL;
+    }
+    /* Options we do not model but that real Linux programs set and treat a
+     * failure as fatal (crashpad wants SO_PASSCRED; libc / curl / node set
+     * SO_SNDBUF/SO_RCVBUF/SO_REUSEPORT/timeouts). Accept as a no-op -- Linux
+     * itself silently clamps most of these anyway. */
+    if (level != LINUX_SOL_SOCKET) {
+        return 0;
+    }
+    switch (option) {
+        case LINUX_SO_PASSCRED:
+        case LINUX_SO_PASSSEC:
+        case LINUX_SO_SNDBUF:
+        case LINUX_SO_RCVBUF:
+        case LINUX_SO_BROADCAST:
+        case LINUX_SO_REUSEPORT:
+        case LINUX_SO_LINGER:
+        case LINUX_SO_SNDTIMEO:
+        case LINUX_SO_RCVTIMEO:
+            return 0;
+        default:
+            break;
+    }
+    if (value_len < sizeof(int32_t)) {
         return LINUX_EINVAL;
     }
     int32_t value = 0;
@@ -2127,14 +2393,11 @@ static int64_t linux_socket_setsockopt(uint64_t fd, uint64_t level,
                        sizeof(value)) != 0u) {
         return LINUX_EFAULT;
     }
-    if (level != LINUX_SOL_SOCKET) {
-        return LINUX_ENOPROTOOPT;
-    }
     int32_t mapped_option = 0;
     switch (option) {
         case LINUX_SO_REUSEADDR: mapped_option = 1; break;
         case LINUX_SO_KEEPALIVE: mapped_option = 2; break;
-        default: return LINUX_ENOPROTOOPT;
+        default: return 0; /* accept-and-ignore rather than ENOPROTOOPT */
     }
     return (int64_t)syscall_socket_set_option((int32_t)fd, (int32_t)level,
                                               mapped_option, value);
@@ -2158,6 +2421,46 @@ static int64_t linux_socket_getsockopt(uint64_t fd, uint64_t level,
     if (level != LINUX_SOL_SOCKET) {
         return LINUX_ENOPROTOOPT;
     }
+
+    /* SO_PEERCRED: struct ucred { int32 pid; uint32 uid; uint32 gid; }. We do
+     * not track the peer, so report "pid 0, root:root" -- enough for callers
+     * (crashpad, D-Bus-style libs) that only check the call succeeds. */
+    if (option == LINUX_SO_PEERCRED) {
+        int32_t ucred[3] = { 0, 0, 0 };
+        int32_t want = value_len < (int32_t)sizeof(ucred) ? value_len
+                                                          : (int32_t)sizeof(ucred);
+        if (copy_to_user((void *)(uintptr_t)value_ptr, ucred, (uint64_t)want) != 0u) {
+            return LINUX_EFAULT;
+        }
+        if (copy_to_user((void *)(uintptr_t)value_len_ptr, &want, sizeof(want)) != 0u) {
+            return LINUX_EFAULT;
+        }
+        return 0;
+    }
+
+    /* Scalar options we synthesise a plausible answer for rather than failing. */
+    {
+        int32_t synth = 0;
+        int have_synth = 1;
+        switch (option) {
+            case LINUX_SO_TYPE:     synth = 1;      break; /* SOCK_STREAM */
+            case LINUX_SO_PROTOCOL: synth = 0;      break;
+            case LINUX_SO_ERROR:    synth = 0;      break;
+            case LINUX_SO_SNDBUF:   synth = 212992; break;
+            case LINUX_SO_RCVBUF:   synth = 212992; break;
+            case LINUX_SO_PASSCRED: synth = 0;      break;
+            default:                have_synth = 0; break;
+        }
+        if (have_synth) {
+            int32_t len = (int32_t)sizeof(synth);
+            if (copy_to_user((void *)(uintptr_t)value_ptr, &synth, sizeof(synth)) != 0u ||
+                copy_to_user((void *)(uintptr_t)value_len_ptr, &len, sizeof(len)) != 0u) {
+                return LINUX_EFAULT;
+            }
+            return 0;
+        }
+    }
+
     int32_t mapped_option = 0;
     switch (option) {
         case LINUX_SO_REUSEADDR: mapped_option = 1; break;
@@ -2287,7 +2590,7 @@ static int64_t linux_statx(uint64_t dirfd, uint64_t path_ptr, uint64_t flags,
             vfs_file_t vf;
             uint32_t writable = 0;
             if (syscall_file_get_file_info((int32_t)dirfd, &vf, &writable) == 0) {
-                linux_stat_fill_common(&st, vf.size);
+                linux_stat_fill_common_ino(&st, vf.size, vf.internal_id);
                 st.st_mode = LINUX_S_IFREG | (writable != 0u ? 0x1A4u : 0x124u);
             } else {
                 syscall_socket_info_t info;
@@ -2314,7 +2617,7 @@ static int64_t linux_statx(uint64_t dirfd, uint64_t path_ptr, uint64_t flags,
 
         vfs_file_t vf;
         if (vfs_find_file(path, &vf)) {
-            linux_stat_fill_common(&st, vf.size);
+            linux_stat_fill_common_ino(&st, vf.size, vf.internal_id);
             if (devfs_path_is_device(path)) {
                 st.st_mode = LINUX_S_IFCHR | 0x1B6u;
                 st.st_size = 0;
@@ -3200,12 +3503,27 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             break;
 
         case LINUX_SYS_NEWFSTATAT: {
-            if ((int64_t)arg1 != LINUX_AT_FDCWD) {
+            /* fstatat(dirfd, pathname, statbuf, flags).
+             *
+             * glibc's dynamic linker fstat()s every shared object it opens as
+             * fstatat(fd, "", statbuf, AT_EMPTY_PATH) -- rejecting that with
+             * ENOTSUP breaks loading ANY .so (Chromium: "cannot open shared
+             * object file: libdl.so.2: Error 95"). Also: a real openat/at
+             * pathname that is absolute must be resolved regardless of dirfd. */
+            char path[256];
+            char first = '\0';
+            if (arg2 != 0u) {
+                (void)copy_from_user(&first, (const void *)(uintptr_t)arg2, 1u);
+            }
+            if ((arg4 & LINUX_AT_EMPTY_PATH) != 0u && first == '\0') {
+                result = linux_stat_fd((int32_t)arg1, arg3);
+                break;
+            }
+            if (first != '/' && (int64_t)arg1 != LINUX_AT_FDCWD) {
+                /* relative path against a non-CWD dirfd: not supported yet */
                 result = LINUX_ENOTSUP;
                 break;
             }
-            (void)arg4;
-            char path[256];
             int64_t rc = linux_copy_cstring(path, sizeof(path),
                                             (const char *)(uintptr_t)arg2);
             if (rc < 0) {
@@ -3432,6 +3750,12 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
         case LINUX_SYS_KILL:
             result = (int64_t)process_signal_deliver_group((int32_t)arg1,
                                                            (int32_t)arg2);
+            if (result == 0 &&
+                ((int32_t)arg1 == process_get_current_pid() ||
+                 (int32_t)arg1 == 0 || (int32_t)arg1 == -1) &&
+                process_signal_maybe_self_terminate((int32_t)arg2)) {
+                request_switch = 1;
+            }
             break;
 
         case LINUX_SYS_UNAME:
@@ -3495,6 +3819,29 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
             result = (int64_t)syscall_file_mkdir(path);
+            break;
+        }
+
+        /* link(2) / linkat(2): emulated as a content copy in the pseudo
+         * filesystems (no real hard links). linkat's dir fds are treated as
+         * AT_FDCWD and flags ignored. The X server's LockServer() needs this
+         * to place /tmp/.Xn-lock. See syscall_file_link(). */
+        case LINUX_SYS_LINK:
+        case LINUX_SYS_LINKAT: {
+            uint64_t old_ptr = (num == LINUX_SYS_LINK) ? arg1 : arg2;
+            uint64_t new_ptr = (num == LINUX_SYS_LINK) ? arg2 : arg4;
+            char old_path[256];
+            char new_path[256];
+            int64_t rc = linux_copy_cstring(old_path, sizeof(old_path),
+                                            (const char *)(uintptr_t)old_ptr);
+            if (rc < 0) { result = rc; break; }
+            rc = linux_copy_cstring(new_path, sizeof(new_path),
+                                    (const char *)(uintptr_t)new_ptr);
+            if (rc < 0) { result = rc; break; }
+            rc = linux_resolve_path(old_path, sizeof(old_path));
+            if (rc >= 0) rc = linux_resolve_path(new_path, sizeof(new_path));
+            if (rc < 0) { result = rc; break; }
+            result = (int64_t)syscall_file_link(old_path, new_path);
             break;
         }
 
@@ -3620,6 +3967,10 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
         case LINUX_SYS_TKILL:
             result = (int64_t)process_signal_deliver((int32_t)arg1,
                                                      (int32_t)arg2);
+            if (result == 0 && (int32_t)arg1 == process_get_current_pid() &&
+                process_signal_maybe_self_terminate((int32_t)arg2)) {
+                request_switch = 1;
+            }
             break;
 
         case LINUX_SYS_TIME:
@@ -3693,11 +4044,21 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
                 break;
             }
             result = (int64_t)process_signal_deliver(tid, signum);
+            if (result == 0 && tid == process_get_current_pid() &&
+                process_signal_maybe_self_terminate(signum)) {
+                request_switch = 1;
+            }
             break;
         }
 
         case LINUX_SYS_OPENAT: {
-            if ((int64_t)arg1 != -100) {
+            /* dirfd is ignored for an absolute pathname (POSIX); only a
+             * relative path needs dirfd == AT_FDCWD here. */
+            char oa_first = '\0';
+            if (arg2 != 0u) {
+                (void)copy_from_user(&oa_first, (const void *)(uintptr_t)arg2, 1u);
+            }
+            if (oa_first != '/' && (int64_t)arg1 != LINUX_AT_FDCWD) {
                 result = LINUX_ENOTSUP;
                 break;
             }
@@ -3900,8 +4261,19 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             break;
 
         case LINUX_SYS_SHUTDOWN:
-            result = (int64_t)syscall_socket_shutdown((int32_t)arg1,
-                                                      (int32_t)arg2);
+            if (unix_socket_fd_in_range((int32_t)arg1)) {
+                /* AF_UNIX socketpair half-close. We don't model half-open
+                 * AF_UNIX channels, but Chromium's sandbox host CHECKs that
+                 * shutdown(SHUT_RD) on its broker socket returns 0
+                 * (sandbox_host_linux.cc:41). Accept any valid `how`. */
+                result = ((int32_t)arg2 >= LINUX_SHUT_RD &&
+                          (int32_t)arg2 <= LINUX_SHUT_RDWR)
+                             ? 0
+                             : LINUX_EINVAL;
+            } else {
+                result = (int64_t)syscall_socket_shutdown((int32_t)arg1,
+                                                          (int32_t)arg2);
+            }
             break;
 
         case LINUX_SYS_SETSOCKOPT:
@@ -3978,6 +4350,25 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             }
             result = linux_epoll_wait(arg1, arg2, arg3, timeout_ms,
                                       &should_switch);
+            if (should_switch) {
+                request_switch = 1;
+            }
+            break;
+        }
+
+        case LINUX_SYS_POLL: {
+            int should_switch = 0;
+            result = linux_poll_common(arg1, arg2, (int64_t)(int32_t)arg3,
+                                       &should_switch);
+            if (should_switch) {
+                request_switch = 1;
+            }
+            break;
+        }
+
+        case LINUX_SYS_PPOLL: {
+            int should_switch = 0;
+            result = linux_ppoll(arg1, arg2, arg3, &should_switch);
             if (should_switch) {
                 request_switch = 1;
             }

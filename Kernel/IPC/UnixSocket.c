@@ -1,9 +1,16 @@
 #include "UnixSocket.h"
 #include "Core/sync/Spinlock.h"
+#include "Core/process/ProcessManager.h"
+#include "Core/memory/SharedMemory.h"
+#include "Core/syscall/Syscall_File.h"
+#include "Debug/serial/Serial.h"
 #include <stddef.h>
 #include <string.h>
 
 #define UNIX_SOCK_FD_MAX 16
+#define UNIX_CMSG_MAX_BYTES 4096u
+#define UNIX_IOV_MAX 16u
+#define FILE_O_RDWR_FLAG 0x0002u
 
 struct _kernel_cmsghdr {
     uint32_t cmsg_len;
@@ -16,10 +23,14 @@ typedef struct {
     uint8_t used;
     uint8_t listening;
     uint8_t connected;
+    int32_t owner_pid;
     int32_t peer_fd;
     char path[UNIX_SOCK_PATH_MAX];
-    uint8_t buf[UNIX_SOCK_BUF_SIZE];
+    uint8_t  buf[UNIX_SOCK_BUF_SIZE];
     uint32_t buf_head, buf_tail;
+    /* Pending SCM_RIGHTS transfers: each entry is a shared-memory handle
+     * already granted to this endpoint's owner and holding one reference.
+     * recvmsg() adopts it into a fresh memfd fd; close() releases any left. */
     int32_t fd_queue[UNIX_SOCK_FD_MAX];
     uint32_t fds_head, fds_tail;
     spinlock_t lock;
@@ -40,6 +51,14 @@ static unix_sock_t *usock_get(int32_t fd) {
     return g_usocks[idx].used ? &g_usocks[idx] : NULL;
 }
 
+static void usock_drain_fd_queue(unix_sock_t *s) {
+    while (s->fds_tail != s->fds_head) {
+        int32_t h = s->fd_queue[s->fds_tail];
+        s->fds_tail = (s->fds_tail + 1) % UNIX_SOCK_FD_MAX;
+        if (h >= 0) (void)shared_memory_release(h);
+    }
+}
+
 int64_t unix_socket_create(int32_t type) {
     (void)type;
     if (!g_usock_init_done) unix_socket_init();
@@ -49,6 +68,7 @@ int64_t unix_socket_create(int32_t type) {
             spinlock_init(&g_usocks[i].lock);
             g_usocks[i].used = 1;
             g_usocks[i].peer_fd = -1;
+            g_usocks[i].owner_pid = process_get_current_pid();
             return UNIX_SOCK_FD_BASE + i;
         }
     }
@@ -81,7 +101,31 @@ int64_t unix_socket_accept(int32_t fd) {
             int64_t new_fd = unix_socket_create(0);
             if (new_fd < 0) return new_fd;
             unix_sock_t *ns = usock_get((int32_t)new_fd);
-            if (ns) { ns->connected = 1; ns->peer_fd = UNIX_SOCK_FD_BASE + i; g_usocks[i].peer_fd = (int32_t)new_fd; }
+            if (ns) {
+                ns->connected = 1;
+                ns->peer_fd = UNIX_SOCK_FD_BASE + i;
+                /* The client's first bytes (Wayland get_registry/sync) were
+                 * written into the listener's ring before we got here, since
+                 * its peer_fd still pointed at the listener. Move them, and
+                 * any pending SCM_RIGHTS handles, onto the accepted socket. */
+                spinlock_lock(&s->lock);
+                while (s->buf_tail != s->buf_head) {
+                    uint32_t nx = (ns->buf_head + 1) % UNIX_SOCK_BUF_SIZE;
+                    if (nx == ns->buf_tail) break;
+                    ns->buf[ns->buf_head] = s->buf[s->buf_tail];
+                    ns->buf_head = nx;
+                    s->buf_tail = (s->buf_tail + 1) % UNIX_SOCK_BUF_SIZE;
+                }
+                while (s->fds_tail != s->fds_head) {
+                    uint32_t nx = (ns->fds_head + 1) % UNIX_SOCK_FD_MAX;
+                    if (nx == ns->fds_tail) break;
+                    ns->fd_queue[ns->fds_head] = s->fd_queue[s->fds_tail];
+                    ns->fds_head = nx;
+                    s->fds_tail = (s->fds_tail + 1) % UNIX_SOCK_FD_MAX;
+                }
+                spinlock_unlock(&s->lock);
+                g_usocks[i].peer_fd = (int32_t)new_fd;
+            }
             return new_fd;
         }
     }
@@ -120,6 +164,7 @@ int64_t unix_socket_send(int32_t fd, const void *buf, uint64_t len) {
         peer->buf_head = next;
     }
     spinlock_unlock(&peer->lock);
+    if (written == 0 && len > 0) return -11; /* EAGAIN: ring full */
     return (int64_t)written;
 }
 
@@ -134,126 +179,176 @@ int64_t unix_socket_recv(int32_t fd, void *buf, uint64_t len) {
         s->buf_tail = (s->buf_tail + 1) % UNIX_SOCK_BUF_SIZE;
     }
     spinlock_unlock(&s->lock);
+    if (rd == 0 && len > 0) {
+        /* Distinguish "nothing yet" (EAGAIN) from "peer hung up" (EOF/0).
+         * libwayland treats a 0-length recv as the compositor closing the
+         * connection, so an empty-but-open socket must not return 0. */
+        unix_sock_t *peer = (s->connected) ? usock_get(s->peer_fd) : NULL;
+        return (s->connected && !peer) ? 0 : -11; /* 0 = EOF, -11 = EAGAIN */
+    }
     return (int64_t)rd;
 }
 
+/* msghdr layout matches glibc's struct msghdr on x86-64 (msg_iovlen /
+ * msg_controllen are 8-byte). The top-level struct is dereferenced
+ * directly (both callers guarantee it is mapped); msg_iov / msg_control
+ * point at user memory and are bounds-limited before use. */
+struct _kernel_msghdr {
+    uint64_t name; uint32_t namelen; uint32_t __pad0;
+    uint64_t iov; uint64_t iovlen;
+    uint64_t control; uint64_t controllen;
+    int32_t flags; uint32_t __pad1;
+};
+
 int64_t unix_socket_sendmsg(int32_t fd, uint64_t msg_ptr) {
-    /* Layout matches glibc's struct msghdr exactly (all of msg_namelen,
-     * msg_iovlen, msg_controllen, msg_flags are padded/sized per the
-     * real ABI - msg_iovlen/msg_controllen are 8-byte size_t, NOT
-     * uint32_t, on x86-64; getting this wrong silently misreads every
-     * field after it). */
-    struct { uint64_t name; uint32_t namelen; uint32_t __pad0; uint64_t iov;
-             uint64_t iovlen; uint64_t control; uint64_t controllen;
-             int32_t flags; uint32_t __pad1; } *msg = (void*)(uintptr_t)msg_ptr;
+    struct _kernel_msghdr *msg = (void*)(uintptr_t)msg_ptr;
     if (!msg) return -14;
-    
-    if (msg->control && msg->controllen > 0) {
+
+    /* ---- SCM_RIGHTS: translate each passed memfd into a shared-memory
+     *      handle, grant it to the peer's owner, and queue it. ---- */
+    if (msg->control && msg->controllen >= sizeof(struct _kernel_cmsghdr) &&
+        msg->controllen <= UNIX_CMSG_MAX_BYTES) {
         unix_sock_t *s = usock_get(fd);
-        if (s && s->connected) {
-            unix_sock_t *peer = usock_get(s->peer_fd);
-            if (peer) {
-                spinlock_lock(&peer->lock);
-                uint8_t *cdata = (uint8_t*)(uintptr_t)msg->control;
-                uint32_t offset = 0;
-                while (offset + sizeof(struct _kernel_cmsghdr) <= msg->controllen) {
-                    struct _kernel_cmsghdr *cmsg = (struct _kernel_cmsghdr *)(cdata + offset);
-                    if (cmsg->cmsg_len < sizeof(struct _kernel_cmsghdr) || offset + cmsg->cmsg_len > msg->controllen) break;
-                    if (cmsg->cmsg_level == 1 && cmsg->cmsg_type == 1) {
-                        int32_t *fds = (int32_t *)(cdata + offset + sizeof(struct _kernel_cmsghdr));
-                        int num_fds = (cmsg->cmsg_len - sizeof(struct _kernel_cmsghdr)) / sizeof(int32_t);
-                        for (int i = 0; i < num_fds; i++) {
-                            uint32_t next = (peer->fds_head + 1) % UNIX_SOCK_FD_MAX;
-                            if (next != peer->fds_tail) {
-                                peer->fd_queue[peer->fds_head] = fds[i];
-                                peer->fds_head = next;
-                            }
+        unix_sock_t *peer = (s && s->connected) ? usock_get(s->peer_fd) : NULL;
+        if (peer) {
+            uint8_t *cdata = (uint8_t*)(uintptr_t)msg->control;
+            uint32_t offset = 0;
+            while (offset + sizeof(struct _kernel_cmsghdr) <= msg->controllen) {
+                struct _kernel_cmsghdr *cmsg = (struct _kernel_cmsghdr *)(cdata + offset);
+                uint32_t clen = cmsg->cmsg_len;
+                if (clen < sizeof(struct _kernel_cmsghdr) ||
+                    offset + clen > msg->controllen) break;
+                if (cmsg->cmsg_level == 1 && cmsg->cmsg_type == SCM_RIGHTS) {
+                    int32_t *fds = (int32_t *)(cdata + offset + sizeof(struct _kernel_cmsghdr));
+                    int num_fds = (int)((clen - sizeof(struct _kernel_cmsghdr)) / sizeof(int32_t));
+                    for (int i = 0; i < num_fds; i++) {
+                        int32_t h = syscall_memfd_shm_handle(fds[i]);
+                        if (h < 0) {
+                            serial_write_string("[unixsock] SCM_RIGHTS: fd is not an shm-backed memfd, dropped\n");
+                            continue;
+                        }
+                        if (shared_memory_grant(h, peer->owner_pid) != 0) {
+                            serial_write_string("[unixsock] SCM_RIGHTS: shared_memory_grant failed\n");
+                            continue;
+                        }
+                        (void)shared_memory_addref(h);
+                        spinlock_lock(&peer->lock);
+                        uint32_t next = (peer->fds_head + 1) % UNIX_SOCK_FD_MAX;
+                        if (next != peer->fds_tail) {
+                            peer->fd_queue[peer->fds_head] = h;
+                            peer->fds_head = next;
+                            spinlock_unlock(&peer->lock);
+                        } else {
+                            spinlock_unlock(&peer->lock);
+                            (void)shared_memory_release(h); /* queue full */
                         }
                     }
-                    offset += (cmsg->cmsg_len + 7) & ~7ULL;
                 }
-                spinlock_unlock(&peer->lock);
+                offset += (clen + 7u) & ~7u;
             }
         }
     }
 
     struct { uint64_t base; uint64_t len; } *iov = (void*)(uintptr_t)msg->iov;
     if (!iov || msg->iovlen == 0) return 0;
+    uint64_t iovn = msg->iovlen > UNIX_IOV_MAX ? UNIX_IOV_MAX : msg->iovlen;
     int64_t total = 0;
-    for (uint32_t i = 0; i < msg->iovlen; i++) {
+    for (uint32_t i = 0; i < iovn; i++) {
+        if (iov[i].len == 0) continue;
         int64_t r = unix_socket_send(fd, (void*)(uintptr_t)iov[i].base, iov[i].len);
         if (r < 0) return total > 0 ? total : r;
         total += r;
+        if ((uint64_t)r < iov[i].len) break; /* ring full: partial */
     }
     return total;
 }
 
 int64_t unix_socket_recvmsg(int32_t fd, uint64_t msg_ptr) {
-    /* Layout matches glibc's struct msghdr exactly (all of msg_namelen,
-     * msg_iovlen, msg_controllen, msg_flags are padded/sized per the
-     * real ABI - msg_iovlen/msg_controllen are 8-byte size_t, NOT
-     * uint32_t, on x86-64; getting this wrong silently misreads every
-     * field after it). */
-    struct { uint64_t name; uint32_t namelen; uint32_t __pad0; uint64_t iov;
-             uint64_t iovlen; uint64_t control; uint64_t controllen;
-             int32_t flags; uint32_t __pad1; } *msg = (void*)(uintptr_t)msg_ptr;
+    struct _kernel_msghdr *msg = (void*)(uintptr_t)msg_ptr;
     if (!msg) return -14;
+
     struct { uint64_t base; uint64_t len; } *iov = (void*)(uintptr_t)msg->iov;
     int64_t total = 0;
     if (iov && msg->iovlen > 0) {
-        for (uint32_t i = 0; i < msg->iovlen; i++) {
+        uint64_t iovn = msg->iovlen > UNIX_IOV_MAX ? UNIX_IOV_MAX : msg->iovlen;
+        for (uint32_t i = 0; i < iovn; i++) {
+            if (iov[i].len == 0) continue;
             int64_t r = unix_socket_recv(fd, (void*)(uintptr_t)iov[i].base, iov[i].len);
             if (r < 0) return total > 0 ? total : r;
             total += r;
-            if (r < iov[i].len) break;
+            if ((uint64_t)r < iov[i].len) break;
         }
     }
-    
+
     unix_sock_t *s = usock_get(fd);
-    if (s && msg->control && msg->controllen >= sizeof(struct _kernel_cmsghdr)) {
+    if (s && msg->control &&
+        msg->controllen >= sizeof(struct _kernel_cmsghdr) &&
+        msg->controllen <= UNIX_CMSG_MAX_BYTES) {
         spinlock_lock(&s->lock);
-        int num_fds = 0;
-        uint32_t temp_tail = s->fds_tail;
-        while (temp_tail != s->fds_head) {
-            num_fds++;
-            temp_tail = (temp_tail + 1) % UNIX_SOCK_FD_MAX;
-        }
-        
-        if (num_fds > 0) {
-            uint32_t avail_space = msg->controllen - sizeof(struct _kernel_cmsghdr);
-            int write_fds = num_fds;
-            if (write_fds * sizeof(int32_t) > avail_space) {
-                write_fds = avail_space / sizeof(int32_t);
+        uint32_t avail_space = (uint32_t)msg->controllen - (uint32_t)sizeof(struct _kernel_cmsghdr);
+        uint32_t max_fds = avail_space / (uint32_t)sizeof(int32_t);
+        int32_t *out = (int32_t *)((uint8_t *)(uintptr_t)msg->control + sizeof(struct _kernel_cmsghdr));
+        uint32_t written = 0;
+        while (written < max_fds && s->fds_tail != s->fds_head) {
+            int32_t h = s->fd_queue[s->fds_tail];
+            s->fds_tail = (s->fds_tail + 1) % UNIX_SOCK_FD_MAX;
+            spinlock_unlock(&s->lock);
+            int32_t newfd = (h >= 0)
+                ? syscall_memfd_install_shm(h, FILE_O_RDWR_FLAG)
+                : -1;
+            if (newfd < 0) {
+                if (h >= 0) (void)shared_memory_release(h);
+            } else {
+                out[written++] = newfd; /* adopts the in-flight reference */
             }
-            
+            spinlock_lock(&s->lock);
+        }
+        if (written > 0) {
             struct _kernel_cmsghdr *cmsg = (struct _kernel_cmsghdr *)(uintptr_t)msg->control;
-            cmsg->cmsg_len = sizeof(struct _kernel_cmsghdr) + write_fds * sizeof(int32_t);
+            cmsg->cmsg_len = (uint32_t)sizeof(struct _kernel_cmsghdr) + written * (uint32_t)sizeof(int32_t);
             cmsg->__pad1 = 0;
             cmsg->cmsg_level = 1;
-            cmsg->cmsg_type = 1;
-            
-            int32_t *fds = (int32_t *)((uint8_t *)(uintptr_t)msg->control + sizeof(struct _kernel_cmsghdr));
-            for (int i = 0; i < write_fds; i++) {
-                fds[i] = s->fd_queue[s->fds_tail];
-                s->fds_tail = (s->fds_tail + 1) % UNIX_SOCK_FD_MAX;
-            }
+            cmsg->cmsg_type = SCM_RIGHTS;
             msg->controllen = cmsg->cmsg_len;
         } else {
             msg->controllen = 0;
         }
         spinlock_unlock(&s->lock);
-    } else {
+    } else if (msg->control) {
         msg->controllen = 0;
     }
-    
+
     return total;
 }
 
 int64_t unix_socket_close(int32_t fd) {
     unix_sock_t *s = usock_get(fd);
     if (!s) return -9;
+    spinlock_lock(&s->lock);
+    usock_drain_fd_queue(s);
+    spinlock_unlock(&s->lock);
     s->used = 0;
     return 0;
+}
+
+/* Release every AF_UNIX socket owned by an exiting process. Without this the
+ * global g_usocks table leaks a slot per socket per exited process and fills
+ * up after a few app launches -- which is exactly what makes a later Xorg's
+ * socket() return ENOMEM ("Unable to open socket"). Called from process exit
+ * alongside syscall_socket_close_all_for_pid(). */
+void unix_socket_close_all_for_pid(int32_t pid) {
+    if (!g_usock_init_done) return;
+    for (int i = 0; i < UNIX_SOCK_MAX; i++) {
+        if (g_usocks[i].used && g_usocks[i].owner_pid == pid) {
+            spinlock_lock(&g_usocks[i].lock);
+            usock_drain_fd_queue(&g_usocks[i]);
+            g_usocks[i].connected = 0;
+            g_usocks[i].listening = 0;
+            g_usocks[i].peer_fd = -1;
+            spinlock_unlock(&g_usocks[i].lock);
+            g_usocks[i].used = 0;
+        }
+    }
 }
 
 int64_t unix_socket_pair(int32_t out_fds[2]) {
@@ -283,4 +378,32 @@ int64_t unix_socket_pair(int32_t out_fds[2]) {
 
 int unix_socket_fd_in_range(int32_t fd) {
     return fd >= UNIX_SOCK_FD_BASE && fd < UNIX_SOCK_FD_BASE + UNIX_SOCK_MAX;
+}
+
+/* Readiness for poll(2)/ppoll(2)/epoll. `events` and the result use the
+ * EPOLL / POLL bit values (IN=0x1, OUT=0x4, ERR=0x8, HUP=0x10). Without
+ * this, AF_UNIX fds fell through poll's fd-type switch to EPOLLERR and any
+ * client polling its Wayland display fd saw a dead connection. */
+uint32_t unix_socket_poll(int32_t fd, uint32_t events) {
+    unix_sock_t *s = usock_get(fd);
+    if (!s) return 0x8u; /* EPOLLERR */
+    uint32_t r = 0;
+    if ((events & 0x1u) != 0u) {          /* POLLIN: bytes buffered, or a
+                                           * pending SCM_RIGHTS transfer */
+        spinlock_lock(&s->lock);
+        int has = (s->buf_tail != s->buf_head) || (s->fds_tail != s->fds_head);
+        spinlock_unlock(&s->lock);
+        if (has) r |= 0x1u;
+    }
+    if ((events & 0x4u) != 0u) {          /* POLLOUT: approximate as always
+                                           * writable (ring is large) */
+        unix_sock_t *peer = s->connected ? usock_get(s->peer_fd) : NULL;
+        if (peer) r |= 0x4u;
+        else if (!s->connected) r |= 0x4u; /* listening/unconnected: harmless */
+    }
+    if (s->connected) {
+        unix_sock_t *peer = usock_get(s->peer_fd);
+        if (!peer) r |= 0x10u;            /* EPOLLHUP: peer gone */
+    }
+    return r;
 }

@@ -156,7 +156,11 @@ int64_t syscall_vm_mremap5(uint64_t old_addr, uint64_t old_size,
         return EFAULT_;
     }
 
-    void *new_region = process_user_mmap(new_size, 0u);
+    /* Relocate into a lazily-committed reservation: the copy below faults in
+     * only the pages actually carrying data (kernel-mode demand-zero), so a
+     * large glibc/PartitionAlloc mremap() does not eagerly commit new_size
+     * bytes of physical memory. */
+    void *new_region = process_user_reserve(new_size);
     if (new_region == NULL) {
         return ENOMEM_;
     }
@@ -187,11 +191,13 @@ int64_t syscall_vm_mremap5(uint64_t old_addr, uint64_t old_size,
         free(stage);
     }
 
-    /* Best-effort: only succeeds if old_addr is a live process_user_mmap()
-     * allocation (always true for well-behaved callers passing back
-     * exactly what mmap()/a prior mremap() returned). MREMAP_DONTUNMAP
-     * keeps the source mapping in place per its contract. */
+    /* Release the source. process_user_munmap() drops the physical pages for
+     * both tracked heap allocations and lazily-committed arena reservations
+     * (which have no tracking slot); process_user_free() additionally frees a
+     * tracked slot's address-space bookkeeping. MREMAP_DONTUNMAP keeps the
+     * source in place per its contract. */
     if (!want_dontunmap) {
+        (void)process_user_munmap((void *)(uintptr_t)old_addr, old_size);
         (void)process_user_free((void *)(uintptr_t)old_addr);
     }
 

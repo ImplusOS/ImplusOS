@@ -26,23 +26,29 @@ syscall_entry:
     push rdx
     push rax
     
-    mov rdi, rsp
-    mov rsi, rax
-    mov rdx, [rsp + 24]
-    mov rcx, [rsp + 16]
-    
-    mov rax, [rsp + 32]
-    
-    mov r8, [rsp + 8]
-    mov r9, [rsp + 48]
+    ; Marshal to syscall_dispatch(saved_rsp, num, a1, a2, a3, a4, a5, a6).
+    ; Frame offsets after the pushes above: [0]=rax [8]=rdx [16]=rsi [24]=rdi
+    ; [32]=r8 [40]=r9 [48]=r10. Linux passes the 4th arg in r10, not rcx.
+    mov rdi, rsp            ; p1 saved_rsp
+    mov rsi, rax            ; p2 num
+    mov rdx, [rsp + 24]     ; p3 a1  = user rdi
+    mov rcx, [rsp + 16]     ; p4 a2  = user rsi
+    mov r8,  [rsp + 8]      ; p5 a3  = user rdx
+    mov r9,  [rsp + 48]     ; p6 a4  = user r10
 
-    push rax
-    
-    mov rax, [rsp + 48]
-    push rax
-    
-    sub rsp, 8
-    
+    ; p7 (a5) and p8 (a6) go on the stack. The 8-byte alignment pad MUST sit
+    ; below them (pushed first) or it shifts the args and the callee reads a5
+    ; from the pad slot -- that bug fed garbage as mmap()'s fd (EBADF) and
+    ; broke every dynamic .so load. SysV: at the call, rsp must be 16-aligned
+    ; (it is 16k+8 here after 15 pushes), and the callee then finds a5 at
+    ; [rsp+8] and a6 at [rsp+16].
+    mov rax, [rsp + 40]     ; a6 = user r9
+    mov r10, [rsp + 32]     ; a5 = user r8  (r10's own value already copied to r9)
+
+    sub rsp, 8             ; realign to 16 for the call
+    push rax               ; a6
+    push r10               ; a5
+
     call syscall_dispatch
     
     mov rsp, rax

@@ -5,6 +5,7 @@
 #include "Core/process/ProcessManager.h"
 #include "Core/sync/Spinlock.h"
 #include "Core/timer/Timer.h"
+#include "IPC/UnixSocket.h"
 #include "interfaces/hal_cpu.h"
 
 #include <stddef.h>
@@ -221,7 +222,20 @@ static uint32_t epoll_poll_fd(int32_t fd, uint32_t requested)
         fd < EPOLL_EVENTFD_FD_BASE + EVENTFD_MAX_INSTANCES) {
         return eventfd_poll_locked(fd, requested);
     }
+    if (unix_socket_fd_in_range(fd)) {
+        return unix_socket_poll(fd, requested);
+    }
     return EPOLLERR;
+}
+
+/* Public one-shot readiness probe for a single fd, used by the Linux
+ * compat layer's poll(2)/ppoll(2). `events`/return use the EPOLL* bit
+ * values, which are numerically identical to the POLL* ones
+ * (IN=0x1, OUT=0x4, ERR=0x8, HUP=0x10). Never blocks. */
+uint32_t syscall_poll_one_fd(int32_t fd, uint32_t events)
+{
+    epoll_ensure_init();
+    return epoll_poll_fd(fd, events);
 }
 
 /* One non-blocking readiness pass over every fd registered on `epfd`.

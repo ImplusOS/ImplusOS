@@ -33,9 +33,8 @@
 #include "Core/vfs/TmpFS.h"
 #include "Core/vfs/ProcFS.h"
 #include "Core/vfs/EtcFS.h"
-#include "Drivers/Module/FAT32_VFS_Bridge.h"
-#include "Drivers/Module/ISO9660_VFS_Bridge.h"
-#include "Drivers/Module/exFAT_VFS_Bridge.h"
+#include "Core/drm/DRM_Kms.h"
+#include "Drivers/Module/FS_VFS_Bridge.h"
 #include <string.h>
 #include "IPC/IPC_Main.h"
 #include "Debug/printf/printf.h"
@@ -211,9 +210,9 @@ bool all_fs_initialize(void)
     if (!vfs_init()) {
         return false;
     }
-    bool iso_ok   = iso9660_init();
-    bool fat_ok   = fat32_init();
-    bool exfat_ok = exfat_init();
+    bool iso_ok   = fs_bridge_init(FS_BRIDGE_ISO9660);
+    bool fat_ok   = fs_bridge_init(FS_BRIDGE_FAT32);
+    bool exfat_ok = fs_bridge_init(FS_BRIDGE_EXFAT);
 
     if (!iso_ok && !fat_ok && !exfat_ok) {
         return false;
@@ -227,20 +226,17 @@ bool all_fs_initialize(void)
      * Kernel/Drivers/FileSystem/exFAT/exFAT_Main.h) so it deliberately does
      * not preempt FAT32 as the default. */
     if (fat_ok) {
-        const vfs_driver_t *fat_drv = fat32_vfs_get_driver();
-        vfs_mount("", fat_drv);
+        vfs_mount("", fs_bridge_vfs_driver(FS_BRIDGE_FAT32));
     }
     if (exfat_ok) {
-        const vfs_driver_t *exfat_drv = exfat_vfs_get_driver();
-        vfs_mount("", exfat_drv);
+        vfs_mount("", fs_bridge_vfs_driver(FS_BRIDGE_EXFAT));
     }
     if (iso_ok) {
-        const vfs_driver_t *iso_drv = iso9660_vfs_get_driver();
-        vfs_mount("", iso_drv);
+        vfs_mount("", fs_bridge_vfs_driver(FS_BRIDGE_ISO9660));
     }
 
     /* Default root filesystem, chosen by media kind rather than by driver
-     * name/fs_type -- see vfs_media_kind_t (kernel/interfaces/vfs_types.h)
+     * name/fs_type -- see vfs_media_kind_t (kernel/interfaces/vfs_dirent.h)
      * and Docs/Others/TODO_OS_Refactor.md 6.1. Preference order unchanged
      * from before this refactor: optical media wins when present (that's
      * how a LiveCD/installer boot works), otherwise fall back to whatever
@@ -255,9 +251,15 @@ bool all_fs_initialize(void)
      * Prefix routing in VFS.c picks the longest matching mount prefix, so
      * "/dev/shm" (tmpfs) wins over "/dev" (devfs) for paths beneath it. */
     devfs_init();
+    drm_kms_init();          /* /dev/dri/card0 KMS shim (Method A) */
     vfs_mount("/dev", devfs_vfs_get_driver());
     tmpfs_init();
     vfs_mount("/dev/shm", tmpfs_vfs_get_driver());
+    /* Same flat tmpfs also backs /tmp and /run: foreign Linux binaries (Xorg,
+     * fontconfig, GTK) need these writable, and the X11 socket/lock paths
+     * under /tmp are compile-time constants. See TODO_Doom_Xorg_MethodA.md M1. */
+    vfs_mount("/tmp", tmpfs_vfs_get_driver());
+    vfs_mount("/run", tmpfs_vfs_get_driver());
     procfs_init();
     vfs_mount("/proc", procfs_vfs_get_driver());
     etcfs_init();
@@ -392,6 +394,20 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
         boot_info->FrameBufferBase,
         boot_info->FrameBufferSize
     );
+    /* Reserve the low 1 MiB. The PMM builds its free list straight from the
+     * UEFI memory map, which reports this region as ordinary conventional
+     * RAM, and the page-allocator hint starts at frame 0 -- so the very
+     * first allocations (the kernel heap in the "heap" phase below) land
+     * here by default. The x86_64 SMP bring-up trampoline and its shared
+     * hand-off struct are copied to fixed physical addresses in this range
+     * (SMP_TRAMPOLINE_PHYS 0x8000 / SMP_SHARED_PHYS 0x9000, see
+     * Kernel/Arch/x86_64/smp/SMP_Main.c). Without this reservation the heap
+     * and a still-booting AP alias the same frames: an AP that is slow to
+     * leave the real-mode trampoline executes whatever the heap has since
+     * written there, which shows up as a rare triple-fault reboot late in
+     * boot (kernel init done, screen already cleared, userland not yet up).
+     * The legacy IVT/BDA/EBDA live down here too, so keep the whole 1 MiB. */
+    physical_memory_reserve_region(0x0ULL, 0x100000ULL);
     boot_profile_end("pmm", phase_ns);
 
     serial_set_screen_mirror(debug_putchar);

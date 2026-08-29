@@ -98,8 +98,13 @@ static const etcfs_static_file_t g_etcfs_static_files[] = {
       "rpc:        files\n" },
     { "/etc/ld.so.conf",
       "/lib64\n"
+      "/usr/lib/x86_64-linux-gnu\n"   /* Debian multiarch: Vendor/LinuxRuntime stages the .so closure here */
       "/usr/lib\n"
       "/usr/local/lib\n" },
+    /* dbus / GLib (g_get_...) read this; a fixed value is fine for a
+     * single-image OS. 32 lowercase hex + newline, per machine-id(5). */
+    { "/etc/machine-id",
+      "0123456789abcdef0123456789abcdef\n" },
     { "/etc/passwd",
       "root:x:0:0:root:/root:/bin/sh\n"
       "nobody:x:65534:65534:nobody:/:/bin/false\n" },

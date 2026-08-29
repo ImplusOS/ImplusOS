@@ -4,9 +4,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "../../API/Network.h"
-#include "../../API/Process.h"
-#include "../../API/WiFi.h"
+#include "../../../API/Network.h"
+#include "../../../API/Process.h"
+#include "../../../API/WiFi.h"
 #include "../../../libc/I_libc/include/string.h"
 
 #define DNS_REMOTE_PORT 53u

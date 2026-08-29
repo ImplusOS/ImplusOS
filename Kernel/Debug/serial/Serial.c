@@ -7,7 +7,10 @@
 #include "interfaces/uart_hal.h"
 #include "Core/vfs/VFS.h"
 
-#define LOG_BUF_SIZE 8192
+/* In-RAM scrollback for the on-screen log viewer / panic screen. 8 KiB was too
+ * small to keep a verbose Chromium abort (the [FATAL:...] line plus its stack)
+ * from scrolling out before it could be read. */
+#define LOG_BUF_SIZE 65536
 
 static const uart_hal_t *g_uart = NULL;
 static const serial_backend_t *g_backend = NULL;

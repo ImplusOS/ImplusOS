@@ -747,16 +747,70 @@ int32_t iso9660_closedir(int32_t handle) {
 }
 
 #ifdef IMPLUS_DRIVER_MODULE
-static const iso9660_driver_t g_iso9660_driver = {
-    .init            = iso9660_init,
-    .find_file       = iso9660_find_file,
-    .read_file       = iso9660_read_file,
-    .read_at         = iso9660_read_at,
-    .get_file_size   = iso9660_get_file_size,
-    .list_root_files = iso9660_list_root_files,
-    .opendir         = iso9660_opendir,
-    .readdir         = iso9660_readdir,
-    .closedir        = iso9660_closedir,
+
+/* ---- fs_module_ops_t shims: opaque void *handle == ISO9660_FILE *, and
+ * ISO9660_DIRENT -> vfs_dirent_t. ISO9660 is read-only media, so the whole
+ * write side stays NULL below. ---- */
+
+static bool iso9660_ops_find_file(const char *path, void *handle,
+                                  uint64_t *out_id, uint32_t *out_size)
+{
+    ISO9660_FILE *file = (ISO9660_FILE *)handle;
+    if (!iso9660_find_file(path, file)) {
+        return false;
+    }
+    /* Stable per-file identity: the extent LBA is unique per file and
+     * constant across opens (the malloc'd handle pointer is not). The Linux
+     * compat layer maps this to st_ino, which glibc's ld.so uses to dedup
+     * already-mapped shared objects. */
+    *out_id = (uint64_t)file->extent;
+    *out_size = file->size;
+    return true;
+}
+
+static bool iso9660_ops_read_file(void *handle, uint8_t *buffer)
+{
+    return iso9660_read_file((ISO9660_FILE *)handle, buffer);
+}
+
+static bool iso9660_ops_read_at(void *handle, uint32_t offset,
+                                uint8_t *buffer, uint32_t size)
+{
+    return iso9660_read_at((ISO9660_FILE *)handle, offset, buffer, size);
+}
+
+static uint32_t iso9660_ops_get_file_size(void *handle)
+{
+    return iso9660_get_file_size((ISO9660_FILE *)handle);
+}
+
+static int32_t iso9660_ops_readdir(int32_t handle, vfs_dirent_t *out_entry)
+{
+    ISO9660_DIRENT dirent;
+    memset(&dirent, 0, sizeof(dirent));
+    int32_t result = iso9660_readdir(handle, &dirent);
+    if (result <= 0) {
+        return result;
+    }
+    fs_dirent_set_name(out_entry, dirent.name);
+    out_entry->size = dirent.size;
+    out_entry->is_directory = dirent.is_directory != 0;
+    return result;
+}
+
+static const fs_module_ops_t g_iso9660_driver = {
+    .fs_type       = "iso9660",
+    .media_kind    = VFS_MEDIA_KIND_OPTICAL,
+    .handle_size   = (uint32_t)sizeof(ISO9660_FILE),
+    .init          = iso9660_init,
+    .find_file     = iso9660_ops_find_file,
+    .read_file     = iso9660_ops_read_file,
+    .read_at       = iso9660_ops_read_at,
+    .get_file_size = iso9660_ops_get_file_size,
+    .opendir       = iso9660_opendir,
+    .readdir       = iso9660_ops_readdir,
+    .closedir      = iso9660_closedir,
+    .list_root     = iso9660_list_root_files,
 };
 
 static void iso9660_driver_shutdown(void) {

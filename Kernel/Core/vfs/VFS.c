@@ -213,6 +213,34 @@ bool vfs_read_at(vfs_file_t *file, uint32_t offset, uint8_t *buffer, uint32_t si
     return read_at(file, offset, buffer, size);
 }
 
+bool vfs_file_is_chardev(const vfs_file_t *file) {
+    if (!file || !file->fs_driver) return false;
+    return file->fs_driver->dev_ioctl || file->fs_driver->dev_read ||
+           file->fs_driver->dev_poll || file->fs_driver->dev_mmap;
+}
+
+int64_t vfs_dev_ioctl(vfs_file_t *file, uint64_t request, uint64_t arg) {
+    if (!file || !file->fs_driver || !file->fs_driver->dev_ioctl) return -25;
+    return file->fs_driver->dev_ioctl(file, request, arg);
+}
+
+int64_t vfs_dev_read(vfs_file_t *file, uint8_t *buffer, uint64_t length,
+                     uint32_t nonblock) {
+    if (!file || !file->fs_driver || !file->fs_driver->dev_read) return -25;
+    return file->fs_driver->dev_read(file, buffer, length, nonblock);
+}
+
+uint32_t vfs_dev_poll(vfs_file_t *file, uint32_t events) {
+    if (!file || !file->fs_driver || !file->fs_driver->dev_poll) return 0;
+    return file->fs_driver->dev_poll(file, events);
+}
+
+int64_t vfs_dev_mmap(vfs_file_t *file, uint64_t offset, uint64_t length,
+                     uint64_t prot, uint64_t flags) {
+    if (!file || !file->fs_driver || !file->fs_driver->dev_mmap) return -25;
+    return file->fs_driver->dev_mmap(file, offset, length, prot, flags);
+}
+
 bool vfs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint32_t size) {
     if (!file || !file->fs_driver) return false;
     return file->fs_driver->write_at(file, offset, buffer, size);

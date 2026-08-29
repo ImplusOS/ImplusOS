@@ -743,16 +743,73 @@ void exfat_list_root_files(void) {
 }
 
 #ifdef IMPLUS_DRIVER_MODULE
-static const exfat_driver_t g_exfat_driver = {
-    .init            = exfat_init,
-    .find_file       = exfat_find_file,
-    .read_file       = exfat_read_file,
-    .read_at         = exfat_read_at,
-    .get_file_size   = exfat_get_file_size,
-    .list_root_files = exfat_list_root_files,
-    .opendir         = exfat_opendir,
-    .readdir         = exfat_readdir,
-    .closedir        = exfat_closedir,
+
+/* ---- fs_module_ops_t shims: opaque void *handle == exFAT_FILE *, and
+ * exFAT_DIRENT -> vfs_dirent_t. exFAT_FILE.size is 64-bit (the on-disk
+ * format allows > 4 GiB files); vfs_file_t / get_file_size are 32-bit, so
+ * sizes are clamped to UINT32_MAX here, at the module boundary. exFAT is
+ * read-only for now, so the write side stays NULL. ---- */
+
+static uint32_t exfat_clamp_size(uint64_t size)
+{
+    return (size > 0xFFFFFFFFu) ? 0xFFFFFFFFu : (uint32_t)size;
+}
+
+static bool exfat_ops_find_file(const char *path, void *handle,
+                                uint64_t *out_id, uint32_t *out_size)
+{
+    exFAT_FILE *file = (exFAT_FILE *)handle;
+    if (!exfat_find_file(path, file)) {
+        return false;
+    }
+    *out_id = (uint64_t)(uintptr_t)file;
+    *out_size = exfat_clamp_size(file->size);
+    return true;
+}
+
+static bool exfat_ops_read_file(void *handle, uint8_t *buffer)
+{
+    return exfat_read_file((exFAT_FILE *)handle, buffer);
+}
+
+static bool exfat_ops_read_at(void *handle, uint32_t offset,
+                              uint8_t *buffer, uint32_t size)
+{
+    return exfat_read_at((exFAT_FILE *)handle, offset, buffer, size);
+}
+
+static uint32_t exfat_ops_get_file_size(void *handle)
+{
+    return exfat_clamp_size(exfat_get_file_size((exFAT_FILE *)handle));
+}
+
+static int32_t exfat_ops_readdir(int32_t handle, vfs_dirent_t *out_entry)
+{
+    exFAT_DIRENT dirent;
+    memset(&dirent, 0, sizeof(dirent));
+    int32_t result = exfat_readdir(handle, &dirent);
+    if (result <= 0) {
+        return result;
+    }
+    fs_dirent_set_name(out_entry, dirent.name);
+    out_entry->size = exfat_clamp_size(dirent.size);
+    out_entry->is_directory = dirent.is_directory != 0;
+    return result;
+}
+
+static const fs_module_ops_t g_exfat_driver = {
+    .fs_type       = "exfat",
+    .media_kind    = VFS_MEDIA_KIND_DISK,
+    .handle_size   = (uint32_t)sizeof(exFAT_FILE),
+    .init          = exfat_init,
+    .find_file     = exfat_ops_find_file,
+    .read_file     = exfat_ops_read_file,
+    .read_at       = exfat_ops_read_at,
+    .get_file_size = exfat_ops_get_file_size,
+    .opendir       = exfat_opendir,
+    .readdir       = exfat_ops_readdir,
+    .closedir      = exfat_closedir,
+    .list_root     = exfat_list_root_files,
 };
 
 static void exfat_driver_shutdown(void) {

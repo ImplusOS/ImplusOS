@@ -27,3 +27,10 @@ typedef struct {
 
 int32_t get_process_debug_info(int32_t pid, process_debug_info_t *info_out);
 int32_t get_os_debug_info(os_debug_info_t *info_out);
+
+/* Copy the tail of the in-kernel serial log (everything the kernel prints over
+ * COM1: boot phases, driver init, Linux-compat / Chromium output) into buf.
+ * buf is always NUL-terminated when buf_size > 0. Returns the number of bytes
+ * written excluding the NUL, or a negative errno. The kernel keeps ~8 KiB of
+ * scrollback, so poll this repeatedly to follow along. */
+int32_t read_kernel_log(char *buf, uint32_t buf_size);

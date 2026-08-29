@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "kernel/interfaces/fs_module_ops.h"
+
 #define FAT32_MAX_SECTOR_SIZE       4096u
 #define FAT32_CLUSTER_BUFFER_SIZE   65536u
 #define FAT32_PATH_MAX              512u
@@ -74,22 +76,6 @@ typedef struct {
 
 extern fat32_cache_t g_cluster_cache;
 
-typedef struct {
-    bool     (*init)(void);
-    bool     (*find_file)(const char *, FAT32_FILE *);
-    bool     (*read_file)(FAT32_FILE *, uint8_t *);
-    bool     (*write_file)(FAT32_FILE *, const uint8_t *);
-    bool     (*read_at)(FAT32_FILE *, uint32_t, uint8_t *, uint32_t);
-    bool     (*write_at)(FAT32_FILE *, uint32_t, const uint8_t *, uint32_t);
-    uint32_t (*get_file_size)(FAT32_FILE *);
-    void     (*list_root_files)(void);
-    bool     (*creat)(const char *);
-    bool     (*mkdir)(const char *);
-    int32_t  (*opendir)(const char *);
-    int32_t  (*readdir)(int32_t, FAT32_DIRENT *);
-    int32_t  (*closedir)(int32_t);
-    bool     (*unlink)(const char *);
-    bool     (*truncate)(FAT32_FILE *, uint32_t);
-    void     (*set_case_sensitive_lookup)(bool);
-    bool     (*get_case_sensitive_lookup)(void);
-} fat32_driver_t;
+/* The module exports a generic fs_module_ops_t (see
+ * kernel/interfaces/fs_module_ops.h) as its driver_module_descriptor_t
+ * .driver_api; FS_VFS_Bridge.c is the sole consumer. */

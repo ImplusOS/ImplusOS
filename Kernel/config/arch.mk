@@ -38,6 +38,13 @@ KERNEL_CFLAGS := \
 	-O2 -g0 -ffunction-sections -fdata-sections \
 	$(ARCH_CFLAGS)
 
+# Extra kernel compile flags from the command line, e.g.
+#   make kernel EXTRA_KERNEL_CFLAGS=-DLINUX_SYSCALL_TRACE
+# (Docs/Others/TODO_glibc_Port.md G8 / TODO_Chromium_LinuxABI.md §6). Note:
+# GNU make does not track flag changes, so `rm -rf Build/$(ARCH)/Kernel`
+# first to force a rebuild.
+KERNEL_CFLAGS += $(EXTRA_KERNEL_CFLAGS)
+
 KERNEL_LDFLAGS := -nostdlib --build-id=none -e kernel_main -T $(KERNEL_LDSCRIPT) -pie --no-dynamic-linker -z max-page-size=0x1000 --gc-sections
 
 # CI=1 promotes the warnings already enabled above to errors (Docs/Others/

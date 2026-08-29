@@ -1,6 +1,7 @@
 #include "Evdev_Client.h"
 #include "Core/sync/Spinlock.h"
 #include "Core/timer/Timer.h"
+#include "Core/usercopy/Usercopy.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -85,9 +86,95 @@ int64_t evdev_read(int32_t fd, void *buf, uint64_t len) {
     return (int64_t)count;
 }
 
+/* --- Linux evdev ioctl subset for the X "evdev" input driver -------------
+ * type 'E' (0x45). We decode nr and (for the variable-length "get" calls)
+ * the size field from the _IOC-encoded request. dev 0 = keyboard, dev 1 =
+ * relative pointer. Enough for xf86-input-evdev to classify the devices and
+ * start reading events; not a complete implementation. */
+#define IOC_NR(c)   ((uint32_t)((c) >> 0)  & 0xffu)
+#define IOC_TYPE(c) ((uint32_t)((c) >> 8)  & 0xffu)
+#define IOC_SIZE(c) ((uint32_t)((c) >> 16) & 0x3fffu)
+
+#define EVIOC_TYPE 0x45u
+
+/* bit set helper into a little-endian bitmap */
+static void bm_set(uint8_t *bm, uint32_t bit) { bm[bit >> 3] |= (uint8_t)(1u << (bit & 7u)); }
+
+static int64_t evdev_fill_bits(uint64_t arg, uint32_t size, uint32_t evtype, int is_kbd)
+{
+    uint8_t bm[128];
+    memset(bm, 0, sizeof(bm));
+    if (size > sizeof(bm)) size = sizeof(bm);
+
+    if (evtype == 0u) {
+        /* EVIOCGBIT(0): which EV_* types this device reports */
+        bm_set(bm, EV_SYN);
+        bm_set(bm, EV_KEY);
+        if (is_kbd) { bm_set(bm, 0x11 /*EV_LED*/); bm_set(bm, 0x14 /*EV_REP*/); }
+        else        { bm_set(bm, EV_REL); }
+    } else if (evtype == EV_KEY) {
+        if (is_kbd) {
+            for (uint32_t k = 1; k < 248; k++) bm_set(bm, k); /* KEY_ESC..KEY_MICMUTE-ish */
+        } else {
+            bm_set(bm, BTN_LEFT); bm_set(bm, BTN_RIGHT); bm_set(bm, BTN_MIDDLE);
+        }
+    } else if (evtype == EV_REL && !is_kbd) {
+        bm_set(bm, REL_X); bm_set(bm, REL_Y); bm_set(bm, REL_WHEEL);
+    } else {
+        /* nothing for this type */
+    }
+    if (copy_to_user((void *)(uintptr_t)arg, bm, size) != 0u) return -14;
+    return (int64_t)size;
+}
+
 int64_t evdev_ioctl(int32_t fd, uint64_t request, uint64_t arg) {
-    (void)fd; (void)request; (void)arg;
-    return 0;
+    int idx = fd - EVDEV_FD_BASE;
+    if (idx < 0 || idx >= EVDEV_MAX_DEVICES) return -19;
+    int is_kbd = (idx == 0);
+    if (IOC_TYPE(request) != EVIOC_TYPE) return -25;
+    uint32_t nr = IOC_NR(request);
+    uint32_t sz = IOC_SIZE(request);
+
+    if (nr == 0x01) { /* EVIOCGVERSION -> int */
+        int32_t v = 0x010001;
+        return (arg && copy_to_user((void *)(uintptr_t)arg, &v, sizeof(v)) == 0u) ? 0 : -14;
+    }
+    if (nr == 0x02) { /* EVIOCGID -> struct input_id {u16 bustype,vendor,product,version} */
+        uint16_t id[4] = { 0x0019 /*BUS_HOST*/, 0x1234, (uint16_t)(is_kbd ? 1u : 2u), 1u };
+        return (arg && copy_to_user((void *)(uintptr_t)arg, id, sizeof(id)) == 0u) ? 0 : -14;
+    }
+    if (nr == 0x06 || nr == 0x07 || nr == 0x08) { /* EVIOCGNAME/PHYS/UNIQ(len) */
+        const char *s = (nr == 0x06) ? (is_kbd ? "ImplusOS Keyboard" : "ImplusOS Pointer")
+                                     : (nr == 0x07 ? (is_kbd ? "implus/input0" : "implus/input1") : "");
+        uint32_t n = 0; while (s[n]) n++; n++;
+        if (n > sz) n = sz;
+        if (!arg || copy_to_user((void *)(uintptr_t)arg, s, n) != 0u) return -14;
+        return (int64_t)n;
+    }
+    if (nr == 0x09) { /* EVIOCGPROP(len) - no INPUT_PROP_* */
+        uint8_t z[16]; memset(z, 0, sizeof(z));
+        if (sz > sizeof(z)) sz = sizeof(z);
+        if (arg && copy_to_user((void *)(uintptr_t)arg, z, sz) != 0u) return -14;
+        return (int64_t)sz;
+    }
+    if (nr >= 0x20 && nr <= 0x20 + 0x1f) { /* EVIOCGBIT(ev,len) */
+        return arg ? evdev_fill_bits(arg, sz, nr - 0x20, is_kbd) : -14;
+    }
+    if (nr == 0x18 || nr == 0x19 || nr == 0x1b) { /* EVIOCGKEY/LED/SW -> zeroed */
+        uint8_t z[64]; memset(z, 0, sizeof(z));
+        if (sz > sizeof(z)) sz = sizeof(z);
+        if (arg && copy_to_user((void *)(uintptr_t)arg, z, sz) != 0u) return -14;
+        return (int64_t)sz;
+    }
+    if (nr >= 0x40 && nr <= 0x40 + 0x3f) { /* EVIOCGABS(abs) - we have no abs axes */
+        uint8_t z[24]; memset(z, 0, sizeof(z));
+        if (arg && copy_to_user((void *)(uintptr_t)arg, z, sizeof(z)) != 0u) return -14;
+        return 0;
+    }
+    if (nr == 0x90 || nr == 0x91 || nr == 0xa0) { /* EVIOCGRAB / REVOKE / SCLOCKID */
+        return 0;
+    }
+    return -25; /* ENOTTY: unhandled */
 }
 
 int64_t evdev_close(int32_t fd) {

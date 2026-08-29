@@ -330,6 +330,12 @@ int32_t os_shared_memory_close(int32_t handle)
                           (uint64_t)(int64_t)handle));
 }
 
+int32_t os_memfd_shm_handle(int32_t fd)
+{
+    return (int32_t)syscall1(SYSCALL_MEMFD_SHM_HANDLE,
+                             (uint64_t)(int64_t)fd);
+}
+
 signal_handler_t os_signal(int32_t signum, signal_handler_t handler)
 {
     uint64_t raw = syscall2(SYSCALL_PROCESS_SIGNAL,
@@ -1982,4 +1988,15 @@ int32_t get_os_debug_info(os_debug_info_t *info_out)
     return os_errno_from_i32_status(
         (int32_t)syscall1(SYSCALL_GET_OS_DEBUG_INFO,
                           (uint64_t)(uintptr_t)info_out));
+}
+
+int32_t read_kernel_log(char *buf, uint32_t buf_size)
+{
+    if (buf == NULL || buf_size == 0u) {
+        return -1;
+    }
+    return os_errno_from_i32_status(
+        (int32_t)syscall2(SYSCALL_READ_KERNEL_LOG,
+                          (uint64_t)(uintptr_t)buf,
+                          (uint64_t)buf_size));
 }

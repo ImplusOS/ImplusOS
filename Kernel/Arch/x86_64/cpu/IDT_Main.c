@@ -35,6 +35,29 @@ extern void load_idt(IDT_Ptr *idt_ptr);
 extern void syscall_enter_user_from_frame(uint64_t next_saved_rsp,
                                           uint64_t next_user_rsp);
 
+/* A panic must never itself fault -- a nested fault while the panic path runs
+ * turns a clean BSOD/halt into a double -> triple fault, which QEMU services by
+ * resetting the machine (the "boot loop"). The stack dumpers below walk pointers
+ * (rsp, and a frame-pointer chain) that can be arbitrary garbage on a wild-jump
+ * or corruption panic, so probe every address against the active page tables
+ * before dereferencing it. */
+static int panic_addr_readable(uint64_t addr)
+{
+    if (addr == 0 || (addr & 0x7ULL) != 0) {
+        return 0;
+    }
+    uint64_t cr3 = hal_cpu_read_cr(3);
+    if (paging_virt_to_phys(cr3, addr) == 0) {
+        return 0;
+    }
+    /* Ensure the last byte of the qword is on a mapped page too. */
+    if (((addr + 7u) & ~0xFFFULL) != (addr & ~0xFFFULL) &&
+        paging_virt_to_phys(cr3, addr + 7u) == 0) {
+        return 0;
+    }
+    return 1;
+}
+
 static void panic_dump_stack_words(uint64_t rsp)
 {
     serial_write_string("[OS] [PANIC] Stack snapshot:\n");
@@ -45,6 +68,10 @@ static void panic_dump_stack_words(uint64_t rsp)
 
     const uint64_t *stack = (const uint64_t *)(uintptr_t)rsp;
     for (uint32_t i = 0; i < PANIC_STACK_DUMP_QWORDS; ++i) {
+        if (!panic_addr_readable(rsp + ((uint64_t)i * sizeof(uint64_t)))) {
+            serial_write_string("[OS] [PANIC]  <unmapped, stopping>\n");
+            return;
+        }
         serial_write_string("[OS] [PANIC]  [");
         serial_write_uint32(i);
         serial_write_string("] @ ");
@@ -66,6 +93,11 @@ static void panic_dump_stack_trace(uint64_t rbp)
     const uint64_t max_depth = 16;
     uint64_t current_rbp = rbp;
     for (uint64_t depth = 0; depth < max_depth; ++depth) {
+        if (!panic_addr_readable(current_rbp) ||
+            !panic_addr_readable(current_rbp + sizeof(uint64_t))) {
+            serial_write_string("[OS] [PANIC]  <unmapped rbp, stopping>\n");
+            break;
+        }
         const uint64_t *frame = (const uint64_t *)(uintptr_t)current_rbp;
         uint64_t next_rbp = frame[0];
         uint64_t return_rip = frame[1];
@@ -285,6 +317,44 @@ void general_protection_fault_handler(uint64_t error_code,
                                       uint64_t rsp,
                                       uint64_t rbp)
 {
+    /* `rsp` points at the CPU-pushed exception frame: [0]=error_code [1]=rip
+     * [2]=cs [3]=rflags [4]=user_rsp [5]=user_ss. A #GP that came from CPL 3
+     * is the userland process's problem, not the kernel's -- terminate that
+     * process and keep running. Foreign Linux binaries reach here a lot:
+     * Chromium's IMMEDIATE_CRASH()/failed CHECK() is `int3; ud2`, and a
+     * userland `int3` traps the DPL-0 #BP gate as #GP with
+     * error = (3<<3)|2 = 0x1A; privileged instructions and non-canonical
+     * accesses land here too. */
+    const uint64_t *frame = (const uint64_t *)(uintptr_t)rsp;
+    int from_user = (rsp != 0) && ((frame[2] & 0x3ULL) == 0x3ULL);
+    int32_t pid = process_get_current_pid();
+
+    if (from_user && pid >= 0) {
+        extern const char *process_get_current_name_str(void);
+        extern void process_debug_dump_pid(int32_t pid);
+        extern void process_exit_current_signaled(int32_t signum);
+
+        serial_write_string("[OS] [#GP] user-mode #GP -> terminating pid=");
+        serial_write_uint64((uint64_t)(uint32_t)pid);
+        serial_write_string(" name=");
+        const char *pn = process_get_current_name_str();
+        serial_write_string(pn ? pn : "?");
+        serial_write_string(" rip=");
+        serial_write_uint64(rip);
+        serial_write_string(" err=");
+        serial_write_uint64(error_code);
+        serial_write_string("\n");
+        process_debug_dump_pid(pid);
+
+        process_exit_current_signaled(4 /* SIGILL: int3/ud2/priv-insn */);
+
+        while (!process_run_next_on_current_cpu()) {
+            hal_cpu_enable_interrupts();
+            hal_cpu_halt();
+        }
+        return;
+    }
+
     panic_exception("general_protection", 13, error_code, rip, rsp, rbp, 0);
 }
 
@@ -386,6 +456,19 @@ int32_t page_fault_handler(uint64_t error_code,
     }
 
     int32_t pid = process_get_current_pid();
+
+    /* Re-entrancy guard: if we take another page fault while already handling
+     * one on this CPU, the demand-paging path itself (or something it calls)
+     * faulted -- a kernel bug. Recursing would grow the stack unbounded and can
+     * end in a triple fault. Bail straight to the panic path instead. */
+    static volatile uint8_t g_pf_depth[OS_CONFIG_SMP_MAX_CPUS];
+    uint32_t pf_cpu = smp_get_current_cpu_id();
+    int pf_reentrant = 0;
+    if (pf_cpu < (uint32_t)OS_CONFIG_SMP_MAX_CPUS) {
+        pf_reentrant = (g_pf_depth[pf_cpu] != 0);
+        g_pf_depth[pf_cpu] = (uint8_t)(g_pf_depth[pf_cpu] + 1u);
+    }
+
 #if OS_CONFIG_DEBUG_PAGE_FAULT_DUMP
     {
         extern void serial_write_string(const char *str);
@@ -404,28 +487,44 @@ int32_t page_fault_handler(uint64_t error_code,
         process_scheduler_debug_dump_cpus();
     }
 #endif
-    if ((error_code & PF_USER) && pid >= 0) {
+    /* Demand-fault user pages for BOTH user-mode faults and kernel-mode faults
+     * at a user address -- the latter is copy_to/from_user() memcpy'ing into a
+     * lazily-committed anonymous mmap() buffer (USER_MMAP arena). Chromium's
+     * PartitionAlloc reserves huge PROT_NONE regions and only touches slivers
+     * of them; without this a syscall that writes into such a buffer would
+     * panic the kernel. paging_handle_swap_fault()/cow_fault() self-gate to
+     * canonical user addresses, so a genuine kernel wild pointer still falls
+     * through to the panic path below. */
+    int pf_serviced = 0;
+    if (pid >= 0 && !pf_reentrant) {
         uint64_t cr3 = process_get_current_cr3();
 #if KERNEL_COW_FORK
-        /* Copy-on-write: a write to a page shared read-only by fork is
-         * serviced by making a private copy (or reclaiming write access if
-         * we are the last owner). Must run before swap / SIGSEGV handling. */
         if ((error_code & PF_WRITE) != 0) {
             extern int paging_handle_cow_fault(uint64_t cr3, uint64_t fault_addr);
             if (paging_handle_cow_fault(cr3, cr2) > 0) {
-                return 0;
+                pf_serviced = 1;
             }
         }
 #endif
-        int swap_rc = paging_handle_swap_fault(cr3, cr2);
-
-        if (swap_rc > 0) {
+        if (!pf_serviced && paging_handle_swap_fault(cr3, cr2) > 0) {
             extern void process_record_page_fault(int32_t pid, uint64_t fault_addr,
                                                   uint64_t rip, uint32_t error_code,
                                                   int is_guard);
             process_record_page_fault(pid, cr2, rip, (uint32_t)error_code, 0);
-            return 0;
+            pf_serviced = 1;
         }
+    }
+
+    /* Past the demand-paging attempt: drop the re-entrancy guard now. Everything
+     * below either resumes, terminates the faulting process (abandoning this
+     * stack), or panics -- none of it re-enters the demand-paging path, and
+     * leaving the counter raised would make the CPU's next real fault look
+     * re-entrant. */
+    if (pf_cpu < (uint32_t)OS_CONFIG_SMP_MAX_CPUS && g_pf_depth[pf_cpu] != 0) {
+        g_pf_depth[pf_cpu]--;
+    }
+    if (pf_serviced) {
+        return 0;
     }
 
     serial_write_string("[OS] [PF] Page fault\n");

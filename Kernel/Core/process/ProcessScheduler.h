@@ -4,7 +4,21 @@
 #include "kernel/config.h"
 #include "ProcessManager.h"
 
-#define PROCESS_KERNEL_STACK_SIZE (32 * 1024)
+/* Per-process/-thread kernel stack. This is the stack the CPU switches to on a
+ * syscall (SYSCALL_KERNEL_RSP) and on an interrupt/exception from CPL3
+ * (TSS.RSP0). It is a plain heap allocation with NO guard page, so an overflow
+ * silently corrupts adjacent heap objects and surfaces later as a random panic
+ * or triple-fault reboot. The Linux-ABI compat layer plus Chromium's deeply
+ * nested glibc syscalls (and fault handlers that now run scheduler/demand-page
+ * code on this stack) blew past the old 32 KiB. 128 KiB gives real headroom;
+ * process_kstack_canary_check() converts any residual overflow into a clean,
+ * deterministic panic instead of heap corruption. */
+#define PROCESS_KERNEL_STACK_SIZE (128 * 1024)
+
+/* Sentinel written to the lowest 16 bytes of every kernel stack right after
+ * allocation; checked on each context switch. If it is gone, something wrote
+ * past the bottom of the stack. */
+#define PROCESS_KSTACK_CANARY 0x9E3779B97F4A7C15ULL
 #define PROCESS_USER_ALLOC_MAX 4096
 #define PROCESS_SIGNAL_MAX 32
 #define PROCESS_FPU_STATE_SIZE 544U
@@ -23,7 +37,7 @@
 typedef struct {
     uint8_t used;
     uint64_t addr;
-    uint32_t size;
+    uint64_t size;   /* was uint32_t: mmap() reservations can exceed 4 GiB */
 } user_alloc_t;
 
 typedef struct __attribute__((aligned(16))) {
@@ -57,6 +71,10 @@ typedef struct __attribute__((aligned(16))) {
     uint64_t user_stack_base;
     uint64_t user_stack_top;
     uint64_t user_stack_guard_page;
+    /* Bump cursor into the USER_MMAP anon arena (lazily-committed mmap()).
+     * Shared across threads of a process (they share the address space);
+     * copied on fork. */
+    uint64_t user_mmap_cursor;
     uint32_t timeslice;
     uint8_t  priority;
     uint64_t total_ticks;
@@ -87,6 +105,10 @@ typedef struct __attribute__((aligned(16))) {
     uint64_t blocked_since_ns;
     char     name[64];
     char     cwd[256];
+    /* Absolute path the process was exec'd from. Backs /proc/self/exe (glibc /
+     * Chromium read it via readlink to locate their own asset directory) and
+     * argv[0] for Linux-ABI binaries. Empty for the idle/kernel tasks. */
+    char     exe_path[256];
     char     launch_argument[512];
     int32_t parent_pid;
     int32_t memory_owner_pid;

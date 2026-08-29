@@ -321,7 +321,8 @@ static int is_user_virtual_address(uint64_t virt_addr)
 {
     return ((virt_addr >= USER_CODE_BASE && virt_addr < USER_CODE_LIMIT) ||
             (virt_addr >= USER_HEAP_BASE && virt_addr < USER_HEAP_LIMIT) ||
-            (virt_addr >= USER_STACK_BASE && virt_addr < USER_STACK_TOP));
+            (virt_addr >= USER_STACK_BASE && virt_addr < USER_STACK_TOP) ||
+            (virt_addr >= USER_MMAP_BASE  && virt_addr < USER_MMAP_LIMIT));
 }
 
 static int copy_present_page(uint64_t child_cr3, uint64_t vaddr,
@@ -1185,21 +1186,39 @@ int paging_protect_user_range(uint64_t cr3, uint64_t start, uint64_t size,
                    ~(PAGE_SIZE_BYTES - 1ULL);
     if (end <= start) return -1;
 
+    /* mprotect() over a lazily-committed anonymous range (USER_MMAP arena, or
+     * any not-yet-faulted user page) must not fail just because pages are not
+     * resident: the protection request is advisory until the demand-zero
+     * fault, which always brings the page in RW. Skip absent pages for user
+     * addresses; a genuinely bogus (non-user) address still errors. */
+    const int lenient = is_user_virtual_address(start);
     uint64_t *pml4 = (uint64_t *)(uintptr_t)(cr3 & PAGE_FRAME_MASK);
     for (uint64_t address = start; address < end; address += PAGE_SIZE_BYTES) {
         uint64_t i4 = PML4_INDEX(address);
         uint64_t i3 = PDPT_INDEX(address);
         uint64_t i2 = PD_INDEX(address);
         uint64_t i1 = PT_INDEX(address);
-        if ((pml4[i4] & PAGE_PRESENT) == 0) return -1;
+        if ((pml4[i4] & PAGE_PRESENT) == 0) {
+            if (!lenient) return -1;
+            address = ((address >> 39) << 39) + 0x8000000000ULL - PAGE_SIZE_BYTES;
+            continue;
+        }
         uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4[i4] & PAGE_FRAME_MASK);
-        if ((pdpt[i3] & PAGE_PRESENT) == 0) return -1;
+        if ((pdpt[i3] & PAGE_PRESENT) == 0) {
+            if (!lenient) return -1;
+            address = ((address >> 30) << 30) + 0x40000000ULL - PAGE_SIZE_BYTES;
+            continue;
+        }
         uint64_t *pd = (uint64_t *)(uintptr_t)(pdpt[i3] & PAGE_FRAME_MASK);
-        if ((pd[i2] & PAGE_PRESENT) == 0) return -1;
+        if ((pd[i2] & PAGE_PRESENT) == 0) {
+            if (!lenient) return -1;
+            address = ((address >> 21) << 21) + 0x200000ULL - PAGE_SIZE_BYTES;
+            continue;
+        }
         if ((pd[i2] & PAGE_PS) != 0 && split_huge_page(pd, i2) < 0) return -1;
         uint64_t *pt = (uint64_t *)(uintptr_t)(pd[i2] & PAGE_FRAME_MASK);
         uint64_t entry = pt[i1];
-        if ((entry & PAGE_PRESENT) == 0) return -1;
+        if ((entry & PAGE_PRESENT) == 0) { if (lenient) continue; return -1; }
         uint64_t keep_cow = entry & PAGE_COW;
         uint64_t new_flags = flags & (PAGE_RW | PAGE_USER | PAGE_NX);
         /* A still-shared copy-on-write page must stay read-only even when the
@@ -1245,11 +1264,16 @@ int paging_unmap_range(uint64_t cr3, uint64_t start, uint64_t size)
 
         uint64_t *pd_table = resolve_pd_table(cr3, pdpt_index);
         if (pd_table == NULL) {
+            /* Whole 1 GiB not mapped (unmap of a lazily-reserved mmap arena
+             * range that was never touched). Jump to the next 1 GiB boundary
+             * instead of a million per-page no-ops. */
+            addr = ((addr >> 30) << 30) + 0x40000000ULL - PAGE_SIZE_BYTES;
             continue;
         }
 
         uint64_t pde = pd_table[pd_index];
         if ((pde & PAGE_PRESENT) == 0) {
+            addr = ((addr >> 21) << 21) + 0x200000ULL - PAGE_SIZE_BYTES;
             continue;
         }
 
@@ -1576,13 +1600,19 @@ int paging_handle_swap_fault(uint64_t cr3, uint64_t fault_addr)
         
         void *phys_page = alloc_page();
         if (phys_page == NULL) {
+            serial_write_string("[PF] demand-zero: alloc_page failed (PMM OOM) va=");
+            serial_write_uint64(virt_addr);
+            serial_write_string("\n");
             return 0;
         }
-        
+
         memset(phys_page, 0, PAGE_SIZE_BYTES);
 
         if (paging_map_user_page(cr3, virt_addr, (uint64_t)(uintptr_t)phys_page, PAGE_RW) < 0) {
             free_page(phys_page);
+            serial_write_string("[PF] demand-zero: map_user_page failed (page-table OOM) va=");
+            serial_write_uint64(virt_addr);
+            serial_write_string("\n");
             return 0;
         }
 
