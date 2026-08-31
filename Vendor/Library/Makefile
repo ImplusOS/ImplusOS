@@ -79,7 +79,7 @@ LIBJPEG_SRCS := \
 	src/jaricom.c src/jcarith.c src/jdarith.c
 LIBJPEG_OBJS := $(LIBJPEG_SRCS:%.c=$(JPEG_BUILD_DIR)/%.o)
 
-COMMON_CFLAGS := -ffreestanding -fPIC -fno-builtin $(ARCH_CFLAGS) -nostdlib -Os -g0 -ffunction-sections -fdata-sections -I$(REPO_ROOT)/I_libc/Source/include -Wno-error -include stddef.h -include math.h
+COMMON_CFLAGS := -ffreestanding -fPIC -fno-builtin $(ARCH_CFLAGS) -nostdlib -Os -g0 -ffunction-sections -fdata-sections -I$(REPO_ROOT)/libc/I_libc/Source/include -Wno-error -include stddef.h -include math.h
 ZLIB_CFLAGS := $(COMMON_CFLAGS) -I. -Izlib -DNO_GZFILE_OPS
 LIBPNG_CFLAGS := $(COMMON_CFLAGS) -I$(PNG_CONFIG_DIR) -Ilibpng -Izlib
 LIBJPEG_CFLAGS := $(COMMON_CFLAGS) -I$(JPEG_CONFIG_DIR) -Ilibjpeg/src -Ilibjpeg/src/wrapper -DC_ARITH_CODING_SUPPORTED=1 -DD_ARITH_CODING_SUPPORTED=1 -Wno-unused-parameter -Wno-sign-conversion -Wno-conversion -Wno-shadow
