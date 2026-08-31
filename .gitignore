@@ -10,6 +10,7 @@ AAVMF_VARS.fd
 Userland/Application/BusyBox/Resource/busybox
 Userland/Application/Chromium
 Userland/Application/Doom
+/test/
 
 Vendor/LinuxRuntime/cache/
 Vendor/LinuxRuntime/.work/
