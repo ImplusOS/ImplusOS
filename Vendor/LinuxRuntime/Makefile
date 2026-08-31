@@ -12,8 +12,11 @@ SELF_DIR  := $(abspath .)
 # 閉包解決の起点にする外来 Linux バイナリ群（空白区切り）。
 #   - chrome   : Chromium 外来 ABI 検証（TODO_Chromium_LinuxABI.md）
 #   - linuxxdoom: Userland/Application/Doom（libGL/libGLEW/libopenal/libfluidsynth を追加で要求）
-CHROME_BIN   ?= $(REPO_ROOT)/Userland/Application/Chromium/Resource/chrome
-DOOM_BIN     ?= $(REPO_ROOT)/Userland/Application/Doom/Resource/linuxxdoom-x86_64
+# NOTE: Chromium and Doom repositories were removed in the repo split and
+# have not been restored anywhere; CHROME_BIN/DOOM_BIN below point at paths
+# that do not currently exist.
+CHROME_BIN   ?= $(REPO_ROOT)/Chromium/Resource/chrome
+DOOM_BIN     ?= $(REPO_ROOT)/Doom/Resource/linuxxdoom-x86_64
 FOREIGN_BINS ?= $(CHROME_BIN) $(DOOM_BIN)
 
 # Debian アーカイブのスナップショット（再現性のため日付固定）。

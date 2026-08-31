@@ -64,8 +64,7 @@ OBJCOPY := $(CROSS_COMPILE)objcopy
 NASM := nasm
 
 KERNEL_DIR   := Kernel
-USERLAND_DIR := Userland
-RECOVERY_DIR := RecoveryEnvironment
+RECOVERY_DIR := RecoveryEnvironment/Source
 
 KERNEL_ELF        := $(BUILD_DIR)/Kernel/Kernel_Main.ELF
 BOOTMANAGER_EFI   := $(BUILD_DIR)/BootManager/BOOTMANAGER.EFI
@@ -96,13 +95,13 @@ LIVECD_ESP_IMAGE_SIZE_MB ?= 16
 
 LIVECD_IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH)-LiveCD.iso
 
-BOOT_RESOURCE_DIR := $(firstword $(wildcard BootManager/Resource))
+BOOT_RESOURCE_DIR := $(firstword $(wildcard BootManager/Source/Resource))
 ifeq ($(BOOT_RESOURCE_DIR),)
-$(error BootManager resource directory not found. Expected BootManager/Resource.)
+$(error BootManager resource directory not found. Expected BootManager/Source/Resource.)
 endif
 
-BOOTLOADER_DSC := BootLoader/Configuration/ImplusOSBootLoader.dsc
-BOOTMANAGER_DSC := BootManager/BootManager.dsc
+BOOTLOADER_DSC := BootLoader/Source/Configuration/ImplusOSBootLoader.dsc
+BOOTMANAGER_DSC := BootManager/Source/BootManager.dsc
 
 EDK2_OUTPUT_ROOT := $(EDK2_DIR)/Build/$(EDK2_TARGET)_$(EDK2_TOOLCHAIN)/$(EDK2_ARCH)
 BOOTLOADER_MODULE_NAME := ImplusOSBootLoader
@@ -134,12 +133,13 @@ define COPY_EDK2_OUTPUT
 	cp "$$src" "$(2)"
 endef
 
-# mindepth 2 excludes Kernel/Drivers/Makefile itself (a source-list snippet
-# $(include)'d by Kernel/Makefile, not a buildable module directory) while
-# still matching every driver module's own Makefile under
-# Kernel/Drivers/<Category>/<Driver>/ (see Docs/Others/TODO_OS_Refactor.md
-# 4./5./6.).
-DRIVER_MAKEFILES := $(shell find Kernel/Drivers -mindepth 2 -name Makefile -print 2>/dev/null | sort)
+# mindepth 2 excludes Kernel/Source/Drivers/Makefile itself (a source-list
+# snippet $(include)'d by Kernel/Source/Makefile, not a buildable module
+# directory) while still matching every driver module's own Makefile under
+# Kernel/Source/Drivers/<Category>/<Driver>/ (see
+# Docs/Others/TODO_OS_Refactor.md 4./5./6.). Kernel/ itself is now a git
+# submodule (github.com/ImplusOS/Kernel) whose content lives under Source/.
+DRIVER_MAKEFILES := $(shell find Kernel/Source/Drivers -mindepth 2 -name Makefile -print 2>/dev/null | sort)
 DRIVER_DIRS      := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
 DRIVER_BUILD_ROOT := $(BUILD_ROOT)/Modules
 DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
@@ -152,7 +152,7 @@ DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
 # the STAGE_FIRMWARE*/loops below -- adding a new device's firmware
 # directory needs no Makefile change. Ships empty by default; this only
 # wires up the staging, it does not provide any proprietary bytes.
-FIRMWARE_SRC_DIR := Kernel/Drivers/Firmware
+FIRMWARE_SRC_DIR := Kernel/Source/Drivers/Firmware
 
 # Driver .ELFs listed here are staged into Kernel/Driver/OnDemand/ instead
 # of Kernel/Driver/ itself: the bootloader preloads every *.ELF directly
@@ -164,12 +164,16 @@ FIRMWARE_SRC_DIR := Kernel/Drivers/Firmware
 # never sees it. The list is data, not a hard-coded driver name: one .ELF
 # basename per line in the manifest below (blank lines and '#' comments
 # ignored). Absent manifest => every driver .ELF is preloaded.
-ON_DEMAND_MANIFEST := Kernel/Drivers/Manifest/OnDemand.txt
+ON_DEMAND_MANIFEST := Kernel/Source/Drivers/Manifest/OnDemand.txt
 ON_DEMAND_DRIVER_ELFS := $(if $(wildcard $(ON_DEMAND_MANIFEST)),$(shell sed -e 's/#.*//' -e '/^[[:space:]]*$$/d' $(ON_DEMAND_MANIFEST)))
-DRIVER_DB_SRC := Kernel/Drivers/Manifest/DriverDB.txt
+DRIVER_DB_SRC := Kernel/Source/Drivers/Manifest/DriverDB.txt
 
 # Statically-linked BusyBox vendored by the BusyBox app (fetched by its own
 # Makefile). Also published as /bin/sh -- see STAGE_POSIX_BIN below.
+# NOTE: the BusyBox app repository was removed (not split out); this path is
+# currently dead and STAGE_POSIX_BIN's wildcard guard makes that a silent
+# no-op (a warning is printed) rather than a build failure. /bin/sh will be
+# absent from install/LiveCD images until BusyBox is restored somewhere.
 BUSYBOX_BIN := Userland/Application/BusyBox/Resource/busybox
 
 # Copies $(DRIVER_STAGE_DIR)/*.ELF into $(1)/Kernel/Driver/ or
@@ -235,37 +239,49 @@ define STAGE_FIRMWARE_FAT
 	done;
 endef
 
-# Every immediate subdirectory of Userland/Application/ that carries its own
-# Makefile is a buildable app -- no per-app name is hard-coded here. Drop in a
-# new app directory with a Makefile and it is picked up automatically. A
-# directory with a `.nobuild` marker file is skipped (e.g. an app still
-# being ported off a removed dependency).
-APP_DIRS := $(patsubst %/,%,$(filter-out $(dir $(wildcard Userland/Application/*/.nobuild)),$(dir $(wildcard Userland/Application/*/Makefile))))
+# Apps and services used to live under a common Userland/Application/ and
+# Userland/Service/ parent, discovered generically by globbing for a
+# Makefile one level down. Each has since moved into its own top-level
+# repository (github.com/ImplusOS/<name>), so there is no longer a shared
+# parent directory to glob against; each is instead named explicitly and
+# guarded with $(wildcard ...) so the build tolerates a submodule not yet
+# being checked out here (see README.md / Docs/Others/TODO_OS_Refactor.md).
+# Add `git submodule add -b main https://github.com/ImplusOS/<name>.git
+# <name>` to bring one in -- no other Makefile change is needed.
+APP_REPO_NAMES := com.ImplusOS.sysnotif com.ImplusOS.waylandcompositor \
+                   com.ImplusOS.gtk3demo com.ImplusOS.windowmanager
+SERVICE_REPO_NAMES := com.ImplusOS.ldso com.ImplusOS.dynmain \
+                       com.ImplusOS.posix com.ImplusOS.netstack
 
-# Same convention for Userland services (ldso, dynmain, posix, netstack, ...):
-# each Userland/Service/<name>/ with a Makefile builds one hot-loadable ELF/.so.
-SERVICE_DIRS := $(patsubst %/,%,$(dir $(wildcard Userland/Service/*/Makefile)))
+APP_DIRS := $(foreach n,$(APP_REPO_NAMES),$(if $(wildcard $(n)/Makefile),$(n)))
+SERVICE_DIRS := $(foreach n,$(SERVICE_REPO_NAMES),$(if $(wildcard $(n)/Makefile),$(n)))
 
-LIBRARY_C_SRCS := $(shell find Library -name "*.c" 2>/dev/null)
+LIBRARY_C_SRCS := $(shell find Library/Source -name "*.c" 2>/dev/null)
 
+# NOTE: com.ImplusOS.posix and com.ImplusOS.netstack have not been split
+# into their own repositories yet (unlike every other Userland/Service/*
+# entry) -- their source is only recoverable from ImplusOS git history
+# (pre-split commits). The paths below are the OLD Userland/Service/...
+# locations and will fail to compile until these two services are restored
+# as sibling checkouts (see Docs/Others/TODO_OS_Refactor.md).
 USERLAND_C_SRCS := \
-	libc/I_libc/src/assert.c \
-	libc/I_libc/src/math.c \
-	libc/I_libc/src/stdlib.c \
-	libc/I_libc/src/string.c \
-	libc/I_libc/src/iconv.c \
-	libc/I_libc/src/stdio.c \
-	libc/I_libc/src/errno.c \
-	libc/I_libc/src/posix.c \
-	libc/I_libc/src/dlfcn.c \
-	libc/I_libc/src/sys/syscalls.c \
-	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
-	libc/I_libc/src/sys/$(ARCH)/setjmp.c \
+	I_libc/Source/src/assert.c \
+	I_libc/Source/src/math.c \
+	I_libc/Source/src/stdlib.c \
+	I_libc/Source/src/string.c \
+	I_libc/Source/src/iconv.c \
+	I_libc/Source/src/stdio.c \
+	I_libc/Source/src/errno.c \
+	I_libc/Source/src/posix.c \
+	I_libc/Source/src/dlfcn.c \
+	I_libc/Source/src/sys/syscalls.c \
+	I_libc/Source/src/sys/$(ARCH)/hal_syscall.c \
+	I_libc/Source/src/sys/$(ARCH)/setjmp.c \
 	$(LIBRARY_C_SRCS) \
-	Userland/Userland.c \
-	Userland/Syscalls.c \
-	Userland/API/XMLParser.c \
-	Userland/Service/service_client.c \
+	Userland-Common/Source/Userland.c \
+	Service-Management/Source/Syscalls.c \
+	API/Source/XMLParser.c \
+	Service-Management/Source/service_client.c \
 	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c \
 	Userland/Service/com.ImplusOS.posix/src/posix_fdtable.c \
 	Userland/Service/com.ImplusOS.posix/src/posix_file.c \
@@ -278,33 +294,46 @@ USERLAND_C_SRCS := \
 	Userland/Service/com.ImplusOS.posix/src/posix_io.c
 
 USERLAND_APP_C_SRCS := \
-	libc/I_libc/src/assert.c \
-	libc/I_libc/src/math.c \
-	libc/I_libc/src/stdlib.c \
-	libc/I_libc/src/string.c \
-	libc/I_libc/src/iconv.c \
-	libc/I_libc/src/stdio.c \
-	libc/I_libc/src/errno.c \
-	libc/I_libc/src/posix.c \
-	libc/I_libc/src/dlfcn.c \
-	libc/I_libc/src/sys/syscalls.c \
-	libc/I_libc/src/sys/$(ARCH)/hal_syscall.c \
-	libc/I_libc/src/sys/$(ARCH)/setjmp.c \
+	I_libc/Source/src/assert.c \
+	I_libc/Source/src/math.c \
+	I_libc/Source/src/stdlib.c \
+	I_libc/Source/src/string.c \
+	I_libc/Source/src/iconv.c \
+	I_libc/Source/src/stdio.c \
+	I_libc/Source/src/errno.c \
+	I_libc/Source/src/posix.c \
+	I_libc/Source/src/dlfcn.c \
+	I_libc/Source/src/sys/syscalls.c \
+	I_libc/Source/src/sys/$(ARCH)/hal_syscall.c \
+	I_libc/Source/src/sys/$(ARCH)/setjmp.c \
 	$(LIBRARY_C_SRCS) \
-	Userland/Syscalls.c \
-	Userland/API/XMLParser.c \
-	Userland/Service/service_client.c \
+	Service-Management/Source/Syscalls.c \
+	API/Source/XMLParser.c \
+	Service-Management/Source/service_client.c \
 	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c
 
+# Syscalls.c and service_client.c both moved into Service-Management/Source/
+# but keep their OLD object-output paths (Userland/Syscalls.o and
+# Userland/Service/service_client.o respectively) since Userland-Common's
+# AppCommon.mk (COMMON_OBJS) already hard-codes those -- only the compile
+# rule's *source* side needs to point at the new location (see the pattern
+# rules below).
 USERLAND_INIT_OBJS := \
+	$(patsubst Userland-Common/Source/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland-Common/Source/%.c,$(USERLAND_C_SRCS))) \
+	$(if $(filter Service-Management/Source/Syscalls.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
+	$(if $(filter Service-Management/Source/service_client.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
+	$(patsubst API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter API/Source/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_C_SRCS))) \
-	$(patsubst libc/I_libc/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/%.c,$(USERLAND_C_SRCS))) \
-	$(patsubst Library/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/%.c,$(USERLAND_C_SRCS)))
+	$(patsubst I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter I_libc/Source/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst Library/Source/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/Source/%.c,$(USERLAND_C_SRCS)))
 
 USERLAND_APP_OBJS := \
+	$(if $(filter Service-Management/Source/Syscalls.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
+	$(if $(filter Service-Management/Source/service_client.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
+	$(patsubst API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter API/Source/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_APP_C_SRCS))) \
-	$(patsubst libc/I_libc/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/%.c,$(USERLAND_APP_C_SRCS))) \
-	$(patsubst Library/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/%.c,$(USERLAND_APP_C_SRCS)))
+	$(patsubst I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter I_libc/Source/%.c,$(USERLAND_APP_C_SRCS))) \
+	$(patsubst Library/Source/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/Source/%.c,$(USERLAND_APP_C_SRCS)))
 
 RECOVERY_OBJS := \
 	$(BUILD_DIR)/RecoveryEnvironment/Recovery.o \
@@ -312,10 +341,10 @@ RECOVERY_OBJS := \
 
 USERLAND_CFLAGS := \
 	-I. \
-	-IKernel/include \
-	-Ilibc/I_libc/include \
+	-IKernel/Source/include \
+	-II_libc/Source/include \
 	-IUserland/Service/com.ImplusOS.posix/include \
-	-ILibrary \
+	-ILibrary/Source \
 	-IVendor \
 	-IVendor/Library/libjpeg/src \
 	-I$(BUILD_DIR)/Vendor/Library/libjpeg/include \
@@ -332,7 +361,7 @@ USERLAND_CXXFLAGS := \
 	-fno-exceptions -fno-rtti \
 	-Wall -Wextra -Os -g0 -ffunction-sections -fdata-sections -MMD -MP
 
-USERLAND_LDFLAGS := -T Userland/Userland.ld -nostdlib --build-id=none --gc-sections
+USERLAND_LDFLAGS := -T Userland-Common/Source/Userland.ld -nostdlib --build-id=none --gc-sections
 
 all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel vendor_libs app_build service_build driver_stage $(USERLAND_INIT_ELF)
 
@@ -349,7 +378,9 @@ linux_runtime_stage:
 ifeq ($(ARCH),x86_64)
 	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata locale \
 		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
-		CHROME_BIN="$(abspath Userland/Application/Chromium/Resource/chrome)"
+		CHROME_BIN="$(abspath Chromium/Resource/chrome)"
+		# NOTE: the Chromium app repository was removed (not split out);
+		# CHROME_BIN will not exist until it is restored somewhere.
 else
 	@echo "linux_runtime_stage: skipped for ARCH=$(ARCH)"
 endif
@@ -402,19 +433,35 @@ $(BOOTMANAGER_EFI): edk2_bootmanager
 	@mkdir -p $(dir $@)
 	@$(call COPY_EDK2_OUTPUT,$(BOOTMANAGER_MODULE_NAME),$@)
 
+$(BUILD_DIR)/Userland/%.o: Userland-Common/Source/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Userland/Syscalls.o: Service-Management/Source/Syscalls.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Userland/Service/service_client.o: Service-Management/Source/service_client.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Userland/API/%.o: API/Source/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/Userland/%.o: Userland/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/libc/I_libc/%.o: libc/I_libc/%.c
+$(BUILD_DIR)/Userland/libc/I_libc/%.o: I_libc/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Library/%.o: Library/%.c
+$(BUILD_DIR)/Library/%.o: Library/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/%.o: Userland/%.cpp
+$(BUILD_DIR)/Userland/%.o: Userland-Common/Source/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(USERLAND_CXXFLAGS) -c $< -o $@
 
@@ -427,7 +474,7 @@ $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 $(BUILD_DIR)/RecoveryEnvironment/%.o: $(RECOVERY_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) $(if $(filter 1,$(RECOVERY_AUDIO_TEST)),-DRECOVERY_AUDIO_TEST) \
-		-IUserland -IUserland/API -c $< -o $@
+		-IUserland-Common/Source -IAPI/Source -c $< -o $@
 
 $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	@mkdir -p $(dir $@)
@@ -470,7 +517,7 @@ install_payload: all linux_runtime_stage
 		name=$$(basename "$$dir"); \
 		cp -a "$(BUILD_DIR)/Userland/Service/$$name" "$(INSTALL_PAYLOAD_ROOT)/Userland/Service/"; \
 	done
-	@[ -f Userland/Service/services.list ] && cp Userland/Service/services.list $(INSTALL_PAYLOAD_ROOT)/Userland/Service/ || true
+	@[ -f Service-Management/Source/services.list ] && cp Service-Management/Source/services.list $(INSTALL_PAYLOAD_ROOT)/Userland/Service/ || true
 	@cp -a $(BOOT_RESOURCE_DIR) $(INSTALL_PAYLOAD_ROOT)/BootManager/
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp -a $(LINUX_RUNTIME_STAGE)/lib64 $(INSTALL_PAYLOAD_ROOT)/; \
@@ -612,7 +659,7 @@ image_livecd: all linux_runtime_stage
 		name=$$(basename "$$dir"); \
 		cp -a "$(BUILD_DIR)/Userland/Service/$$name" "$(IMAGE_STAGE_DIR)/Userland/Service/"; \
 	done
-	@[ -f Userland/Service/services.list ] && cp Userland/Service/services.list $(IMAGE_STAGE_DIR)/Userland/Service/ || true
+	@[ -f Service-Management/Source/services.list ] && cp Service-Management/Source/services.list $(IMAGE_STAGE_DIR)/Userland/Service/ || true
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp -a $(LINUX_RUNTIME_STAGE)/lib64 $(IMAGE_STAGE_DIR)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(IMAGE_STAGE_DIR)/; \
