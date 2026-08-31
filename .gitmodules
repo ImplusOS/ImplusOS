@@ -10,17 +10,9 @@
 [submodule "Vendor/Library/freetype"]
 	path = Vendor/Library/freetype
 	url = https://github.com/freetype/freetype.git
-[submodule "API"]
-	path = API
-	url = https://github.com/ImplusOS/API.git
-	branch = main
 [submodule "Kernel"]
 	path = Kernel
 	url = https://github.com/ImplusOS/Kernel.git
-	branch = main
-[submodule "Userland-Common"]
-	path = Userland-Common
-	url = https://github.com/ImplusOS/Userland-Common.git
 	branch = main
 [submodule "BootLoader"]
 	path = BootLoader
@@ -42,11 +34,11 @@
 	path = RecoveryEnvironment
 	url = https://github.com/ImplusOS/RecoveryEnvironment.git
 	branch = main
-[submodule "I_libc"]
-	path = I_libc
+[submodule "libc/I_libc"]
+	path = libc/I_libc
 	url = https://github.com/ImplusOS/I_libc.git
 	branch = main
-[submodule "Service-Management"]
-	path = Service-Management
-	url = https://github.com/ImplusOS/Service-Management.git
+[submodule "Userland"]
+	path = Userland
+	url = https://github.com/ImplusOS/Userland-Common.git
 	branch = main

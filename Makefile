@@ -249,23 +249,23 @@ SERVICE_DIRS := $(foreach n,$(SERVICE_REPO_NAMES),$(if $(wildcard $(n)/Makefile)
 LIBRARY_C_SRCS := $(shell find Library/Source -name "*.c" 2>/dev/null)
 
 USERLAND_C_SRCS := \
-	I_libc/Source/src/assert.c \
-	I_libc/Source/src/math.c \
-	I_libc/Source/src/stdlib.c \
-	I_libc/Source/src/string.c \
-	I_libc/Source/src/iconv.c \
-	I_libc/Source/src/stdio.c \
-	I_libc/Source/src/errno.c \
-	I_libc/Source/src/posix.c \
-	I_libc/Source/src/dlfcn.c \
-	I_libc/Source/src/sys/syscalls.c \
-	I_libc/Source/src/sys/$(ARCH)/hal_syscall.c \
-	I_libc/Source/src/sys/$(ARCH)/setjmp.c \
+	libc/I_libc/Source/src/assert.c \
+	libc/I_libc/Source/src/math.c \
+	libc/I_libc/Source/src/stdlib.c \
+	libc/I_libc/Source/src/string.c \
+	libc/I_libc/Source/src/iconv.c \
+	libc/I_libc/Source/src/stdio.c \
+	libc/I_libc/Source/src/errno.c \
+	libc/I_libc/Source/src/posix.c \
+	libc/I_libc/Source/src/dlfcn.c \
+	libc/I_libc/Source/src/sys/syscalls.c \
+	libc/I_libc/Source/src/sys/$(ARCH)/hal_syscall.c \
+	libc/I_libc/Source/src/sys/$(ARCH)/setjmp.c \
 	$(LIBRARY_C_SRCS) \
-	Userland-Common/Source/Userland.c \
-	Service-Management/Source/Syscalls.c \
-	API/Source/XMLParser.c \
-	Service-Management/Source/service_client.c \
+	Userland/Source/Userland.c \
+	Userland/Source/Syscalls.c \
+	Userland/API/Source/XMLParser.c \
+	Userland/Service/Source/service_client.c \
 	com.ImplusOS.netstack/Source/DNS/DNS.c \
 	com.ImplusOS.posix/Source/src/posix_fdtable.c \
 	com.ImplusOS.posix/Source/src/posix_file.c \
@@ -278,46 +278,46 @@ USERLAND_C_SRCS := \
 	com.ImplusOS.posix/Source/src/posix_io.c
 
 USERLAND_APP_C_SRCS := \
-	I_libc/Source/src/assert.c \
-	I_libc/Source/src/math.c \
-	I_libc/Source/src/stdlib.c \
-	I_libc/Source/src/string.c \
-	I_libc/Source/src/iconv.c \
-	I_libc/Source/src/stdio.c \
-	I_libc/Source/src/errno.c \
-	I_libc/Source/src/posix.c \
-	I_libc/Source/src/dlfcn.c \
-	I_libc/Source/src/sys/syscalls.c \
-	I_libc/Source/src/sys/$(ARCH)/hal_syscall.c \
-	I_libc/Source/src/sys/$(ARCH)/setjmp.c \
+	libc/I_libc/Source/src/assert.c \
+	libc/I_libc/Source/src/math.c \
+	libc/I_libc/Source/src/stdlib.c \
+	libc/I_libc/Source/src/string.c \
+	libc/I_libc/Source/src/iconv.c \
+	libc/I_libc/Source/src/stdio.c \
+	libc/I_libc/Source/src/errno.c \
+	libc/I_libc/Source/src/posix.c \
+	libc/I_libc/Source/src/dlfcn.c \
+	libc/I_libc/Source/src/sys/syscalls.c \
+	libc/I_libc/Source/src/sys/$(ARCH)/hal_syscall.c \
+	libc/I_libc/Source/src/sys/$(ARCH)/setjmp.c \
 	$(LIBRARY_C_SRCS) \
-	Service-Management/Source/Syscalls.c \
-	API/Source/XMLParser.c \
-	Service-Management/Source/service_client.c \
+	Userland/Source/Syscalls.c \
+	Userland/API/Source/XMLParser.c \
+	Userland/Service/Source/service_client.c \
 	com.ImplusOS.netstack/Source/DNS/DNS.c
 
 # Syscalls.c/service_client.c/DNS.c keep their OLD object-output paths
 # (Userland/Syscalls.o, Userland/Service/service_client.o,
-# Userland/Service/com.ImplusOS.netstack/DNS/DNS.o) since Userland-Common's
+# Userland/Service/com.ImplusOS.netstack/DNS/DNS.o) since Userland/Source's
 # AppCommon.mk (COMMON_OBJS) already hard-codes those -- only the compile
 # rule's *source* side needs to point at the new location (see the pattern
 # rules below).
 USERLAND_INIT_OBJS := \
-	$(patsubst Userland-Common/Source/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland-Common/Source/%.c,$(USERLAND_C_SRCS))) \
-	$(if $(filter Service-Management/Source/Syscalls.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
-	$(if $(filter Service-Management/Source/service_client.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
-	$(patsubst API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter API/Source/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst Userland/Source/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/Source/%.c,$(USERLAND_C_SRCS))) \
+	$(if $(filter Userland/Source/Syscalls.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
+	$(if $(filter Userland/Service/Source/service_client.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
+	$(patsubst Userland/API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter Userland/API/Source/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst com.ImplusOS.netstack/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o,$(filter com.ImplusOS.netstack/Source/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst com.ImplusOS.posix/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o,$(filter com.ImplusOS.posix/Source/%.c,$(USERLAND_C_SRCS))) \
-	$(patsubst I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter I_libc/Source/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst libc/I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/Source/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst Library/Source/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/Source/%.c,$(USERLAND_C_SRCS)))
 
 USERLAND_APP_OBJS := \
-	$(if $(filter Service-Management/Source/Syscalls.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
-	$(if $(filter Service-Management/Source/service_client.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
-	$(patsubst API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter API/Source/%.c,$(USERLAND_APP_C_SRCS))) \
+	$(if $(filter Userland/Source/Syscalls.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
+	$(if $(filter Userland/Service/Source/service_client.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
+	$(patsubst Userland/API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter Userland/API/Source/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst com.ImplusOS.netstack/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o,$(filter com.ImplusOS.netstack/Source/%.c,$(USERLAND_APP_C_SRCS))) \
-	$(patsubst I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter I_libc/Source/%.c,$(USERLAND_APP_C_SRCS))) \
+	$(patsubst libc/I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/Source/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst Library/Source/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/Source/%.c,$(USERLAND_APP_C_SRCS)))
 
 RECOVERY_OBJS := \
@@ -327,7 +327,7 @@ RECOVERY_OBJS := \
 USERLAND_CFLAGS := \
 	-I. \
 	-IKernel/Source/include \
-	-II_libc/Source/include \
+	-Ilibc/I_libc/Source/include \
 	-Icom.ImplusOS.posix/Source/include \
 	-ILibrary/Source \
 	-IVendor \
@@ -346,7 +346,7 @@ USERLAND_CXXFLAGS := \
 	-fno-exceptions -fno-rtti \
 	-Wall -Wextra -Os -g0 -ffunction-sections -fdata-sections -MMD -MP
 
-USERLAND_LDFLAGS := -T Userland-Common/Source/Userland.ld -nostdlib --build-id=none --gc-sections
+USERLAND_LDFLAGS := -T Userland/Source/Userland.ld -nostdlib --build-id=none --gc-sections
 
 all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel vendor_libs app_build service_build driver_stage $(USERLAND_INIT_ELF)
 
@@ -416,19 +416,19 @@ $(BOOTMANAGER_EFI): edk2_bootmanager
 	@mkdir -p $(dir $@)
 	@$(call COPY_EDK2_OUTPUT,$(BOOTMANAGER_MODULE_NAME),$@)
 
-$(BUILD_DIR)/Userland/%.o: Userland-Common/Source/%.c
+$(BUILD_DIR)/Userland/%.o: Userland/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/Syscalls.o: Service-Management/Source/Syscalls.c
+$(BUILD_DIR)/Userland/Syscalls.o: Userland/Source/Syscalls.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/Service/service_client.o: Service-Management/Source/service_client.c
+$(BUILD_DIR)/Userland/Service/service_client.o: Userland/Service/Source/service_client.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/API/%.o: API/Source/%.c
+$(BUILD_DIR)/Userland/API/%.o: Userland/API/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
@@ -440,7 +440,7 @@ $(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o: com.ImplusOS.posix/Source/
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/libc/I_libc/%.o: I_libc/Source/%.c
+$(BUILD_DIR)/Userland/libc/I_libc/%.o: libc/I_libc/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
@@ -448,7 +448,7 @@ $(BUILD_DIR)/Library/%.o: Library/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/%.o: Userland-Common/Source/%.cpp
+$(BUILD_DIR)/Userland/%.o: Userland/Source/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(USERLAND_CXXFLAGS) -c $< -o $@
 
@@ -461,7 +461,7 @@ $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 $(BUILD_DIR)/RecoveryEnvironment/%.o: $(RECOVERY_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) $(if $(filter 1,$(RECOVERY_AUDIO_TEST)),-DRECOVERY_AUDIO_TEST) \
-		-IUserland-Common/Source -IAPI/Source -c $< -o $@
+		-IUserland/Source -IUserland/API/Source -c $< -o $@
 
 $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	@mkdir -p $(dir $@)
@@ -504,7 +504,7 @@ install_payload: all linux_runtime_stage
 		name=$$(basename "$$dir"); \
 		cp -a "$(BUILD_DIR)/Userland/Service/$$name" "$(INSTALL_PAYLOAD_ROOT)/Userland/Service/"; \
 	done
-	@[ -f Service-Management/Source/services.list ] && cp Service-Management/Source/services.list $(INSTALL_PAYLOAD_ROOT)/Userland/Service/ || true
+	@[ -f Userland/Service/Source/services.list ] && cp Userland/Service/Source/services.list $(INSTALL_PAYLOAD_ROOT)/Userland/Service/ || true
 	@cp -a $(BOOT_RESOURCE_DIR) $(INSTALL_PAYLOAD_ROOT)/BootManager/
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp -a $(LINUX_RUNTIME_STAGE)/lib64 $(INSTALL_PAYLOAD_ROOT)/; \
@@ -646,7 +646,7 @@ image_livecd: all linux_runtime_stage
 		name=$$(basename "$$dir"); \
 		cp -a "$(BUILD_DIR)/Userland/Service/$$name" "$(IMAGE_STAGE_DIR)/Userland/Service/"; \
 	done
-	@[ -f Service-Management/Source/services.list ] && cp Service-Management/Source/services.list $(IMAGE_STAGE_DIR)/Userland/Service/ || true
+	@[ -f Userland/Service/Source/services.list ] && cp Userland/Service/Source/services.list $(IMAGE_STAGE_DIR)/Userland/Service/ || true
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp -a $(LINUX_RUNTIME_STAGE)/lib64 $(IMAGE_STAGE_DIR)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(IMAGE_STAGE_DIR)/; \
