@@ -137,8 +137,7 @@ endef
 # snippet $(include)'d by Kernel/Source/Makefile, not a buildable module
 # directory) while still matching every driver module's own Makefile under
 # Kernel/Source/Drivers/<Category>/<Driver>/ (see
-# Docs/Others/TODO_OS_Refactor.md 4./5./6.). Kernel/ itself is now a git
-# submodule (github.com/ImplusOS/Kernel) whose content lives under Source/.
+# Docs/Others/TODO_OS_Refactor.md 4./5./6.).
 DRIVER_MAKEFILES := $(shell find Kernel/Source/Drivers -mindepth 2 -name Makefile -print 2>/dev/null | sort)
 DRIVER_DIRS      := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
 DRIVER_BUILD_ROOT := $(BUILD_ROOT)/Modules
@@ -170,10 +169,6 @@ DRIVER_DB_SRC := Kernel/Source/Drivers/Manifest/DriverDB.txt
 
 # Statically-linked BusyBox vendored by the BusyBox app (fetched by its own
 # Makefile). Also published as /bin/sh -- see STAGE_POSIX_BIN below.
-# NOTE: the BusyBox app repository was removed (not split out); this path is
-# currently dead and STAGE_POSIX_BIN's wildcard guard makes that a silent
-# no-op (a warning is printed) rather than a build failure. /bin/sh will be
-# absent from install/LiveCD images until BusyBox is restored somewhere.
 BUSYBOX_BIN := Userland/Application/BusyBox/Resource/busybox
 
 # Copies $(DRIVER_STAGE_DIR)/*.ELF into $(1)/Kernel/Driver/ or
@@ -239,15 +234,10 @@ define STAGE_FIRMWARE_FAT
 	done;
 endef
 
-# Apps and services used to live under a common Userland/Application/ and
-# Userland/Service/ parent, discovered generically by globbing for a
-# Makefile one level down. Each has since moved into its own top-level
-# repository (github.com/ImplusOS/<name>), so there is no longer a shared
-# parent directory to glob against; each is instead named explicitly and
-# guarded with $(wildcard ...) so the build tolerates a submodule not yet
-# being checked out here (see README.md / Docs/Others/TODO_OS_Refactor.md).
-# Add `git submodule add -b main https://github.com/ImplusOS/<name>.git
-# <name>` to bring one in -- no other Makefile change is needed.
+# Each app/service is now its own top-level repository (github.com/ImplusOS/
+# <name>) instead of living under a shared Userland/Application/ or
+# Userland/Service/ parent, so each is named explicitly here and guarded
+# with $(wildcard ...) for one not yet checked out as a submodule.
 APP_REPO_NAMES := com.ImplusOS.sysnotif com.ImplusOS.waylandcompositor \
                    com.ImplusOS.gtk3demo com.ImplusOS.windowmanager
 SERVICE_REPO_NAMES := com.ImplusOS.ldso com.ImplusOS.dynmain \
@@ -258,12 +248,6 @@ SERVICE_DIRS := $(foreach n,$(SERVICE_REPO_NAMES),$(if $(wildcard $(n)/Makefile)
 
 LIBRARY_C_SRCS := $(shell find Library/Source -name "*.c" 2>/dev/null)
 
-# NOTE: com.ImplusOS.posix and com.ImplusOS.netstack have not been split
-# into their own repositories yet (unlike every other Userland/Service/*
-# entry) -- their source is only recoverable from ImplusOS git history
-# (pre-split commits). The paths below are the OLD Userland/Service/...
-# locations and will fail to compile until these two services are restored
-# as sibling checkouts (see Docs/Others/TODO_OS_Refactor.md).
 USERLAND_C_SRCS := \
 	I_libc/Source/src/assert.c \
 	I_libc/Source/src/math.c \
@@ -282,16 +266,16 @@ USERLAND_C_SRCS := \
 	Service-Management/Source/Syscalls.c \
 	API/Source/XMLParser.c \
 	Service-Management/Source/service_client.c \
-	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_fdtable.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_file.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_process.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_signal.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_thread.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_net.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_time.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_mman.c \
-	Userland/Service/com.ImplusOS.posix/src/posix_io.c
+	com.ImplusOS.netstack/Source/DNS/DNS.c \
+	com.ImplusOS.posix/Source/src/posix_fdtable.c \
+	com.ImplusOS.posix/Source/src/posix_file.c \
+	com.ImplusOS.posix/Source/src/posix_process.c \
+	com.ImplusOS.posix/Source/src/posix_signal.c \
+	com.ImplusOS.posix/Source/src/posix_thread.c \
+	com.ImplusOS.posix/Source/src/posix_net.c \
+	com.ImplusOS.posix/Source/src/posix_time.c \
+	com.ImplusOS.posix/Source/src/posix_mman.c \
+	com.ImplusOS.posix/Source/src/posix_io.c
 
 USERLAND_APP_C_SRCS := \
 	I_libc/Source/src/assert.c \
@@ -310,11 +294,11 @@ USERLAND_APP_C_SRCS := \
 	Service-Management/Source/Syscalls.c \
 	API/Source/XMLParser.c \
 	Service-Management/Source/service_client.c \
-	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c
+	com.ImplusOS.netstack/Source/DNS/DNS.c
 
-# Syscalls.c and service_client.c both moved into Service-Management/Source/
-# but keep their OLD object-output paths (Userland/Syscalls.o and
-# Userland/Service/service_client.o respectively) since Userland-Common's
+# Syscalls.c/service_client.c/DNS.c keep their OLD object-output paths
+# (Userland/Syscalls.o, Userland/Service/service_client.o,
+# Userland/Service/com.ImplusOS.netstack/DNS/DNS.o) since Userland-Common's
 # AppCommon.mk (COMMON_OBJS) already hard-codes those -- only the compile
 # rule's *source* side needs to point at the new location (see the pattern
 # rules below).
@@ -323,7 +307,8 @@ USERLAND_INIT_OBJS := \
 	$(if $(filter Service-Management/Source/Syscalls.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
 	$(if $(filter Service-Management/Source/service_client.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
 	$(patsubst API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter API/Source/%.c,$(USERLAND_C_SRCS))) \
-	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst com.ImplusOS.netstack/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o,$(filter com.ImplusOS.netstack/Source/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst com.ImplusOS.posix/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o,$(filter com.ImplusOS.posix/Source/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter I_libc/Source/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst Library/Source/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/Source/%.c,$(USERLAND_C_SRCS)))
 
@@ -331,7 +316,7 @@ USERLAND_APP_OBJS := \
 	$(if $(filter Service-Management/Source/Syscalls.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
 	$(if $(filter Service-Management/Source/service_client.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
 	$(patsubst API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter API/Source/%.c,$(USERLAND_APP_C_SRCS))) \
-	$(patsubst Userland/%.c,$(BUILD_DIR)/Userland/%.o,$(filter Userland/%.c,$(USERLAND_APP_C_SRCS))) \
+	$(patsubst com.ImplusOS.netstack/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o,$(filter com.ImplusOS.netstack/Source/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter I_libc/Source/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst Library/Source/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/Source/%.c,$(USERLAND_APP_C_SRCS)))
 
@@ -343,7 +328,7 @@ USERLAND_CFLAGS := \
 	-I. \
 	-IKernel/Source/include \
 	-II_libc/Source/include \
-	-IUserland/Service/com.ImplusOS.posix/include \
+	-Icom.ImplusOS.posix/Source/include \
 	-ILibrary/Source \
 	-IVendor \
 	-IVendor/Library/libjpeg/src \
@@ -379,8 +364,6 @@ ifeq ($(ARCH),x86_64)
 	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata locale \
 		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
 		CHROME_BIN="$(abspath Chromium/Resource/chrome)"
-		# NOTE: the Chromium app repository was removed (not split out);
-		# CHROME_BIN will not exist until it is restored somewhere.
 else
 	@echo "linux_runtime_stage: skipped for ARCH=$(ARCH)"
 endif
@@ -449,7 +432,11 @@ $(BUILD_DIR)/Userland/API/%.o: API/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/%.o: Userland/%.c
+$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o: com.ImplusOS.netstack/Source/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o: com.ImplusOS.posix/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
