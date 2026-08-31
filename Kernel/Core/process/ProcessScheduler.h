@@ -68,6 +68,14 @@ typedef struct __attribute__((aligned(16))) {
     uint64_t user_heap_limit;
     uint64_t user_heap_alloc_limit;
     uint64_t user_heap_guard_page;
+    /* The program break (brk/sbrk), which glibc's malloc grows as one
+     * contiguous arena. It gets a window of its own, disjoint from the
+     * user_heap_cursor bump allocator: those two used to share a cursor, so a
+     * dlopen()ed shared object could be mapped straight on top of memory
+     * malloc had already handed out. See process_set_heap_cursor(). */
+    uint64_t user_brk_base;
+    uint64_t user_brk_cursor;
+    uint64_t user_brk_limit;
     uint64_t user_stack_base;
     uint64_t user_stack_top;
     uint64_t user_stack_guard_page;

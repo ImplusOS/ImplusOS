@@ -103,6 +103,48 @@ for want in swrast_dri.so kms_swrast_dri.so; do
 done
 log "staged DRI: $(ls "$STAGE_DIR/usr/lib/x86_64-linux-gnu/dri" 2>/dev/null | tr '\n' ' ')"
 
+# ---- 2b. EGL (glvnd + Mesa vendor) --------------------------------------
+# trixie の dri/*_dri.so は libdril_dri.so (薄い DRI ローダ) への symlink。
+# AIGLX/GLX の swrast プロバイダ経路で libdril はサーフェスレス EGL 経由で
+# スクリーンを作るため libEGL.so.1 を実行時 dlopen する。DT_NEEDED に出ないので
+# .so 閉包(stage.sh)では来ない。ここで明示配置する:
+#   libEGL.so.1        <- libegl1      (glvnd ディスパッチ)
+#   libEGL_mesa.so.0   <- libegl-mesa0 (実体。glvnd が egl_vendor.d の JSON で発見)
+#   /usr/share/glvnd/egl_vendor.d/50_mesa.json  <- 同上（無いと glvnd が vendor 0 個）
+EGLDEB="$(deb_of libegl1)"
+if [ -n "$EGLDEB" ]; then
+	egldir="$(extract libegl1 "$EGLDEB")"
+	copy_tree_real "$egldir/usr/lib/x86_64-linux-gnu" "$STAGE_DIR/usr/lib/x86_64-linux-gnu"
+fi
+EGLMESADEB="$(deb_of libegl-mesa0)"
+if [ -n "$EGLMESADEB" ]; then
+	eglmesadir="$(extract libegl-mesa0 "$EGLMESADEB")"
+	copy_tree_real "$eglmesadir/usr/lib/x86_64-linux-gnu" "$STAGE_DIR/usr/lib/x86_64-linux-gnu"
+	copy_tree_real "$eglmesadir/usr/share/glvnd"          "$STAGE_DIR/usr/share/glvnd"
+fi
+[ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/libEGL.so.1" ] \
+	|| log "WARN: libEGL.so.1 missing; GLX swrast provider (+iglx) will crash"
+[ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/libEGL_mesa.so.0" ] \
+	|| log "WARN: libEGL_mesa.so.0 missing; glvnd EGL will find no vendor"
+[ -f "$STAGE_DIR/usr/share/glvnd/egl_vendor.d/50_mesa.json" ] \
+	|| log "WARN: egl_vendor.d/50_mesa.json missing; glvnd EGL vendor discovery fails"
+log "staged EGL: $(ls "$STAGE_DIR"/usr/lib/x86_64-linux-gnu/libEGL* 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+
+# ---- 2c. GLX vendor (glvnd) ---------------------------------------------
+# libGLX.so.0 (glvnd) は実際の GLX 実装を libGLX_<vendor>.so.0 として
+# **dlopen** する（既定 vendor は "mesa"）。dlopen なので DT_NEEDED に現れず、
+# .so 閉包(stage.sh)では絶対に来ない — libgbm / libEGL と同じ穴。
+# これが無いと glvnd は vendor 0 個になり、glXCreateContext() が黙って NULL を
+# 返す（Doom は "context: (nil)" のあと glXMakeCurrent で GLX BadMatch）。
+GLXMESADEB="$(deb_of libglx-mesa0)"
+if [ -n "$GLXMESADEB" ]; then
+	glxmesadir="$(extract libglx-mesa0 "$GLXMESADEB")"
+	copy_tree_real "$glxmesadir/usr/lib/x86_64-linux-gnu" "$STAGE_DIR/usr/lib/x86_64-linux-gnu"
+fi
+[ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/libGLX_mesa.so.0" ] \
+	|| log "WARN: libGLX_mesa.so.0 missing; glvnd will have no GLX vendor and glXCreateContext() returns NULL"
+log "staged GLX vendor: $(ls "$STAGE_DIR"/usr/lib/x86_64-linux-gnu/libGLX_mesa* 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+
 # ---- 3. xkb データ + xkbcomp --------------------------------------------
 XKB="$(deb_of xkb-data)"; [ -n "$XKB" ] || die "xkb-data deb not in cache"
 xkbdir="$(extract xkb-data "$XKB")"
@@ -133,7 +175,7 @@ cat > "$STAGE_DIR/etc/X11/xorg.conf" <<'CONF'
 # ImplusOS 方法A: Xorg を modesetting DDX で /dev/dri/card0（カーネル KMS shim）に固定。
 # udev/logind/VT は無いので入力自動追加を切り、レガシー modeset で動かす。
 Section "ServerFlags"
-    Option "AutoAdddevices" "false"
+    Option "AutoAddDevices" "false"
     Option "AutoAddGPU"     "false"
     Option "DontVTSwitch"   "true"
     Option "DontZap"        "false"
@@ -141,7 +183,6 @@ EndSection
 
 Section "Module"
     Load "glx"
-    Load "evdev"
     Disable "dri"
     Disable "dri2"
 EndSection

@@ -40,7 +40,7 @@ typedef struct __attribute__((packed)) {
 #include "Network/tcp/TCP.h"
 #include "Network/dhcp/DHCP.h"
 #include "Core/timer/Timer.h"
-#include "Drivers/RTC/RTC.h"
+#include "Platform/rtc/RTC.h"
 #include "Core/vfs/VFS.h"
 #include "Core/usercopy/Usercopy.h"
 #include "kernel/config.h"

@@ -1,10 +1,24 @@
 #pragma once
 #include <stdint.h>
 
+/* Linux's x86_64 struct epoll_event is PACKED: 12 bytes, with `data` at
+ * offset 4, not 16 bytes with `data` at offset 8. Getting this wrong makes
+ * every epoll_wait() hand userland the `data` it registered shifted by four
+ * bytes and the array stride wrong by four -- which is how the X server's
+ * ospoll_wait() read a NULL `struct ospollfd *` out of events[i].data.ptr and
+ * died dereferencing it (CR2=0x18) the moment it entered its main loop.
+ * See TODO_Doom_Xorg_MethodA.md M21. */
+#if defined(__x86_64__)
+typedef struct __attribute__((packed)) {
+    uint32_t events;
+    uint64_t data;
+} epoll_event_t;
+#else
 typedef struct {
     uint32_t events;
     uint64_t data;
 } epoll_event_t;
+#endif
 
 int32_t syscall_epoll_create(uint64_t flags);
 int32_t syscall_epoll_ctl(int32_t epfd, int32_t op, int32_t fd,

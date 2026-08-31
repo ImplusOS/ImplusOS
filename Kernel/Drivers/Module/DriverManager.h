@@ -32,6 +32,8 @@ const device_t *device_manager_find(device_type_t type,
                                    const char *module_name);
 
 const pci_driver_t *driver_manager_get_pci_driver(void);
+/* First driver registered as DEVICE_TYPE_INPUT (historically the PS/2
+ * controller module, hence the name) -- no module filename is hard-coded. */
 const driver_input_t *driver_manager_get_ps2_driver(void);
 const usb_master_vtable_t *driver_manager_get_usb_driver(void);
 const driver_display_t *driver_manager_get_display_driver(const char *module_name);

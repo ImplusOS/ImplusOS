@@ -6,6 +6,7 @@
 #include "IPC/UnixSocket.h"
 #include "Core/elf/ELF_Loader.h"
 #include "Core/memory/SharedMemory.h"
+#include "Core/memory/FileMap.h"
 #include "Core/vfs/VFS.h"
 #include "cpu/GDT_Main.h"
 #include "MemoryManagement/Memory_Main.h"
@@ -447,6 +448,9 @@ static void reset_process_slot(process_t *proc)
     proc->user_heap_cursor = 0;
     proc->user_heap_limit = 0;
     proc->user_heap_alloc_limit = 0;
+    proc->user_brk_base = 0;
+    proc->user_brk_cursor = 0;
+    proc->user_brk_limit = 0;
     proc->user_heap_guard_page = 0;
     proc->user_stack_base = 0;
     proc->user_stack_top = 0;
@@ -562,6 +566,9 @@ static void release_process_resources(process_t *proc)
     proc->user_heap_cursor = 0;
     proc->user_heap_limit = 0;
     proc->user_heap_alloc_limit = 0;
+    proc->user_brk_base = 0;
+    proc->user_brk_cursor = 0;
+    proc->user_brk_limit = 0;
     proc->user_heap_guard_page = 0;
     proc->user_stack_base = 0;
     proc->user_stack_top = 0;
@@ -1546,6 +1553,28 @@ static int initialize_process_memory(process_t *proc,
         return -1;
     }
     proc->user_heap_alloc_limit = proc->user_heap_limit - thread_reserve;
+
+    /* Carve the program break its own window, below anything the bump
+     * allocator can reach.
+     *
+     * brk() used to be served by process_user_alloc() -- the same bump/
+     * free-list allocator that backs process_user_mmap(). glibc's malloc
+     * treats the break as one contiguous arena it owns outright, so sharing an
+     * allocator with mmap() is not survivable: a brk() satisfied out of the
+     * free list left user_heap_cursor where it was, and the next dlopen() then
+     * mapped a shared object straight over memory malloc had already handed
+     * out. It surfaced as function pointers in Xorg's heap reading back as
+     * addresses inside libmtdev / modesetting_drv, and as threads returning
+     * into string data. See TODO_Doom_Xorg_MethodA.md M20. */
+    if (USER_BRK_WINDOW_SIZE >=
+        (proc->user_heap_alloc_limit - proc->user_heap_base)) {
+        return -1;
+    }
+    proc->user_brk_limit  = proc->user_heap_alloc_limit;
+    proc->user_brk_base   = proc->user_brk_limit - USER_BRK_WINDOW_SIZE;
+    proc->user_brk_cursor = proc->user_brk_base;
+    proc->user_heap_alloc_limit = proc->user_brk_base;
+
     proc->user_stack_guard_page = proc->user_stack_base;
     proc->user_stack_base += PROCESS_GUARD_PAGE_SIZE;
 
@@ -2271,6 +2300,9 @@ int32_t process_create_thread_ex(uint64_t entry,
     thread->user_heap_cursor = owner->user_heap_cursor;
     thread->user_heap_limit = owner->user_heap_limit;
     thread->user_heap_alloc_limit = owner->user_heap_alloc_limit;
+    thread->user_brk_base = owner->user_brk_base;
+    thread->user_brk_cursor = owner->user_brk_cursor;
+    thread->user_brk_limit = owner->user_brk_limit;
     thread->user_heap_guard_page = owner->user_heap_guard_page;
     thread->user_stack_guard_page = region_base;
     thread->user_stack_base = region_base + PROCESS_GUARD_PAGE_SIZE;
@@ -2537,6 +2569,35 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
         static const char *glibc_envp[] = {
             "PATH=/bin:/usr/bin",
             "LD_LIBRARY_PATH=/lib64:/usr/lib/x86_64-linux-gnu:/usr/lib",
+            /* Xorg's modesetting_drv.so has 12 undefined gbm_* symbols and does
+               NOT list libgbm.so.1 in DT_NEEDED -- on a stock distro it only
+               resolves them because AccelMethod "glamor" pulls in
+               libglamoregl.so (-> libgbm). Our xorg.conf forces AccelMethod
+               "none" (no GPU), so nothing loads libgbm and the driver fails
+               relocation ("undefined symbol: gbm_bo_get_plane_count",
+               "No drivers available"). Preload libgbm.so.1 so its symbols sit
+               in the global scope before modesetting_drv.so is dlopen()ed.
+               TODO_Doom_Xorg_MethodA.md M6 (7th boot). */
+            "LD_PRELOAD=libgbm.so.1",
+            /* Bind every relocation at load time. Two reasons:
+               (1) boot 7 proved libglx.so resolves cleanly under eager
+                   binding but a *lazy* PLT fixup for one of its symbols dies
+                   at GlxExtensionInit() time with an un-printable name
+                   (process faults mid-message) -- eager binding sidesteps
+                   the broken lazy path;
+               (2) with LD_WARN=1 a load-time relocation miss is reported by
+                   name and made non-fatal, so any genuinely absent symbol is
+                   finally legible instead of racing off the console.
+               TODO_Doom_Xorg_MethodA.md M6 (9th boot). */
+            "LD_BIND_NOW=1",
+            /* NOTE: LD_WARN=1 was removed. With it, the unresolved
+               R_X86_64_GLOB_DAT for `glxServer` (a data symbol exported only
+               by the Xorg PIE) was demoted to a warning and the GOT slot left
+               0, so libglx.so later did `call *0x38(NULL)` -> SIGSEGV at 0x38.
+               Without LD_WARN the miss is fatal AND named at load time:
+               "Xorg: ... undefined symbol: glxServer", which is the real bug
+               to chase (dlopen'd modules can't resolve main-executable data
+               symbols). TODO_Doom_Xorg_MethodA.md M7. */
             "LANG=C.UTF-8",
             "LC_ALL=C.UTF-8",
             "TZ=UTC",
@@ -2560,13 +2621,28 @@ int32_t process_spawn_user_elf_with_arg(const char *path,
             "GSETTINGS_BACKEND=memory",
             "FONTCONFIG_PATH=/etc/fonts",
             "FONTCONFIG_FILE=/etc/fonts/fonts.conf",
-            /* Doom (Method A: TODO_Doom_Xorg_MethodA.md). The X client
-               (linuxxdoom) connects to :0 with no DISPLAY set; the Xorg we
-               spawn runs modesetting on /dev/dri/card0 (kernel KMS shim).
-               Mesa must use the software rasteriser (llvmpipe) since there is
-               no real GPU; the X core keyboard needs xkb-data's rules root. */
+            /* Doom (Method A: TODO_Doom_Xorg_MethodA.md). The Xorg we spawn
+               runs modesetting on /dev/dri/card0 (kernel KMS shim); Mesa must
+               use the software rasteriser (llvmpipe) since there is no real
+               GPU; the X core keyboard needs xkb-data's rules root.
+
+               DISPLAY is NOT optional. Xlib does not fall back to :0 -- with
+               no DISPLAY in the environment, XOpenDisplay(NULL) hands a NULL
+               display name to xcb_connect(), which returns a connection
+               already in the error state, so every X client dies at startup
+               ("Couldn't connect to display!"). Name the socket the server
+               actually listens on: /tmp/.X11-unix/X0. */
+            "DISPLAY=:0",
             "LIBGL_ALWAYS_SOFTWARE=1",
             "GALLIUM_DRIVER=llvmpipe",
+            /* Force indirect GLX: GL commands go over the X protocol and the
+               server renders them (it reports "GLX: Initialized DRISWRAST GL
+               provider" with +iglx). The client's own direct path cannot work
+               here -- trixie ships every *_dri.so as the thin libdril shim,
+               which has no usable software screen -- so glXCreateContext()
+               returned NULL and the following glXMakeCurrent() drew a GLX
+               BadMatch. See TODO_Doom_Xorg_MethodA.md M23. */
+            "LIBGL_ALWAYS_INDIRECT=1",
             "XKB_CONFIG_ROOT=/usr/share/X11/xkb",
             /* Doom pulls libopenal (+ SDL2 via libfluidsynth). ImplusOS has no
                PipeWire/PulseAudio/ALSA device; letting OpenAL-soft probe them
@@ -2660,8 +2736,16 @@ static int process_copy_user_page(uint64_t child_cr3, uint64_t vaddr,
     return ret;
 }
 
+/* Bring-up instrumentation (TODO_Doom_Xorg_MethodA.md M12). Xorg's fork() --
+ * its only route to xkbcomp -- was measured taking ~281 s and then failing.
+ * Whether that is sheer copy volume (Xorg maps libLLVM at 129 MB, libgallium
+ * at 42 MB, ...) or a per-page pathology cannot be told apart from the
+ * outside, so report both the elapsed time and the outcome once per fork. */
 static int process_clone_address_space(process_t *child, process_t *parent)
 {
+    const uint64_t clone_start_ns = process_perf_now_ns();
+    int clone_rc;
+
     if (parent->abi_mode == PROCESS_ABI_LINUX) {
 #if KERNEL_COW_FORK
         /* Copy-on-write: share the parent's pages read-only into the child
@@ -2669,13 +2753,28 @@ static int process_clone_address_space(process_t *child, process_t *parent)
          * eager copy if the COW clone reports failure. */
         if (paging_cow_clone_user_range(child->cr3, parent->cr3,
                                         0x1000, USER_STACK_BASE) == 0) {
-            return 0;
+            clone_rc = 0;
+            goto done;
         }
 #endif
-        return paging_copy_present_user_range(child->cr3, parent->cr3,
-                                              0x1000, USER_STACK_BASE);
+        clone_rc = paging_copy_present_user_range(child->cr3, parent->cr3,
+                                                  0x1000, USER_STACK_TOP);
+        if (clone_rc == 0) {
+            /* The USER_MMAP arena sits far above the stack, so it needs its
+             * own pass. Shared objects live there now that large file
+             * mappings are demand-paged, and the child would otherwise start
+             * with its libraries' writable data absent. The walk skips absent
+             * page-table levels, so covering the (mostly empty) arena is
+             * cheap, and the demand-paged pages that have never been touched
+             * cost nothing here -- FileMap re-registers those separately. */
+            clone_rc = paging_copy_present_user_range(child->cr3, parent->cr3,
+                                                      USER_MMAP_BASE,
+                                                      USER_MMAP_LIMIT);
+        }
+        goto done;
     }
 
+    clone_rc = 0;
     uint64_t parent_cr3 = parent->cr3;
     uint64_t child_cr3 = child->cr3;
 
@@ -2700,7 +2799,24 @@ static int process_clone_address_space(process_t *child, process_t *parent)
         if (process_copy_user_page(child_cr3, vaddr, phys) < 0) return -1;
     }
 
-    return 0;
+done:
+    {
+        uint64_t elapsed_ms =
+            (process_perf_now_ns() - clone_start_ns) / 1000000ULL;
+        serial_write_string("[fork] clone_address_space rc=");
+        serial_write_uint64((uint64_t)(int64_t)clone_rc);
+        serial_write_string(" elapsed_ms=");
+        serial_write_uint64(elapsed_ms);
+        /* Kernel heap, not free physical memory -- get_free_memory() walks the
+         * heap free list. Labelled honestly so it is not read as an
+         * out-of-RAM signal (it sits at ~94 MB in steady state). */
+        serial_write_string(" free_heap=");
+        serial_write_uint64(get_free_memory());
+        serial_write_string(" free_pages=");
+        serial_write_uint64(memory_free_pages());
+        serial_write_char('\n');
+    }
+    return clone_rc;
 }
 
 int32_t process_fork(void)
@@ -2762,6 +2878,9 @@ int32_t process_fork(void)
     child->user_heap_cursor = parent->user_heap_cursor;
     child->user_heap_limit = parent->user_heap_limit;
     child->user_heap_alloc_limit = parent->user_heap_alloc_limit;
+    child->user_brk_base = parent->user_brk_base;
+    child->user_brk_cursor = parent->user_brk_cursor;
+    child->user_brk_limit = parent->user_brk_limit;
     child->user_heap_guard_page = parent->user_heap_guard_page;
     child->user_stack_base = parent->user_stack_base;
     child->user_stack_top = parent->user_stack_top;
@@ -2769,6 +2888,19 @@ int32_t process_fork(void)
     child->user_stack_guard_page = parent->user_stack_guard_page;
 
     if (process_clone_address_space(child, parent) < 0) goto fail_free_space;
+
+    /* Demand-paged file mappings live outside the page tables, so the child
+     * needs its own records (and its own references on the underlying open
+     * file descriptions) or its faults in those ranges would be answered with
+     * zeroes. */
+    if (filemap_clone_for_fork(parent_pid_saved, child_pid) < 0) {
+        goto fail_free_space;
+    }
+
+    /* POSIX: the child sees the parent's open descriptors at the same numbers.
+     * Without this, the very first thing a forked child does with an inherited
+     * fd fails -- Popen()'s child cannot dup2() the pipe it was handed. */
+    syscall_file_fork_inherit(parent_pid_saved, child_pid);
 
     for (uint32_t i = 0; i < PROCESS_USER_ALLOC_MAX; ++i) {
         child->user_allocs[i] = parent->user_allocs[i];
@@ -3065,6 +3197,30 @@ int32_t process_execve(const char *path, const char *const *argv,
     syscall_file_close_cloexec_for_pid(proc_pid);
     shared_memory_cleanup_process(proc_pid);
 
+    /* POSIX: execve resets every caught signal to SIG_DFL. The new image has
+     * none of the old one's code, so keeping the handlers meant a process that
+     * forked from Xorg and exec'd /bin/sh still ran Xorg's SIGSEGV handler --
+     * which faulted itself, at an address that no longer belonged to it, over
+     * and over. Ignored dispositions and the blocked mask are inherited, as
+     * POSIX requires; only handlers are cleared. */
+    /* signal_handlers[]: 0 = SIG_DFL, 1 = SIG_IGN, anything else is a user
+     * handler -- only the last of those is meaningless after exec. */
+    for (uint32_t sig = 0; sig < PROCESS_SIGNAL_MAX; ++sig) {
+        if (proc->signal_handlers[sig] > 1u) {
+            proc->signal_handlers[sig] = 0u;
+            proc->signal_flags[sig] = 0u;
+            proc->signal_sa_mask[sig] = 0u;
+            proc->signal_restorer[sig] = 0u;
+        }
+    }
+    proc->pending_signals = 0;
+    proc->altstack_sp = 0;
+    proc->altstack_size = 0;
+    proc->altstack_flags = 0;
+    /* execve replaces the address space wholesale, so every demand-paged file
+     * mapping (and its reference on the open file description) goes with it. */
+    filemap_release_pid(proc_pid);
+
     uint64_t old_cr3 = proc->cr3;
     proc->cr3 = 0;
     proc->rseq_area = 0;
@@ -3077,11 +3233,15 @@ int32_t process_execve(const char *path, const char *const *argv,
 
     uint64_t new_cr3 = paging_create_process_space();
     if (!new_cr3) {
-        uint64_t irq2 = irq_save_disable();
-        spinlock_lock(&g_process_table_lock);
-        proc->state = PROCESS_STATE_ZOMBIE;
-        spinlock_unlock(&g_process_table_lock);
-        irq_restore(irq2);
+        serial_write_string("[execve-fail] paging_create_process_space free_pages=");
+        serial_write_uint64(memory_free_pages());
+        serial_write_char('\n');
+        /* Past the point of no return: the old image is gone, so there is
+         * nothing to return to. Linux kills the process here rather than
+         * failing the call, and returning -1 instead left the caller running
+         * on a destroyed address space -- which is how a failed exec of
+         * xkbcomp turned into busybox faulting at NULL. */
+        process_exit_current_with_status(127);
         return -1;
     }
 
@@ -3100,16 +3260,42 @@ int32_t process_execve(const char *path, const char *const *argv,
     uint64_t thread_reserve =
         (uint64_t)g_process_capacity * PROCESS_THREAD_STACK_REGION_SIZE;
     if (thread_reserve >= (proc->user_heap_limit - proc->user_heap_base)) {
+        serial_write_string("[execve-fail] thread-reserve free_pages=");
+        serial_write_uint64(memory_free_pages());
+        serial_write_char('\n');
         paging_destroy_process_space(new_cr3);
         proc->cr3 = 0;
-        uint64_t irq2 = irq_save_disable();
-        spinlock_lock(&g_process_table_lock);
-        proc->state = PROCESS_STATE_ZOMBIE;
-        spinlock_unlock(&g_process_table_lock);
-        irq_restore(irq2);
+        /* Past the point of no return: the old image is gone, so there is
+         * nothing to return to. Linux kills the process here rather than
+         * failing the call, and returning -1 instead left the caller running
+         * on a destroyed address space -- which is how a failed exec of
+         * xkbcomp turned into busybox faulting at NULL. */
+        process_exit_current_with_status(127);
         return -1;
     }
     proc->user_heap_alloc_limit = proc->user_heap_limit - thread_reserve;
+
+    /* Carve the program break its own window, below anything the bump
+     * allocator can reach.
+     *
+     * brk() used to be served by process_user_alloc() -- the same bump/
+     * free-list allocator that backs process_user_mmap(). glibc's malloc
+     * treats the break as one contiguous arena it owns outright, so sharing an
+     * allocator with mmap() is not survivable: a brk() satisfied out of the
+     * free list left user_heap_cursor where it was, and the next dlopen() then
+     * mapped a shared object straight over memory malloc had already handed
+     * out. It surfaced as function pointers in Xorg's heap reading back as
+     * addresses inside libmtdev / modesetting_drv, and as threads returning
+     * into string data. See TODO_Doom_Xorg_MethodA.md M20. */
+    if (USER_BRK_WINDOW_SIZE >=
+        (proc->user_heap_alloc_limit - proc->user_heap_base)) {
+        return -1;
+    }
+    proc->user_brk_limit  = proc->user_heap_alloc_limit;
+    proc->user_brk_base   = proc->user_brk_limit - USER_BRK_WINDOW_SIZE;
+    proc->user_brk_cursor = proc->user_brk_base;
+    proc->user_heap_alloc_limit = proc->user_brk_base;
+
     proc->user_stack_guard_page = proc->user_stack_base;
     proc->user_stack_base += PROCESS_GUARD_PAGE_SIZE;
 
@@ -3119,13 +3305,17 @@ int32_t process_execve(const char *path, const char *const *argv,
         paging_map_user_range_alloc(proc->cr3, initial_stack_base,
                                      PROCESS_INITIAL_USER_STACK_SIZE,
                                      PAGE_RW | PAGE_USER) < 0) {
+        serial_write_string("[execve-fail] initial-stack-map free_pages=");
+        serial_write_uint64(memory_free_pages());
+        serial_write_char('\n');
         paging_destroy_process_space(new_cr3);
         proc->cr3 = 0;
-        uint64_t irq2 = irq_save_disable();
-        spinlock_lock(&g_process_table_lock);
-        proc->state = PROCESS_STATE_ZOMBIE;
-        spinlock_unlock(&g_process_table_lock);
-        irq_restore(irq2);
+        /* Past the point of no return: the old image is gone, so there is
+         * nothing to return to. Linux kills the process here rather than
+         * failing the call, and returning -1 instead left the caller running
+         * on a destroyed address space -- which is how a failed exec of
+         * xkbcomp turned into busybox faulting at NULL. */
+        process_exit_current_with_status(127);
         return -1;
     }
 
@@ -3166,11 +3356,12 @@ int32_t process_execve(const char *path, const char *const *argv,
         serial_write_string("\n");
         paging_destroy_process_space(new_cr3);
         proc->cr3 = 0;
-        uint64_t irq2 = irq_save_disable();
-        spinlock_lock(&g_process_table_lock);
-        proc->state = PROCESS_STATE_ZOMBIE;
-        spinlock_unlock(&g_process_table_lock);
-        irq_restore(irq2);
+        /* Past the point of no return: the old image is gone, so there is
+         * nothing to return to. Linux kills the process here rather than
+         * failing the call, and returning -1 instead left the caller running
+         * on a destroyed address space -- which is how a failed exec of
+         * xkbcomp turned into busybox faulting at NULL. */
+        process_exit_current_with_status(127);
         return -1;
     }
 
@@ -3182,13 +3373,10 @@ int32_t process_execve(const char *path, const char *const *argv,
     if (initialize_elf_user_stack_ex(proc, &image_info, path_buf,
                                       argc, (const char *const *)argv_ptrs,
                                       envc, (const char *const *)envp_ptrs) < 0) {
+        serial_write_string("[execve-fail] user-stack-init\n");
         paging_destroy_process_space(new_cr3);
         proc->cr3 = 0;
-        uint64_t irq2 = irq_save_disable();
-        spinlock_lock(&g_process_table_lock);
-        proc->state = PROCESS_STATE_ZOMBIE;
-        spinlock_unlock(&g_process_table_lock);
-        irq_restore(irq2);
+        process_exit_current_with_status(127);
         return -1;
     }
 
@@ -3201,10 +3389,23 @@ int32_t process_execve(const char *path, const char *const *argv,
     irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
 
+    /* RUNNING belongs here: a process calling execve() on itself is, by
+     * definition, the one running -- the scheduler stamps PROCESS_STATE_RUNNING
+     * on whatever it dispatches. Accepting only INIT/READY made every
+     * self-exec fail at the very last step, after the new image had already
+     * been loaded and the return RIP pointed at its entry, so the process ran
+     * the new program with a stack that was never handed over and died on the
+     * first argv access. The check is here to catch a process torn down
+     * underneath us, so reject exactly those states instead. */
     if (proc->state != PROCESS_STATE_INIT &&
-        proc->state != PROCESS_STATE_READY) {
+        proc->state != PROCESS_STATE_READY &&
+        proc->state != PROCESS_STATE_RUNNING) {
         spinlock_unlock(&g_process_table_lock);
         irq_restore(irq_flags);
+        serial_write_string("[execve-fail] process state=");
+        serial_write_uint64((uint64_t)proc->state);
+        serial_write_char('\n');
+        process_exit_current_with_status(127);
         return -1;
     }
     proc->entry = image_info.entry;
@@ -3434,6 +3635,7 @@ void process_exit_current(void)
     syscall_socket_close_all_for_pid(pid_to_exit);
     unix_socket_close_all_for_pid(pid_to_exit);
     shared_memory_cleanup_process(pid_to_exit);
+    filemap_release_pid(pid_to_exit);
 
     irq_flags = irq_save_disable();
     spinlock_lock(&g_process_table_lock);
@@ -4557,6 +4759,89 @@ uint64_t process_get_heap_cursor(void)
     spinlock_unlock(&g_process_table_lock);
     irq_restore(irq_flags);
     return cursor;
+}
+
+uint64_t process_get_brk(void)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+    uint64_t brk = 0;
+    if (is_valid_pid(current_pid_get())) {
+        process_t *proc =
+            process_memory_owner_locked(&g_processes[current_pid_get()]);
+        if (proc != NULL) {
+            brk = proc->user_brk_cursor;
+        }
+    }
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+    return brk;
+}
+
+/* Move the program break to `addr`, mapping exactly the pages between the old
+ * break and the new one. Returns 0 on success.
+ *
+ * The whole point is that this maps *where the caller asked*, not wherever an
+ * allocator felt like: glibc computes chunk addresses from the value brk()
+ * reports and never re-reads it, so a break that lands somewhere else is
+ * silently handing malloc memory that belongs to someone else. Shrinking just
+ * moves the cursor back; the pages stay mapped, which costs a little memory
+ * and avoids tearing down mappings the caller may still be using. */
+int process_set_brk(uint64_t addr)
+{
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_process_table_lock);
+
+    if (!is_valid_pid(current_pid_get())) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    process_t *proc =
+        process_memory_owner_locked(&g_processes[current_pid_get()]);
+    if (proc == NULL || proc->user_brk_base == 0u ||
+        addr < proc->user_brk_base || addr > proc->user_brk_limit) {
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+
+    uint64_t old_brk = proc->user_brk_cursor;
+    uint64_t cr3 = proc->cr3;
+    if (addr <= old_brk) {
+        proc->user_brk_cursor = addr;
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return 0;
+    }
+
+    /* Only whole pages that are not already mapped need backing: a grow that
+     * stays inside the page the old break sat in has nothing to do. */
+    uint64_t map_start = (old_brk + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
+    uint64_t map_end = (addr + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
+    proc->user_brk_cursor = addr;
+
+    spinlock_unlock(&g_process_table_lock);
+    irq_restore(irq_flags);
+
+    if (map_end > map_start &&
+        paging_map_user_range_alloc(cr3, map_start, map_end - map_start,
+                                    PAGE_RW | PAGE_USER) < 0) {
+        irq_flags = irq_save_disable();
+        spinlock_lock(&g_process_table_lock);
+        if (is_valid_pid(current_pid_get())) {
+            process_t *rollback =
+                process_memory_owner_locked(&g_processes[current_pid_get()]);
+            if (rollback != NULL && rollback->cr3 == cr3 &&
+                rollback->user_brk_cursor == addr) {
+                rollback->user_brk_cursor = old_brk;
+            }
+        }
+        spinlock_unlock(&g_process_table_lock);
+        irq_restore(irq_flags);
+        return -1;
+    }
+    return 0;
 }
 
 int process_set_heap_cursor(uint64_t addr)

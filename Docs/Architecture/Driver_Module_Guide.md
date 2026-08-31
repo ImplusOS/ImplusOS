@@ -69,12 +69,13 @@ driver's API.
 | NIC | `DEVICE_TYPE_NIC` | `VirtIONet_Driver.ELF`, `I219V` (Intel I219-V), `WiFi` / `AX900_Driver.ELF` (Wi-Fi, with `Firmware/AX900` blob) | `driver_nic_t` |
 | Block | `DEVICE_TYPE_BLOCK` | `AHCI_Driver.ELF`, `NVMe_Driver.ELF`, `VirtIOBlk_Driver.ELF` | `driver_storage_t` |
 | Audio | `DEVICE_TYPE_AUDIO` | `AC97_Driver.ELF`, `HDA_Driver.ELF`, `VirtIOSound_Driver.ELF` | (audio API) |
-| Serial / RTC | (platform) | `Kernel/Drivers/Serial/`, `Kernel/Drivers/RTC/` | — |
+| Serial / RTC | (platform) | `Kernel/Drivers/Serial/`, `Kernel/Platform/rtc/` | — |
 
 Source layout: driver modules live under `Kernel/Drivers/<Category>/<Driver>/`
 (`Audio/`, `Block/`, `Bus/{PCI,USB}/`, `Display/`, `FileSystem/`, `Input/`,
-`NIC/`, `Wi-Fi/`, `Serial/`, `RTC/`). `Kernel/Drivers/ExampleDriver/` is a
-minimal template. The on-demand USB/PCI VID→module map is
+`NIC/`, `Wi-Fi/`, `Serial/`). `Kernel/Drivers/ExampleDriver/` is a
+minimal template. (The CMOS RTC is a port-IO platform HAL, not a driver
+module, and lives under `Kernel/Platform/rtc/`.) The on-demand USB/PCI VID→module map is
 `Kernel/Drivers/Manifest/DriverDB.txt`.
 
 ## 4. Kernel API (`driver_binary_t`)

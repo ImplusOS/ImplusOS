@@ -11,7 +11,12 @@ static uint8_t g_ps2_initialized = 0;
 
 static bool ensure_ps2_initialized(void)
 {
-    const device_t *device = driver_manager_find(DEVICE_TYPE_INPUT, "PS2_Driver.ELF");
+    /* Any driver that registered itself as DEVICE_TYPE_INPUT and exposes the
+     * keyboard/mouse driver_input_t vtable -- the kernel does not name the
+     * module. In practice the PS/2 controller driver is the one that claims
+     * this slot on a legacy PC; a different input backend registering the
+     * same vtable would be picked up transparently. */
+    const device_t *device = driver_manager_find(DEVICE_TYPE_INPUT, NULL);
     const driver_input_t *driver = device ? (const driver_input_t *)device->ops : NULL;
 
     if (driver == NULL) {

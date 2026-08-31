@@ -3,25 +3,11 @@
 
 #include "kernel/config.h"
 #include "Drivers/Module/DriverManager.h"
+#include "Drivers/Module/NetworkBuiltinDrivers.h"
 #include "Network/ethernet/Ethernet.h"
-#include "Network/arp/ARP.h"
 #include "ipv4.h"
-#include "Network/udp/UDP.h"
 #include "Network/tcp/TCP.h"
-#include "Network/icmp/ICMP.h"
 #include "Network/dhcp/DHCP.h"
-
-#ifndef OS_CONFIG_NET_IPV4_ADDR
-#define OS_CONFIG_NET_IPV4_ADDR 0x0A00020FUL
-#endif
-
-#ifndef OS_CONFIG_NET_IPV4_MASK
-#define OS_CONFIG_NET_IPV4_MASK 0xFFFFFF00UL
-#endif
-
-#ifndef OS_CONFIG_NET_IPV4_GATEWAY
-#define OS_CONFIG_NET_IPV4_GATEWAY 0x0A000202UL
-#endif
 
 static int g_network_ready = 0;
 static uint32_t g_timer_ticks_for_aging = 0u;
@@ -45,20 +31,13 @@ bool network_stack_init(void)
         return true;
     }
 
-    if (!ethernet_init()) {
+    /* Ethernet -> ARP -> IPv4 -> {ICMP,UDP,TCP} -> DHCP, ordered from the
+     * DEVICE_TYPE_NET_PROTOCOL layers' recorded deps[] rather than spelled
+     * out here. The kernel's network subsystem does not name or call the
+     * individual layer init functions any more. */
+    if (!network_builtin_drivers_init_all()) {
         return false;
     }
-
-    uint32_t local_ip = (uint32_t)OS_CONFIG_NET_IPV4_ADDR;
-    uint32_t netmask = (uint32_t)OS_CONFIG_NET_IPV4_MASK;
-    uint32_t gateway = (uint32_t)OS_CONFIG_NET_IPV4_GATEWAY;
-
-    arp_init(local_ip, netmask, gateway);
-    ipv4_init(local_ip, netmask, gateway);
-    udp_init();
-    tcp_init();
-    icmp_init();
-    dhcp_init();
 
     g_timer_ticks_for_aging = 0u;
     g_network_ready = 1;

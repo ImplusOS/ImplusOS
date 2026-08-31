@@ -3,7 +3,6 @@
 #include <string.h>
 
 #include "Display_Main.h"
-#include "Drivers/Display/Display_Driver.h"
 #include "Drivers/Module/DriverBinary.h"
 #include "Drivers/Module/DeviceRegistry.h"
 #include "Drivers/Module/DriverManager.h"

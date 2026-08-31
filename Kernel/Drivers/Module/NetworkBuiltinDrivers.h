@@ -21,5 +21,24 @@
  * instead of an extern declaration; (3) the deps[] each entry records is
  * accurate, real dependency information a future full ELF-module
  * conversion (should the project pursue one) can use as-is.
+ *
+ * Update (this pass): the boot-time init sequence is no longer open-coded
+ * in network_main.c either -- network_builtin_drivers_init_all() drives it
+ * from the deps[] metadata below. Runtime paths (ethernet_poll(),
+ * ipv4_process_timer(), the DHCP retry loop in network_stack_on_timer_tick())
+ * are still direct calls.
  */
+#include <stdbool.h>
+
 void network_builtin_drivers_register(void);
+
+/*
+ * Bring every protocol layer up in dependency order (deps[] in
+ * NetworkBuiltinDrivers.c decides the order; the void adapters there supply
+ * the static-address parameters arp_init()/ipv4_init() take). Calls
+ * network_builtin_drivers_register() first, so a separate registration call
+ * is not required. Returns false if any layer's init fails or a dependency
+ * cannot be resolved. Kernel/Network/network_main.c's network_stack_init()
+ * calls this instead of open-coding the init sequence.
+ */
+bool network_builtin_drivers_init_all(void);

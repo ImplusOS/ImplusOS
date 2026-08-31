@@ -343,7 +343,34 @@ void general_protection_fault_handler(uint64_t error_code,
         serial_write_uint64(rip);
         serial_write_string(" err=");
         serial_write_uint64(error_code);
+        /* The exception frame itself, so a bad control transfer can be told
+         * apart from a bad instruction: a non-canonical rip with a sane
+         * cs/ss/rflags means the CPU was handed that rip on the way back to
+         * user mode (sysret/iret) rather than jumping to it. user_rsp then
+         * says which stack, and the words at it name the caller. */
+        serial_write_string(" cs=");
+        serial_write_uint64(frame[2]);
+        serial_write_string(" rflags=");
+        serial_write_uint64(frame[3]);
+        serial_write_string(" user_rsp=");
+        serial_write_uint64(frame[4]);
+        serial_write_string(" user_ss=");
+        serial_write_uint64(frame[5]);
         serial_write_string("\n");
+        {
+            uint64_t urs = frame[4];
+            if (urs >= 0x1000u && (urs & 7u) == 0u &&
+                process_user_buffer_is_valid((const void *)(uintptr_t)urs,
+                                             8u * PANIC_STACK_DUMP_QWORDS)) {
+                const uint64_t *ustack = (const uint64_t *)(uintptr_t)urs;
+                serial_write_string("[OS] [#GP] user stack:");
+                for (int i = 0; i < PANIC_STACK_DUMP_QWORDS; ++i) {
+                    serial_write_string(" ");
+                    serial_write_uint64(ustack[i]);
+                }
+                serial_write_string("\n");
+            }
+        }
         process_debug_dump_pid(pid);
 
         process_exit_current_signaled(4 /* SIGILL: int3/ud2/priv-insn */);
@@ -506,6 +533,17 @@ int32_t page_fault_handler(uint64_t error_code,
             }
         }
 #endif
+        /* Before the demand-zero path: a fault inside a demand-paged file
+         * mapping must be filled from the file, not with zeroes. The swap
+         * handler below services ANY absent user page, so it would silently
+         * hand back a blank page for a shared object's text. */
+        if (!pf_serviced) {
+            extern int filemap_handle_fault(int32_t pid, uint64_t cr3,
+                                            uint64_t fault_addr);
+            if (filemap_handle_fault(pid, cr3, cr2) > 0) {
+                pf_serviced = 1;
+            }
+        }
         if (!pf_serviced && paging_handle_swap_fault(cr3, cr2) > 0) {
             extern void process_record_page_fault(int32_t pid, uint64_t fault_addr,
                                                   uint64_t rip, uint32_t error_code,
@@ -566,6 +604,22 @@ int32_t page_fault_handler(uint64_t error_code,
             serial_write_string("[OS] [PF] Terminating process pid=");
             serial_write_uint32((uint32_t)pid);
             serial_write_string(" (mode=user)\n");
+        }
+
+        /* The words at the user stack pointer. A foreign binary that jumps
+         * somewhere it should not reports only the landing address; the
+         * return addresses still sitting on its stack name the caller, and
+         * with the [lxmap] module bases those resolve to <module>+<offset>. */
+        if (user_rsp >= 0x1000u && (user_rsp & 7u) == 0u &&
+            process_user_buffer_is_valid((const void *)(uintptr_t)user_rsp,
+                                         8u * PANIC_STACK_DUMP_QWORDS)) {
+            const uint64_t *ustack = (const uint64_t *)(uintptr_t)user_rsp;
+            serial_write_string("[OS] [PF] user stack:");
+            for (int i = 0; i < PANIC_STACK_DUMP_QWORDS; ++i) {
+                serial_write_string(" ");
+                serial_write_uint64(ustack[i]);
+            }
+            serial_write_string("\n");
         }
 
         {

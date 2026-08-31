@@ -18,7 +18,14 @@
  *   /run      - misc runtime state some Linux libs insist on.
  * Directories are implicit (mkdir is a no-op success); a path is a valid
  * tmpfs path iff it starts with one of these prefixes followed by '/' or end. */
-static const char *const TMPFS_PREFIXES[] = { "/dev/shm", "/tmp", "/run" };
+/* "/var" is here for the same reason a diskless/live Linux keeps /var on
+ * tmpfs: the boot medium is read-only ISO9660, but programs still expect a
+ * writable /var. Xorg specifically picks its compiled-keymap output directory
+ * by probing access("/var/lib/xkb", W_OK|X_OK) (ddxLoad.c OutputDirectory),
+ * and without a writable one it cannot run xkbcomp at all -- which is fatal
+ * ("Failed to activate virtual core keyboard"). Directories are implicit in
+ * this flat namespace, so /var/lib/xkb needs no mkdir. */
+static const char *const TMPFS_PREFIXES[] = { "/dev/shm", "/tmp", "/run", "/var" };
 
 static bool tmpfs_path_ok(const char *path)
 {

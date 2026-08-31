@@ -51,6 +51,12 @@ void vfs_list_root(void);
 bool vfs_creat(const char *path);
 bool vfs_mkdir(const char *path);
 int32_t vfs_opendir(const char *path);
+/* Whether new files can be created under `path` (a directory). Resolves the
+ * same way vfs_opendir() does -- the first driver that can open the directory
+ * decides -- and reports writable iff that driver implements creat(). Needed
+ * by access(dir, W_OK): callers use it to choose a scratch directory, so
+ * answering "no" for every directory silently degrades them. */
+bool vfs_dir_is_writable(const char *path);
 int32_t vfs_readdir(int32_t handle, vfs_dirent_t *out_entry);
 int32_t vfs_closedir(int32_t handle);
 bool vfs_unlink(const char *path);

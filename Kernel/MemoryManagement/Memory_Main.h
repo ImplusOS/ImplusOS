@@ -39,6 +39,9 @@ uint32_t pmm_page_ref_get(uint64_t phys_addr);
 
 uint64_t get_free_memory(void);
 uint64_t get_used_memory(void);
+/* Physical pages currently free (not kernel-heap bytes -- see
+ * get_free_memory(), which reports the heap). */
+uint64_t memory_free_pages(void);
 uint64_t get_total_memory_pages(void);
 void     memory_dump_virtual(const void *addr, uint32_t bytes);
 void     memory_dump_physical(uint64_t phys_addr, uint32_t bytes);

@@ -2,7 +2,7 @@
 #include "Core/process/ProcessManager.h"
 #include "Core/usercopy/Usercopy.h"
 #include "Core/timer/Timer.h"
-#include "Drivers/RTC/RTC.h"
+#include "Platform/rtc/RTC.h"
 
 #include <stddef.h>
 #include <stdint.h>

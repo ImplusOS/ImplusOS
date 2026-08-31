@@ -340,6 +340,18 @@ static int copy_present_page(uint64_t child_cr3, uint64_t vaddr,
     return ret;
 }
 
+/* Copy the USER pages present in [start, end) from one address space to
+ * another (fork).
+ *
+ * Every level is filtered on PAGE_USER, not just PAGE_PRESENT. A process's
+ * page tables also carry the kernel's own mappings, and the kernel
+ * identity-maps PAGING_BOOT_IDENTITY_GB (64 GB) of physical memory at low
+ * virtual addresses -- squarely inside the range fork walks. Without the
+ * filter this function walked into those kernel tables and copied physical
+ * memory into the child until the machine ran out: a measured fork spent
+ * 345 s and died with 94 MB free, and the cost tracked installed RAM rather
+ * than anything about the process being forked.
+ * (paging_destroy_process_space() has always applied the same filter.) */
 int paging_copy_present_user_range(uint64_t child_cr3, uint64_t parent_cr3,
                                    uint64_t start, uint64_t end)
 {
@@ -356,7 +368,7 @@ int paging_copy_present_user_range(uint64_t child_cr3, uint64_t parent_cr3,
 
     for (uint64_t i = pml4_first; i <= pml4_last; ++i) {
         uint64_t pml4e = pml4[i];
-        if ((pml4e & PAGE_PRESENT) == 0) continue;
+        if ((pml4e & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) continue;
 
         uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_FRAME_MASK);
         uint64_t pdpt_first = (i == pml4_first) ? PDPT_INDEX(first) : 0;
@@ -364,7 +376,7 @@ int paging_copy_present_user_range(uint64_t child_cr3, uint64_t parent_cr3,
 
         for (uint64_t j = pdpt_first; j <= pdpt_last; ++j) {
             uint64_t pdpte = pdpt[j];
-            if ((pdpte & PAGE_PRESENT) == 0) continue;
+            if ((pdpte & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) continue;
 
             uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_FRAME_MASK);
             uint64_t pd_first = (i == pml4_first && j == pdpt_first)
@@ -374,7 +386,7 @@ int paging_copy_present_user_range(uint64_t child_cr3, uint64_t parent_cr3,
 
             for (uint64_t k = pd_first; k <= pd_last; ++k) {
                 uint64_t pde = pd[k];
-                if ((pde & PAGE_PRESENT) == 0) continue;
+                if ((pde & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) continue;
 
                 uint64_t region_base =
                     (i << 39) | (j << 30) | (k << 21);
@@ -399,7 +411,7 @@ int paging_copy_present_user_range(uint64_t child_cr3, uint64_t parent_cr3,
 
                 for (uint64_t l = pt_first; l <= pt_last; ++l) {
                     uint64_t pte = pt[l];
-                    if ((pte & PAGE_PRESENT) == 0) continue;
+                    if ((pte & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) continue;
                     uint64_t v = region_base + (l << 12);
                     if (v < first || v > last) continue;
                     if (copy_present_page(child_cr3, v,
@@ -474,14 +486,14 @@ int paging_cow_clone_user_range(uint64_t child_cr3, uint64_t parent_cr3,
 
     for (uint64_t i = pml4_first; i <= pml4_last; ++i) {
         uint64_t pml4e = pml4[i];
-        if ((pml4e & PAGE_PRESENT) == 0) continue;
+        if ((pml4e & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) continue;
         uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & PAGE_FRAME_MASK);
         uint64_t pdpt_first = (i == pml4_first) ? PDPT_INDEX(first) : 0;
         uint64_t pdpt_last = (i == pml4_last) ? PDPT_INDEX(last) : 511;
 
         for (uint64_t j = pdpt_first; j <= pdpt_last; ++j) {
             uint64_t pdpte = pdpt[j];
-            if ((pdpte & PAGE_PRESENT) == 0) continue;
+            if ((pdpte & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) continue;
             uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & PAGE_FRAME_MASK);
             uint64_t pd_first = (i == pml4_first && j == pdpt_first)
                                     ? PD_INDEX(first) : 0;
@@ -490,7 +502,7 @@ int paging_cow_clone_user_range(uint64_t child_cr3, uint64_t parent_cr3,
 
             for (uint64_t k = pd_first; k <= pd_last; ++k) {
                 uint64_t pde = pd[k];
-                if ((pde & PAGE_PRESENT) == 0) continue;
+                if ((pde & (PAGE_PRESENT | PAGE_USER)) != (PAGE_PRESENT | PAGE_USER)) continue;
                 uint64_t region_base = (i << 39) | (j << 30) | (k << 21);
 
                 if ((pde & PAGE_PS) != 0) {

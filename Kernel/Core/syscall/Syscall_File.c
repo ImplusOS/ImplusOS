@@ -29,6 +29,7 @@ enum {
 #define FILE_O_ACCMODE       0x0003u
 #define FILE_O_WRONLY        0x0001u
 #define FILE_O_RDWR          0x0002u
+#define FILE_O_TRUNC         0x0200u
 #define FILE_O_APPEND        0x0400u
 #define FILE_O_NONBLOCK      0x0800u
 #define FILE_FD_CLOEXEC      0x0001u
@@ -36,12 +37,26 @@ enum {
 #define PIPE_MAX_COUNT       16
 #define PIPE_BUF_SIZE        4096u
 
+/* Extra owners of a descriptor slot, beyond `owner_pid`.
+ *
+ * fd numbers are global in this table, so a forked child cannot be given its
+ * own copy at the same number -- yet POSIX requires it to see exactly the same
+ * fds. Instead the slot records every process that holds it: fork sets the
+ * child's bit, close/exit clears one bit, and the backing object is torn down
+ * only when the last owner lets go. Parent and child therefore share the open
+ * file description (offset included), which is what POSIX specifies anyway.
+ *
+ * The bitmap is empty for every descriptor that was never inherited, so the
+ * behaviour of everything that does not fork is bit-for-bit unchanged. */
+#define FD_OWNER_WORDS ((OS_CONFIG_PROCESS_MAX_COUNT + 63) / 64)
+
 typedef struct {
     uint8_t used;
     int32_t owner_pid;
     int32_t open_index;
     uint32_t status_flags;
     uint32_t descriptor_flags;
+    uint64_t extra_owners[FD_OWNER_WORDS];
 } kernel_file_t;
 
 typedef struct {
@@ -124,6 +139,10 @@ static spinlock_t g_file_table_lock;
 static spinlock_t g_dir_table_lock;
 
 static kernel_pipe_t *find_pipe_for_fd(int32_t fd, int *is_read_end);
+static void release_fd_locked(int32_t fd);
+static int  fd_extra_owner_test(const kernel_file_t *f, int32_t pid);
+static void fd_extra_owner_clear(kernel_file_t *f, int32_t pid);
+static int  fd_promote_owner_locked(kernel_file_t *f);
 static int64_t syscall_pipe_read(int32_t fd, uint8_t *buffer, uint64_t len);
 static int64_t syscall_pipe_write(int32_t fd, const uint8_t *buffer, uint64_t len);
 
@@ -224,6 +243,25 @@ static int32_t allocate_open_file_locked(void)
     return -1;
 }
 
+/* Drop one owner's claim on `fd`. The backing object is released only when
+ * nobody else holds the slot -- after fork both parent and child own it, and
+ * either closing must not pull it out from under the other. */
+static void release_fd_locked_for(int32_t fd, int32_t pid)
+{
+    if (fd < 0 || fd >= FILE_MAX_FD || g_files[fd].used == 0) {
+        return;
+    }
+    if (g_files[fd].owner_pid == pid) {
+        if (fd_promote_owner_locked(&g_files[fd])) {
+            return; /* another process still holds this descriptor */
+        }
+    } else if (fd_extra_owner_test(&g_files[fd], pid)) {
+        fd_extra_owner_clear(&g_files[fd], pid);
+        return;
+    }
+    release_fd_locked(fd);
+}
+
 static void release_fd_locked(int32_t fd)
 {
     if (fd < 0 || fd >= FILE_MAX_FD || g_files[fd].used == 0) {
@@ -282,13 +320,46 @@ static void release_fd_locked(int32_t fd)
     g_files[fd].open_index = -1;
 }
 
+static int fd_extra_owner_test(const kernel_file_t *f, int32_t pid)
+{
+    if (pid < 0 || pid >= OS_CONFIG_PROCESS_MAX_COUNT) return 0;
+    return (f->extra_owners[pid >> 6] >> (pid & 63)) & 1u ? 1 : 0;
+}
+
+static void fd_extra_owner_set(kernel_file_t *f, int32_t pid)
+{
+    if (pid < 0 || pid >= OS_CONFIG_PROCESS_MAX_COUNT) return;
+    f->extra_owners[pid >> 6] |= (1ULL << (pid & 63));
+}
+
+static void fd_extra_owner_clear(kernel_file_t *f, int32_t pid)
+{
+    if (pid < 0 || pid >= OS_CONFIG_PROCESS_MAX_COUNT) return;
+    f->extra_owners[pid >> 6] &= ~(1ULL << (pid & 63));
+}
+
+/* Hands `owner_pid` over to one of the extra owners, clearing that bit.
+ * Returns 1 if a successor was found, 0 if this was the last owner. */
+static int fd_promote_owner_locked(kernel_file_t *f)
+{
+    for (int32_t pid = 0; pid < OS_CONFIG_PROCESS_MAX_COUNT; ++pid) {
+        if (fd_extra_owner_test(f, pid)) {
+            fd_extra_owner_clear(f, pid);
+            f->owner_pid = pid;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int fd_is_owned_by_current_process(int32_t fd)
 {
     int32_t current_pid = process_get_current_pid();
     if (current_pid < 0) {
         return 0;
     }
-    return (g_files[fd].owner_pid == current_pid);
+    return (g_files[fd].owner_pid == current_pid) ||
+           fd_extra_owner_test(&g_files[fd], current_pid);
 }
 
 static int dir_is_owned_by_current_process(int32_t dir_handle)
@@ -352,8 +423,21 @@ int32_t syscall_file_open(const char *path, uint64_t flags)
             g_files[fd].owner_pid = current_pid;
             g_files[fd].open_index = open_index;
             g_files[fd].status_flags = (uint32_t)flags;
+            int do_truncate = ((flags & FILE_O_TRUNC) != 0u &&
+                               g_open_files[open_index].writable != 0u &&
+                               g_open_files[open_index].file.size != 0u);
             spinlock_unlock(&g_file_table_lock);
             irq_restore(irq_flags);
+            /* O_TRUNC was accepted and then ignored, so fopen(path, "w") over
+             * an existing file kept whatever the old contents were past the
+             * end of the new ones. Xorg retries its keymap compile, and the
+             * second xkbcomp run rewriting /var/lib/xkb/server-0.xkm left the
+             * longer first attempt's tail glued on -- an .xkm the server then
+             * could not load. Done outside the table lock: vfs_truncate() can
+             * reach a filesystem driver that blocks. */
+            if (do_truncate) {
+                (void)syscall_file_truncate(fd, 0u);
+            }
             return fd;
         }
     }
@@ -605,9 +689,10 @@ int32_t syscall_file_close(int32_t fd)
         return (int32_t)OS_STATUS_ACCESS_DENIED;
     }
 
+    int32_t self = process_get_current_pid();
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
-    release_fd_locked(fd);
+    release_fd_locked_for(fd, self);
     spinlock_unlock(&g_file_table_lock);
     irq_restore(irq_flags);
     return 0;
@@ -780,8 +865,10 @@ void syscall_file_close_all_for_pid(int32_t pid, uint32_t *closed_fds_out, uint3
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
     for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
-        if (g_files[fd].used != 0 && g_files[fd].owner_pid == pid) {
-            release_fd_locked(fd);
+        if (g_files[fd].used != 0 &&
+            (g_files[fd].owner_pid == pid ||
+             fd_extra_owner_test(&g_files[fd], pid))) {
+            release_fd_locked_for(fd, pid);
             ++closed_fds;
         }
     }
@@ -817,9 +904,11 @@ void syscall_file_close_cloexec_for_pid(int32_t pid)
     uint64_t irq_flags = irq_save_disable();
     spinlock_lock(&g_file_table_lock);
     for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
-        if (g_files[fd].used != 0 && g_files[fd].owner_pid == pid &&
+        if (g_files[fd].used != 0 &&
+            (g_files[fd].owner_pid == pid ||
+             fd_extra_owner_test(&g_files[fd], pid)) &&
             (g_files[fd].descriptor_flags & FILE_FD_CLOEXEC) != 0u) {
-            release_fd_locked(fd);
+            release_fd_locked_for(fd, pid);
         }
     }
     spinlock_unlock(&g_file_table_lock);
@@ -917,26 +1006,100 @@ static kernel_pipe_t *find_pipe_for_fd(int32_t fd, int *is_read_end)
     return &g_pipes[index];
 }
 
+/* Longest a blocking pipe read waits for a writer before giving up. Only a
+ * backstop against wedging the caller forever if the writer dies without
+ * closing; real transfers complete in milliseconds. */
+#define PIPE_READ_WAIT_MAX_MS 30000u
+
 static int64_t syscall_pipe_read(int32_t fd, uint8_t *buffer, uint64_t len)
 {
     int is_read = 0;
     kernel_pipe_t *pipe = find_pipe_for_fd(fd, &is_read);
     if (pipe == NULL || !is_read) return (int64_t)OS_STATUS_IO_ERROR;
 
-    uint64_t irq_flags = irq_save_disable();
-    spinlock_lock(&pipe->lock);
+    uint64_t waited_ms = 0;
+    for (;;) {
+        uint64_t irq_flags = irq_save_disable();
+        spinlock_lock(&pipe->lock);
 
-    uint64_t bytes_read = 0;
-    while (bytes_read < len && pipe->count > 0) {
-        buffer[bytes_read++] = pipe->data[pipe->read_pos];
-        pipe->read_pos = (uint16_t)((pipe->read_pos + 1u) % PIPE_BUF_SIZE);
-        pipe->count--;
+        uint64_t bytes_read = 0;
+        while (bytes_read < len && pipe->count > 0) {
+            buffer[bytes_read++] = pipe->data[pipe->read_pos];
+            pipe->read_pos = (uint16_t)((pipe->read_pos + 1u) % PIPE_BUF_SIZE);
+            pipe->count--;
+        }
+        uint16_t writers = pipe->writer_count;
+
+        spinlock_unlock(&pipe->lock);
+        irq_restore(irq_flags);
+
+        if (bytes_read > 0u) {
+            return (int64_t)bytes_read;
+        }
+        /* An empty pipe is only end-of-file once every writer has closed.
+         * Returning 0 regardless meant a reader that got there first saw EOF
+         * on a pipe that was about to be filled -- which is how xkbcomp, run
+         * by Xorg through Popen(), read an "empty" stdin and reported
+         * "syntax error: line 1 of stdin". */
+        if (writers == 0u) {
+            return 0;
+        }
+        if ((g_files[fd].status_flags & FILE_O_NONBLOCK) != 0u) {
+            return -11; /* EAGAIN */
+        }
+        if (waited_ms >= PIPE_READ_WAIT_MAX_MS) {
+            return -11;
+        }
+        (void)process_sleep_current_ms(1);
+        waited_ms += 1u;
+    }
+}
+
+/* Blocks until the pipe has room for at least one byte, then writes what
+ * fits. Returns EAGAIN for a non-blocking fd, or if the reader never drains
+ * within PIPE_READ_WAIT_MAX_MS, or once every reader has gone (SIGPIPE). */
+static int64_t syscall_pipe_write_wait(int32_t fd, kernel_pipe_t *pipe,
+                                       const uint8_t *buffer, uint64_t len)
+{
+    if ((g_files[fd].status_flags & FILE_O_NONBLOCK) != 0u) {
+        return -11; /* EAGAIN */
     }
 
-    spinlock_unlock(&pipe->lock);
-    irq_restore(irq_flags);
+    uint64_t waited_ms = 0;
+    for (;;) {
+        if (waited_ms >= PIPE_READ_WAIT_MAX_MS) {
+            return -11; /* EAGAIN */
+        }
+        (void)process_sleep_current_ms(1);
+        waited_ms += 1u;
 
-    return (int64_t)bytes_read;
+        uint64_t irq_flags = irq_save_disable();
+        spinlock_lock(&pipe->lock);
+
+        if (pipe->reader_count == 0u) {
+            spinlock_unlock(&pipe->lock);
+            irq_restore(irq_flags);
+            int32_t self = process_get_current_pid();
+            if (self >= 0) {
+                (void)process_signal_deliver(self, 13 /* SIGPIPE */);
+            }
+            return (int64_t)OS_STATUS_BROKEN_PIPE;
+        }
+
+        uint64_t bytes_written = 0;
+        while (bytes_written < len && pipe->count < PIPE_BUF_SIZE) {
+            pipe->data[pipe->write_pos] = buffer[bytes_written++];
+            pipe->write_pos = (uint16_t)((pipe->write_pos + 1u) % PIPE_BUF_SIZE);
+            pipe->count++;
+        }
+
+        spinlock_unlock(&pipe->lock);
+        irq_restore(irq_flags);
+
+        if (bytes_written > 0u) {
+            return (int64_t)bytes_written;
+        }
+    }
 }
 
 static int64_t syscall_pipe_write(int32_t fd, const uint8_t *buffer, uint64_t len)
@@ -972,13 +1135,123 @@ static int64_t syscall_pipe_write(int32_t fd, const uint8_t *buffer, uint64_t le
     spinlock_unlock(&pipe->lock);
     irq_restore(irq_flags);
 
-    return (int64_t)bytes_written;
+    if (bytes_written > 0u) {
+        return (int64_t)bytes_written;
+    }
+
+    /* The buffer was full, so not one byte went in. Returning 0 is not an
+     * option: a blocking write(2) never reports 0 for a non-empty request, and
+     * glibc's _IO_new_file_write loops `while (to_do > 0)` on the result --
+     * a 0 leaves to_do unchanged and spins the caller forever. Wait for the
+     * reader to make room, exactly as syscall_pipe_read() waits for a writer.
+     * Xorg hits this every time it feeds a keymap (tens of KB) to xkbcomp
+     * through a 4 KiB pipe. */
+    return syscall_pipe_write_wait(fd, pipe, buffer, len);
 }
 
 int syscall_file_is_pipe(int32_t fd)
 {
     if (fd < 0 || fd >= FILE_MAX_FD) return 0;
     return (g_files[fd].used == 2 || g_files[fd].used == 3);
+}
+
+/* ---- mmap(2) references on the open file description -------------------
+ * A mapping outlives the fd it was made from (glibc's loader closes the fd as
+ * soon as the shared object is mapped), so demand-paged file mappings hold a
+ * reference on the kernel_open_file_t rather than on the fd. See
+ * Core/memory/FileMap.c. */
+
+int32_t syscall_file_mmap_acquire(int32_t fd)
+{
+    if (fd < 0 || fd >= FILE_MAX_FD || g_files[fd].used != FILE_USED_FILE ||
+        !fd_is_owned_by_current_process(fd)) {
+        return -1;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_file_table_lock);
+    int32_t open_index = g_files[fd].open_index;
+    int32_t result = -1;
+    if (open_index >= 0 && open_index < FILE_MAX_FD &&
+        g_open_files[open_index].used != 0) {
+        ++g_open_files[open_index].refcount;
+        result = open_index;
+    }
+    spinlock_unlock(&g_file_table_lock);
+    irq_restore(irq_flags);
+    return result;
+}
+
+int32_t syscall_file_mmap_reacquire(int32_t handle)
+{
+    if (handle < 0 || handle >= FILE_MAX_FD) {
+        return -1;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_file_table_lock);
+    int32_t result = -1;
+    if (g_open_files[handle].used != 0) {
+        ++g_open_files[handle].refcount;
+        result = handle;
+    }
+    spinlock_unlock(&g_file_table_lock);
+    irq_restore(irq_flags);
+    return result;
+}
+
+int64_t syscall_file_mmap_read(int32_t handle, uint64_t offset,
+                               uint8_t *kernel_buffer, uint32_t length)
+{
+    /* Deliberately lock-free: this is called from the #PF handler, and the
+     * only fields touched are the immutable `file` descriptor of an entry the
+     * caller holds a reference on. */
+    if (handle < 0 || handle >= FILE_MAX_FD || kernel_buffer == NULL) {
+        return -1;
+    }
+    kernel_open_file_t *open_file = &g_open_files[handle];
+    if (open_file->used == 0) {
+        return -1;
+    }
+    if (offset >= (uint64_t)open_file->file.size) {
+        return 0; /* wholly past EOF: caller keeps the zero-filled page */
+    }
+    uint64_t remaining = (uint64_t)open_file->file.size - offset;
+    if ((uint64_t)length > remaining) {
+        length = (uint32_t)remaining;
+    }
+    if (length == 0u) {
+        return 0;
+    }
+    if (!vfs_read_at(&open_file->file, (uint32_t)offset, kernel_buffer, length)) {
+        return -1;
+    }
+    return (int64_t)length;
+}
+
+void syscall_file_mmap_release(int32_t handle)
+{
+    if (handle < 0 || handle >= FILE_MAX_FD) {
+        return;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_file_table_lock);
+    if (g_open_files[handle].used != 0) {
+        if (g_open_files[handle].refcount > 0) {
+            --g_open_files[handle].refcount;
+        }
+        if (g_open_files[handle].refcount == 0) {
+            vfs_close_file(&g_open_files[handle].file);
+            memset(&g_open_files[handle], 0, sizeof(g_open_files[handle]));
+        }
+    }
+    spinlock_unlock(&g_file_table_lock);
+    irq_restore(irq_flags);
+}
+
+int syscall_file_is_dir(int32_t fd)
+{
+    if (fd < 0 || fd >= FILE_MAX_FD) return 0;
+    return (g_files[fd].used == FILE_USED_DIR &&
+            fd_is_owned_by_current_process(fd)) ? 1 : 0;
 }
 
 uint32_t syscall_file_poll(int32_t fd, uint32_t events)
@@ -1096,6 +1369,13 @@ int32_t syscall_file_dup(int32_t oldfd)
     }
 
     memcpy(&g_files[newfd], &g_files[oldfd], sizeof(g_files[newfd]));
+    /* A dup is a new descriptor in the CALLING process, so it starts with
+     * exactly one owner. Carrying the source's inherited-owner set over would
+     * leave the copy attributed to whoever else held the original -- after
+     * which the caller's own close could not release it, and the next process
+     * to want the slot would be refused it. */
+    g_files[newfd].owner_pid = process_get_current_pid();
+    memset(g_files[newfd].extra_owners, 0, sizeof(g_files[newfd].extra_owners));
     if (g_files[newfd].used == 5) g_timerfds[newfd] = g_timerfds[oldfd];
     else if (g_files[newfd].used == 6) {
         g_memfds[newfd] = g_memfds[oldfd];
@@ -1146,16 +1426,49 @@ int32_t syscall_file_dup2(int32_t oldfd, int32_t newfd)
         return (int32_t)OS_STATUS_FAULT;
     }
     
+    /* Owners of the slot we are about to rebind. A forked child inherits its
+     * parent's descriptors as extra owners, so `owner_pid` alone is the wrong
+     * test: it rejected the one case dup2 exists for, the Popen()/fork() child
+     * doing dup2(pipe, 0) before exec, with EACCES. Test the full owner set.
+     *
+     * fd numbers are global in this table, so a rebind is visible to every
+     * co-owner -- the slot cannot hold two bindings at once. That is accepted
+     * rather than worked around: the reference counts below are per-slot, so
+     * carrying the co-owners onto the new binding keeps the accounting exact,
+     * and fds 0/1/2 (the only realistic targets, and the only ones open() and
+     * pipe() never hand out) are console descriptors with no table entry to
+     * lose. Anything not owned by the caller is still refused outright. */
+    int32_t self_pid = process_get_current_pid();
+    uint64_t inherited_owners[FD_OWNER_WORDS];
+    int32_t inherited_primary = -1;
+    memset(inherited_owners, 0, sizeof(inherited_owners));
+
     if (g_files[newfd].used != 0) {
-        if (g_files[newfd].owner_pid != process_get_current_pid()) {
+        if (!fd_is_owned_by_current_process(newfd)) {
             spinlock_unlock(&g_file_table_lock);
             irq_restore(irq_flags);
             return (int32_t)OS_STATUS_ACCESS_DENIED;
         }
+        memcpy(inherited_owners, g_files[newfd].extra_owners,
+               sizeof(inherited_owners));
+        inherited_primary = g_files[newfd].owner_pid;
+        /* Drops the slot's claim on the old backing object for all of them. */
         release_fd_locked(newfd);
     }
 
     memcpy(&g_files[newfd], &g_files[oldfd], sizeof(g_files[newfd]));
+    /* A dup is a new descriptor in the CALLING process, so it starts with
+     * exactly one owner. Carrying the source's inherited-owner set over would
+     * leave the copy attributed to whoever else held the original -- after
+     * which the caller's own close could not release it, and the next process
+     * to want the slot would be refused it. */
+    g_files[newfd].owner_pid = self_pid;
+    memcpy(g_files[newfd].extra_owners, inherited_owners,
+           sizeof(g_files[newfd].extra_owners));
+    fd_extra_owner_clear(&g_files[newfd], self_pid);
+    if (inherited_primary >= 0 && inherited_primary != self_pid) {
+        fd_extra_owner_set(&g_files[newfd], inherited_primary);
+    }
     if (g_files[newfd].used == 5) g_timerfds[newfd] = g_timerfds[oldfd];
     else if (g_files[newfd].used == 6) {
         g_memfds[newfd] = g_memfds[oldfd];
@@ -1209,6 +1522,13 @@ int32_t syscall_file_dup_at_least(int32_t oldfd, int32_t minimum_fd)
     }
 
     memcpy(&g_files[newfd], &g_files[oldfd], sizeof(g_files[newfd]));
+    /* A dup is a new descriptor in the CALLING process, so it starts with
+     * exactly one owner. Carrying the source's inherited-owner set over would
+     * leave the copy attributed to whoever else held the original -- after
+     * which the caller's own close could not release it, and the next process
+     * to want the slot would be refused it. */
+    g_files[newfd].owner_pid = process_get_current_pid();
+    memset(g_files[newfd].extra_owners, 0, sizeof(g_files[newfd].extra_owners));
     if (g_files[newfd].used == 1) {
         kernel_open_file_t *open_file = fd_open_file(newfd);
         if (open_file == NULL) {
@@ -1798,4 +2118,26 @@ int64_t syscall_file_dev_mmap(int32_t fd, uint64_t offset, uint64_t length,
         return (int64_t)OS_STATUS_INVALID_ARG;
     }
     return vfs_dev_mmap(&file->file, offset, length, prot, flags);
+}
+
+void syscall_file_fork_inherit(int32_t parent_pid, int32_t child_pid)
+{
+    if (parent_pid < 0 || child_pid < 0) {
+        return;
+    }
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&g_file_table_lock);
+    for (int32_t fd = 0; fd < FILE_MAX_FD; ++fd) {
+        if (g_files[fd].used == 0) continue;
+        if (g_files[fd].owner_pid != parent_pid &&
+            !fd_extra_owner_test(&g_files[fd], parent_pid)) {
+            continue;
+        }
+        fd_extra_owner_set(&g_files[fd], child_pid);
+    }
+    spinlock_unlock(&g_file_table_lock);
+    irq_restore(irq_flags);
+
+    /* Directory handles are per-process and not shared: POSIX opendir() state
+     * is not inherited in a useful way here, and nothing in tree relies on it. */
 }

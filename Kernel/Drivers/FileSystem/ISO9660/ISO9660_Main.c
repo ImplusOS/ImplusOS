@@ -481,6 +481,15 @@ static bool iso9660_lookup_path(const char *path, ISO9660_FILE *out_entry,
         current_extent = found.extent;
         current_size   = found.size;
         cursor = end + 1;
+        while (*cursor == '/') cursor++;   /* collapse "//" runs */
+        if (*cursor == '\0') {
+            /* Trailing '/': the component just matched IS the target. Callers
+             * legitimately probe directories as "<path>/" (Xorg's module
+             * loader does exactly this via stat()); without this the walker
+             * fell out of the loop and reported "not found". */
+            memcpy(out_entry, &found, sizeof(*out_entry));
+            return true;
+        }
     }
 
     return false;

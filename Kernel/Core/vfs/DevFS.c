@@ -323,9 +323,13 @@ static uint32_t devfs_vfs_dev_poll(vfs_file_t *file, uint32_t events)
             return drm_kms_poll(events);
         case DEVFS_KIND_INPUT_EVENT0:
         case DEVFS_KIND_INPUT_EVENT1:
-            /* evdev has no poll entry point; report readable and let the
-             * blocking-ish read() sort it out (X's evdev uses SIGIO/select). */
-            return events & 0x1u;
+            /* Only readable when the ring actually holds an event. Claiming
+             * POLLIN unconditionally makes every select()/poll() loop that
+             * watches an input device spin: the caller is told there is data,
+             * reads, gets nothing, and immediately polls again. X's main loop
+             * (WaitForSomething) and its input thread both do exactly that. */
+            return (evdev_has_events(devfs_evdev_fd(kind)) != 0)
+                       ? (events & 0x1u) : 0u;
         default:
             return 0;
     }

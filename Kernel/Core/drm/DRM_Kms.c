@@ -443,7 +443,13 @@ int64_t drm_kms_ioctl(uint64_t request, uint64_t arg)
         return copy_to_user(uarg, &c, sizeof(c)) == 0u ? 0 : E_FAULT;
     }
     case DRM_NR_SET_CLIENT_CAP:
-        return 0; /* accept UNIVERSAL_PLANES / ATOMIC quietly */
+        /* Refuse every client cap so the DDX stays on the fully legacy
+         * modeset path. Saying yes to UNIVERSAL_PLANES would make modesetting
+         * drive real planes through GETPLANERESOURCES/SETPLANE, and yes to
+         * ATOMIC would make it build atomic commits -- neither of which this
+         * shim implements. Failing here is a normal, handled case for the DDX
+         * (it is what a pre-3.15 kernel does). */
+        return -95; /* -EOPNOTSUPP */
     case DRM_NR_SET_MASTER:
     case DRM_NR_DROP_MASTER:
         return 0;

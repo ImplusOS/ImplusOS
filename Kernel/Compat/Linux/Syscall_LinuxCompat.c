@@ -14,6 +14,7 @@
 #include "Core/syscall/Syscall_VM.h"
 #include "Core/syscall/Syscall_Main.h"
 #include "Core/memory/SharedMemory.h"
+#include "Core/memory/FileMap.h"
 #include "Core/timer/Timer.h"
 #include "Core/usercopy/Usercopy.h"
 #include "Core/vfs/VFS.h"
@@ -25,7 +26,7 @@
 #include "kernel/config.h"
 
 int64_t write(int fd, const void *buf, uint64_t count);
-#include "Drivers/RTC/RTC.h"
+#include "Platform/rtc/RTC.h"
 #include "kernel/status.h"
 #include "mmu/Paging_Main.h"
 #include "MemoryManagement/Memory_Main.h"
@@ -137,8 +138,12 @@ int64_t syscall_prlimit64(uint64_t pid, uint64_t resource, uint64_t new_limit, u
             limit.maximum = LINUX_RLIM_INFINITY;
             break;
         case LINUX_RLIMIT_NOFILE:
-            limit.current = (uint64_t)OS_CONFIG_FILE_MAX_FD;
-            limit.maximum = (uint64_t)OS_CONFIG_FILE_MAX_FD;
+            /* Must exceed the highest fd any range can hand out (AF_UNIX up to
+             * ~320, inet sockets up to ~575) or Xtrans rejects sockets with
+             * "fd >= sysconf(_SC_OPEN_MAX)". Kept at FD_SETSIZE so select()-
+             * based code stays safe too. */
+            limit.current = 1024u;
+            limit.maximum = 1024u;
             break;
         case LINUX_RLIMIT_AS:
             /* No hard cap is enforced on the user address space today
@@ -220,6 +225,31 @@ int64_t syscall_readv(int32_t fd, uint64_t iov, int32_t iovcnt)
     }
     uint8_t chunk[4096];
     uint64_t total = 0;
+
+    if (unix_socket_fd_in_range(fd)) {
+        for (int32_t index = 0; index < iovcnt; ++index) {
+            linux_iovec_t v;
+            if (copy_from_user(&v, (const linux_iovec_t *)(uintptr_t)iov + index,
+                               sizeof(v)) != 0u) {
+                return total ? (int64_t)total : LINUX_EFAULT;
+            }
+            uint64_t off = 0;
+            while (off < v.length) {
+                uint64_t want = v.length - off;
+                if (want > sizeof(chunk)) want = sizeof(chunk);
+                int64_t n = unix_socket_recv(fd, chunk, want);
+                if (n < 0) return total ? (int64_t)total : n;
+                if (n == 0) return (int64_t)total;
+                if (copy_to_user_trusted((uint8_t *)(uintptr_t)v.base + off,
+                                         chunk, (uint64_t)n) != 0u) {
+                    return total ? (int64_t)total : LINUX_EFAULT;
+                }
+                off += (uint64_t)n; total += (uint64_t)n;
+                if ((uint64_t)n < want) return (int64_t)total;
+            }
+        }
+        return (int64_t)total;
+    }
     for (int32_t index = 0; index < iovcnt; ++index) {
         linux_iovec_t vector;
         if (copy_from_user(&vector,
@@ -261,6 +291,32 @@ int64_t syscall_writev(int32_t fd, uint64_t iov, int32_t iovcnt)
     }
     uint8_t chunk[4096];
     uint64_t total = 0;
+
+    /* AF_UNIX stream writev() -- X's _XSERVTransWritev batches replies here. */
+    if (unix_socket_fd_in_range(fd)) {
+        for (int32_t index = 0; index < iovcnt; ++index) {
+            linux_iovec_t v;
+            if (copy_from_user(&v, (const linux_iovec_t *)(uintptr_t)iov + index,
+                               sizeof(v)) != 0u) {
+                return total ? (int64_t)total : LINUX_EFAULT;
+            }
+            uint64_t off = 0;
+            while (off < v.length) {
+                uint64_t want = v.length - off;
+                if (want > sizeof(chunk)) want = sizeof(chunk);
+                if (copy_from_user_trusted(chunk,
+                        (const uint8_t *)(uintptr_t)v.base + off, want) != 0u) {
+                    return total ? (int64_t)total : LINUX_EFAULT;
+                }
+                int64_t w = unix_socket_send(fd, chunk, want);
+                if (w < 0) return total ? (int64_t)total : w;
+                off += (uint64_t)w; total += (uint64_t)w;
+                if ((uint64_t)w < want) return (int64_t)total;
+            }
+        }
+        return (int64_t)total;
+    }
+
     for (int32_t index = 0; index < iovcnt; ++index) {
         linux_iovec_t vector;
         if (copy_from_user(&vector,
@@ -455,11 +511,18 @@ int64_t syscall_fcntl_ex(int32_t fd, int32_t cmd, uint64_t arg)
                 if (sflags < 0) return sflags;
                 return 0x0002 | sflags; /* O_RDWR | (O_NONBLOCK?) */
             }
+            if (unix_socket_fd_in_range(fd)) {
+                return 0x0002 | (unix_socket_is_nonblock(fd) ? 0x0800 : 0);
+            }
             return syscall_file_get_status_flags(fd);
         case LINUX_F_SETFL:
             if (syscall_socket_fd_in_range(fd)) {
                 return syscall_socket_set_nonblocking(
                     fd, ((uint32_t)arg & 0x0800u) != 0u);
+            }
+            if (unix_socket_fd_in_range(fd)) {
+                return unix_socket_set_nonblock(fd,
+                                                ((uint32_t)arg & 0x0800u) != 0u);
             }
             return syscall_file_set_status_flags(fd, (uint32_t)arg);
         default:
@@ -554,8 +617,16 @@ int64_t syscall_access(const char *path, int32_t mode)
     int32_t dir_handle = vfs_opendir(path);
     if (dir_handle >= 0) {
         (void)vfs_closedir(dir_handle);
-        if ((mode & 2) != 0) return -13; /* directories are read-only here */
-        return 0;                        /* F_OK / R_OK / X_OK on a dir */
+        /* W_OK on a directory asks "can I create files here?", so answer from
+         * the backing filesystem rather than refusing outright: a blanket
+         * EACCES made every writable mount (tmpfs on /tmp, /run, /var) look
+         * read-only. Xorg picks its compiled-keymap output directory with
+         * exactly this probe and cannot run xkbcomp without one, which is a
+         * fatal "Failed to activate virtual core keyboard". */
+        if ((mode & 2) != 0 && !vfs_dir_is_writable(path)) {
+            return -13; /* EACCES: directory on a read-only filesystem */
+        }
+        return 0; /* F_OK / R_OK / X_OK on a dir */
     }
     return -2; /* ENOENT */
 }
@@ -583,6 +654,23 @@ int64_t write(int fd, const void *buf, uint64_t count)
 
     uint8_t chunk[512];
     uint64_t total = 0;
+
+    /* AF_UNIX stream write() (X's _XSERVTransWrite). sendmsg is routed
+     * elsewhere; plain write() previously fell through to the file table. */
+    if (unix_socket_fd_in_range(fd)) {
+        while (total < count) {
+            uint64_t n = count - total;
+            if (n > sizeof(chunk)) n = sizeof(chunk);
+            if (copy_from_user_trusted(chunk, (const uint8_t *)buf + total, n) != 0u) {
+                return total != 0u ? (int64_t)total : -1;
+            }
+            int64_t w = unix_socket_send(fd, chunk, n);
+            if (w < 0) return total != 0u ? (int64_t)total : w;
+            total += (uint64_t)w;
+            if ((uint64_t)w < n) break;
+        }
+        return (int64_t)total;
+    }
 
     if ((fd == 1 || fd == 2) &&
         syscall_file_get_file_info(fd, NULL, NULL) != 0) {
@@ -644,6 +732,8 @@ int64_t write(int fd, const void *buf, uint64_t count)
 #define LINUX_SYS_IOCTL         16u
 #define LINUX_SYS_READV         19u
 #define LINUX_SYS_WRITEV        20u
+#define LINUX_SYS_SELECT        23u
+#define LINUX_SYS_PSELECT6     270u
 #define LINUX_SYS_ACCESS        21u
 #define LINUX_SYS_PIPE          22u
 #define LINUX_SYS_SCHED_YIELD   24u
@@ -829,6 +919,11 @@ int64_t write(int fd, const void *buf, uint64_t count)
 #define LINUX_MAP_PRIVATE      0x02u
 #define LINUX_MAP_FIXED        0x10u
 #define LINUX_MAP_ANONYMOUS    0x20u
+/* File mappings at or above this size are demand-paged (Core/memory/FileMap.c)
+ * instead of read in up front. Set to catch shared-object images -- the ones
+ * that made resident sets explode -- while leaving small mappings on the
+ * long-proven eager path. */
+#define LINUX_MMAP_LAZY_MIN_BYTES (1024u * 1024u)
 
 #define LINUX_PROT_READ        0x1u
 #define LINUX_PROT_WRITE       0x2u
@@ -857,6 +952,7 @@ int64_t write(int fd, const void *buf, uint64_t count)
 #define LINUX_PR_SET_NAME      15u
 #define LINUX_PR_GET_NAME      16u
 
+#define LINUX_CLONE_VM              0x00000100u
 #define LINUX_CLONE_PARENT_SETTID   0x00008000u
 #define LINUX_CLONE_CHILD_CLEARTID  0x00200000u
 #define LINUX_CLONE_THREAD          0x00010000u
@@ -922,6 +1018,24 @@ static void linux_syscall_result(uint64_t saved_rsp, int64_t value)
 #endif
 }
 
+/* Re-arm the trap so the caller executes the very same syscall again the next
+ * time it is scheduled, instead of returning a value to userspace. This is how
+ * Linux restarts an interrupted blocking call (ERESTARTSYS): put the syscall
+ * number back in rax and step rip back over the two-byte `syscall` (0f 05).
+ * Every argument register is restored from this frame on the way out, so the
+ * re-executed call sees exactly the arguments it was given. */
+static void linux_syscall_restart(uint64_t saved_rsp, uint64_t num)
+{
+#if defined(__x86_64__)
+    uint64_t *frame = (uint64_t *)(uintptr_t)saved_rsp;
+    frame[SYSCALL_FRAME_RAX] = num;
+    frame[SYSCALL_FRAME_RCX] -= 2u;
+#else
+    (void)saved_rsp;
+    (void)num;
+#endif
+}
+
 static int64_t linux_copy_cstring(char *out, uint64_t capacity,
                                   const char *user_ptr)
 {
@@ -962,11 +1076,20 @@ static int64_t linux_realtime_seconds(void)
 
 static int64_t linux_brk(uint64_t addr)
 {
-    uint64_t cursor = process_get_heap_cursor();
+    /* The break has its own window now (process_set_brk). It used to run
+     * through process_set_heap_cursor() -> process_user_alloc(), i.e. the same
+     * bump/free-list allocator that hands out addresses for mmap()ed shared
+     * objects -- so a break could be "granted" at an address the kernel had
+     * mapped somewhere else entirely, and a later dlopen() could be placed on
+     * top of glibc's malloc arena. See TODO_Doom_Xorg_MethodA.md M20.
+     *
+     * brk(2) reports the resulting break either way: on failure the caller
+     * sees the break unchanged and falls back to mmap(). */
+    uint64_t cursor = process_get_brk();
     if (addr == 0u) {
         return (int64_t)cursor;
     }
-    if (process_set_heap_cursor(addr) < 0) {
+    if (process_set_brk(addr) < 0) {
         return (int64_t)cursor;
     }
     return (int64_t)addr;
@@ -1103,6 +1226,73 @@ void linux_compat_mshared_release_pid(int32_t pid)
     }
 }
 
+/* Module map trace. A foreign binary's crash reports a raw RIP, and every
+ * shared object it runs from was placed by us -- so without this the only way
+ * to turn "RIP 0x410087B004" into "libevdev.so.2+0x1234" is to guess the load
+ * base. Records which fd a .so was opened on, then the base each file-backed
+ * mmap of that fd got. Two lines per shared object, only for .so files. */
+#define LINUX_MODULE_MAP_TRACE 1
+
+#if LINUX_MODULE_MAP_TRACE
+static int linux_path_is_shared_object(const char *path)
+{
+    uint64_t n = strlen(path);
+    for (uint64_t i = 0; i + 2 < n; ++i) {
+        if (path[i] == '.' && path[i + 1] == 's' && path[i + 2] == 'o' &&
+            (path[i + 3] == '\0' || path[i + 3] == '.')) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int32_t g_module_map_fds[64];
+static char    g_module_map_names[64][64];
+
+static void linux_module_map_note_open(int32_t fd, const char *path)
+{
+    if (fd < 0 || !linux_path_is_shared_object(path)) return;
+    uint64_t n = strlen(path);
+    uint64_t start = 0;
+    for (uint64_t i = 0; i < n; ++i) if (path[i] == '/') start = i + 1u;
+    for (uint32_t i = 0; i < 64u; ++i) {
+        if (g_module_map_fds[i] == 0 || g_module_map_fds[i] == fd + 1) {
+            g_module_map_fds[i] = fd + 1;
+            uint64_t j = 0;
+            for (; j < 63u && path[start + j]; ++j) {
+                g_module_map_names[i][j] = path[start + j];
+            }
+            g_module_map_names[i][j] = '\0';
+            return;
+        }
+    }
+}
+
+static const char *linux_module_map_name(int32_t fd)
+{
+    for (uint32_t i = 0; i < 64u; ++i) {
+        if (g_module_map_fds[i] == fd + 1) return g_module_map_names[i];
+    }
+    return NULL;
+}
+
+static void linux_module_map_note_mmap(int32_t fd, uint64_t base, uint64_t len,
+                                       uint64_t offset)
+{
+    const char *name = linux_module_map_name(fd);
+    if (name == NULL) return;
+    serial_write_string("[lxmap] ");
+    serial_write_string(name);
+    serial_write_string(" base=");
+    serial_write_uint64(base);
+    serial_write_string(" len=");
+    serial_write_uint64(len);
+    serial_write_string(" off=");
+    serial_write_uint64(offset);
+    serial_write_char('\n');
+}
+#endif
+
 static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
                           uint64_t flags, uint64_t fd, uint64_t offset)
 {
@@ -1121,6 +1311,15 @@ static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
              * nothing -- demand-zero on first touch. Elsewhere (glibc placing
              * something into the heap) keep the eager mapping. */
             if (process_user_addr_in_mmap_arena(addr, length)) {
+                /* Anonymous pages must read as zero even where they land on
+                 * top of a demand-paged file mapping -- this is precisely how
+                 * a shared object's .bss is placed over the mapping of its own
+                 * image. Shadow the range so its faults go to demand-zero
+                 * instead of being filled from the file. */
+                int32_t self = process_get_current_pid();
+                if (self >= 0) {
+                    (void)filemap_register_zero(self, addr, length);
+                }
                 return (int64_t)addr;
             }
             if (length > 0x4000000000ULL - addr) {
@@ -1194,6 +1393,50 @@ static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
         }
     }
 
+    /* Large file mappings are demand-paged rather than read in up front.
+     * glibc's loader maps every shared object twice over (a mapping spanning
+     * the whole image, then MAP_FIXED segment mappings on top of it), so
+     * eagerly backing each one made Xorg's resident set multi-gigabyte and
+     * fork() unusable -- see Core/memory/FileMap.c. Below the threshold the
+     * proven eager path is kept: small mappings are cheap, and it bounds how
+     * many records the (shared) filemap table has to hold. */
+    if (length >= LINUX_MMAP_LAZY_MIN_BYTES &&
+        (flags & LINUX_MAP_SHARED) == 0u) {
+        int32_t pid = process_get_current_pid();
+        int32_t handle = syscall_file_mmap_acquire((int32_t)fd);
+        if (handle >= 0) {
+            void *reserved;
+            if ((flags & LINUX_MAP_FIXED) != 0u) {
+                if (addr == 0u || addr < 0x1000u ||
+                    length > 0x4000000000ULL - addr) {
+                    syscall_file_mmap_release(handle);
+                    return LINUX_EINVAL;
+                }
+                reserved = (void *)(uintptr_t)addr;
+            } else {
+                reserved = process_user_reserve(length);
+            }
+            if (reserved != NULL &&
+                filemap_register(pid, (uint64_t)(uintptr_t)reserved, length,
+                                 handle, offset,
+                                 PAGE_RW | PAGE_USER) == 0) {
+#if LINUX_MODULE_MAP_TRACE
+                linux_module_map_note_mmap((int32_t)fd,
+                                           (uint64_t)(uintptr_t)reserved,
+                                           length, offset);
+#endif
+                if (saved_offset >= 0) {
+                    (void)syscall_file_seek((int32_t)fd, saved_offset,
+                                            LINUX_SEEK_SET);
+                }
+                return (int64_t)(uintptr_t)reserved;
+            }
+            /* Table full or no address space: fall through to the eager path
+             * rather than failing the mmap outright. */
+            syscall_file_mmap_release(handle);
+        }
+    }
+
     void *mapped;
     if ((flags & LINUX_MAP_FIXED) != 0u) {
         if (addr == 0u || addr < 0x1000u || length > 0x4000000000ULL - addr) {
@@ -1244,6 +1487,12 @@ static int64_t linux_mmap(uint64_t addr, uint64_t length, uint64_t prot,
                                    offset, read_len);
         }
     }
+#if LINUX_MODULE_MAP_TRACE
+    /* Also on the eager path: an X input/video driver is well under the
+     * lazy-mapping threshold, so it never reaches the branch above. */
+    linux_module_map_note_mmap((int32_t)fd, (uint64_t)(uintptr_t)mapped,
+                               length, offset);
+#endif
     return (int64_t)(uintptr_t)mapped;
 }
 
@@ -1266,7 +1515,7 @@ static int64_t linux_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd,
 
 static int64_t linux_epoll_wait(uint64_t epfd, uint64_t events,
                                 uint64_t maxevents, uint64_t timeout_ms,
-                                int *should_switch_out)
+                                int *should_switch_out, int *restart_out)
 {
     if (maxevents == 0u || maxevents > 4096u) {
         return LINUX_EINVAL;
@@ -1275,11 +1524,21 @@ static int64_t linux_epoll_wait(uint64_t epfd, uint64_t events,
                                       maxevents * sizeof(epoll_event_t))) {
         return LINUX_EFAULT;
     }
-    return (int64_t)syscall_epoll_wait_ex((int32_t)epfd,
-                                          (epoll_event_t *)(uintptr_t)events,
-                                          (int32_t)maxevents,
-                                          (int32_t)timeout_ms,
-                                          should_switch_out);
+    int64_t rc = (int64_t)syscall_epoll_wait_ex((int32_t)epfd,
+                                                (epoll_event_t *)(uintptr_t)events,
+                                                (int32_t)maxevents,
+                                                (int32_t)timeout_ms,
+                                                should_switch_out);
+    /* A wait with no deadline may not report a timeout. syscall_epoll_wait_ex()
+     * degrades "block" to "sleep a slice and report nothing ready", which is a
+     * legal spurious wakeup for a finite timeout but a lie for timeout < 0 --
+     * and the X server's WaitForSomething() passes -1 whenever no timer is
+     * pending, so it spun a whole CPU re-entering epoll_wait forever. Run the
+     * call again instead (same mechanism as linux_wait4). */
+    if (rc == 0 && (int32_t)timeout_ms < 0 && restart_out != NULL) {
+        *restart_out = 1;
+    }
+    return rc;
 }
 
 /* poll(2) / ppoll(2).
@@ -1308,8 +1567,12 @@ typedef struct {
 } linux_pollfd_t;
 
 static int64_t linux_poll_common(uint64_t fds_ptr, uint64_t nfds,
-                                 int64_t timeout_ms, int *should_switch_out)
+                                 int64_t timeout_ms, int *should_switch_out,
+                                 int *restart_out)
 {
+    /* Same rule as linux_epoll_wait(): a negative timeout means "no deadline",
+     * so reporting a timeout is not an option. Set at the points below that
+     * would otherwise return 0. */
     if (nfds > LINUX_POLL_MAX_FDS) {
         return LINUX_EINVAL;
     }
@@ -1324,6 +1587,9 @@ static int64_t linux_poll_common(uint64_t fds_ptr, uint64_t nfds,
             process_sleep_current_ms(slice_ms) == 0 &&
             should_switch_out != NULL) {
             *should_switch_out = 1;
+        }
+        if (timeout_ms < 0 && restart_out != NULL) {
+            *restart_out = 1;
         }
         return 0;
     }
@@ -1374,11 +1640,14 @@ static int64_t linux_poll_common(uint64_t fds_ptr, uint64_t nfds,
     if (process_sleep_current_ms(slice_ms) == 0 && should_switch_out != NULL) {
         *should_switch_out = 1;
     }
+    if (timeout_ms < 0 && restart_out != NULL) {
+        *restart_out = 1;
+    }
     return 0;
 }
 
 static int64_t linux_ppoll(uint64_t fds_ptr, uint64_t nfds, uint64_t tmo_ptr,
-                           int *should_switch_out)
+                           int *should_switch_out, int *restart_out)
 {
     int64_t timeout_ms = -1; /* NULL timespec -> block (degrades to a slice) */
     if (tmo_ptr != 0u) {
@@ -1391,12 +1660,13 @@ static int64_t linux_ppoll(uint64_t fds_ptr, uint64_t nfds, uint64_t tmo_ptr,
                          ? (ts.sec * 1000 + (ts.nsec + 999999) / 1000000)
                          : 0;
     }
-    return linux_poll_common(fds_ptr, nfds, timeout_ms, should_switch_out);
+    return linux_poll_common(fds_ptr, nfds, timeout_ms, should_switch_out,
+                             restart_out);
 }
 
 static int64_t linux_wait4(uint64_t pid, uint64_t status_ptr,
                            uint64_t options, uint64_t rusage,
-                           int *should_switch_out)
+                           int *should_switch_out, int *restart_out)
 {
     (void)rusage;
     if ((options & ~(LINUX_WNOHANG | 2u)) != 0u) {
@@ -1412,13 +1682,32 @@ static int64_t linux_wait4(uint64_t pid, uint64_t status_ptr,
     int32_t result = process_waitpid_ex((int32_t)pid, &child_code,
                                         (int32_t)options, &term_signal);
     if (result == 0 && (options & LINUX_WNOHANG) == 0u) {
-        /* A child exists but has not exited. Park the caller for a slice
-         * instead of letting its wait loop busy-spin the CPU. */
+        /* A child exists but has not exited. Park the caller for a slice, then
+         * run the wait again from the top when it is next scheduled.
+         *
+         * Returning 0 here (what this used to do) is not a thing a blocking
+         * wait4() may do -- on Linux 0 means "WNOHANG and nothing to report",
+         * so callers read it as "the child is still running" and stop waiting.
+         * The X server's Popen()/Pclose() is exactly that shape:
+         *     do { pid = waitpid(cur->pid, &pstat, 0); }
+         *     while (pid == -1 && errno == EINTR);
+         *     return pid == -1 ? -1 : pstat;
+         * With 0 the loop falls straight through and returns an UNINITIALISED
+         * pstat, so xkbcomp was reported as having succeeded while it was in
+         * fact still running -- and the keymap it had not written yet came
+         * back as "Couldn't open compiled keymap file", which is fatal. */
         if (process_sleep_current_ms(LINUX_WAIT_POLL_SLICE_MS) == 0 &&
             should_switch_out != NULL) {
             *should_switch_out = 1;
         }
+        if (restart_out != NULL) {
+            *restart_out = 1;
+        }
         return 0;
+    }
+    if (result < 0) {
+        /* No such child. -1 would surface as EPERM. */
+        return LINUX_ECHILD;
     }
     if (result > 0 && status_ptr != 0u) {
         /* Encode a POSIX wait status: killed-by-signal -> low 7 bits carry the
@@ -1539,8 +1828,41 @@ static int64_t linux_getcpu(uint64_t cpu_ptr, uint64_t node_ptr,
 
 static int64_t linux_clone(uint64_t saved_rsp, uint64_t flags, uint64_t stack,
                            uint64_t parent_tid, uint64_t child_tid,
-                           uint64_t tls)
+                           uint64_t tls, int *should_switch)
 {
+    /* fork()/vfork() reach the kernel as clone(), not as SYS_fork: glibc's
+     * arch_fork() issues
+     *   clone(CLONE_CHILD_SETTID|CLONE_CHILD_CLEARTID|SIGCHLD, 0, NULL, ctid, 0)
+     * -- no CLONE_VM, and a NULL stack because the child keeps the parent's.
+     * Rejecting stack==0 outright therefore failed *every* fork() from a
+     * Linux binary with EINVAL. That is what stopped Xorg from compiling a
+     * keymap: its only route to xkbcomp is Popen(), i.e. fork() +
+     * execl("/bin/sh", ...), and the failure surfaced only as the opaque
+     * "XKB: Could not invoke xkbcomp" before being fatal. */
+    if ((flags & (LINUX_CLONE_VM | LINUX_CLONE_THREAD)) == 0u) {
+        int32_t child_pid = process_fork();
+        if (child_pid < 0) {
+            return LINUX_EAGAIN;
+        }
+        if ((flags & LINUX_CLONE_PARENT_SETTID) != 0u && parent_tid != 0u) {
+            int32_t pid32 = child_pid;
+            (void)copy_to_user_trusted((void *)(uintptr_t)parent_tid,
+                                       &pid32, sizeof(pid32));
+        }
+        /* CLONE_CHILD_SETTID / CLONE_CHILD_CLEARTID are deliberately NOT
+         * honoured on this path. Both write through `child_tid` in the
+         * *child's* address space, and process_fork() returns with us still
+         * running as the parent -- writing here would clobber the parent's own
+         * TCB instead. glibc only uses them to refresh THREAD_SELF->tid, which
+         * the child does not consult before it execs (and execve clears both
+         * on Linux too). Doing it properly needs a cross-address-space write;
+         * see Docs/Others/TODO_Doom_Xorg_MethodA.md M9. */
+        if (should_switch != NULL) {
+            *should_switch = 1;
+        }
+        return (int64_t)child_pid;
+    }
+
     if (stack == 0u) {
         return LINUX_EINVAL;
     }
@@ -1612,6 +1934,12 @@ static int64_t linux_read(uint64_t fd, uint64_t buf, uint64_t count)
         }
         return rc;
     }
+    /* AF_UNIX stream read() (X's _XSERVTransRead). recvmsg is routed
+     * elsewhere; plain read() previously fell through to the file table and
+     * failed. */
+    if (unix_socket_fd_in_range((int32_t)fd)) {
+        return unix_socket_recv((int32_t)fd, (void *)(uintptr_t)buf, count);
+    }
     return (int64_t)syscall_file_read((int32_t)fd,
                                       (uint8_t *)(uintptr_t)buf, count);
 }
@@ -1669,7 +1997,49 @@ static int64_t linux_open_path(uint64_t path_ptr, uint64_t flags)
         if (result == LINUX_ENOENT && (flags & LINUX_O_CREAT) != 0u) {
             result = (int64_t)syscall_file_creat(path);
         }
+#if LINUX_MODULE_MAP_TRACE
+        if (result >= 0) {
+            linux_module_map_note_open((int32_t)result, path);
+        }
+#endif
     }
+#if defined(XKB_READ_PROBE)
+    /* Focused probe: for any path containing "xkb", dump the fd, the file
+     * size the VFS reports, and the raw bytes syscall_file_read() returns at
+     * offset 300..360 - the region where libxkbcommon reports a parse error
+     * on keycodes/evdev even though the ISO copy is byte-identical to stock. */
+    {
+        int has_xkb = 0;
+        for (uint32_t i = 0; path[i] && i + 2 < sizeof(path); ++i) {
+            if (path[i] == 'x' && path[i+1] == 'k' && path[i+2] == 'b') { has_xkb = 1; break; }
+        }
+        if (has_xkb && result >= 0) {
+            vfs_file_t pvf;
+            int64_t szinfo = syscall_file_get_file_info((int32_t)result, &pvf, NULL);
+            serial_write_string("[xkbprobe] '");
+            serial_write_string(path);
+            serial_write_string("' fd=");
+            serial_write_uint64((uint64_t)result);
+            serial_write_string(" info_rc=");
+            serial_write_uint64((uint64_t)szinfo);
+            serial_write_string(" vf.size=");
+            serial_write_uint64(szinfo >= 0 ? (uint64_t)pvf.size : 0u);
+            int64_t sv = syscall_file_seek((int32_t)result, 0, LINUX_SEEK_CUR);
+            (void)syscall_file_seek((int32_t)result, 300, LINUX_SEEK_SET);
+            uint8_t region[64] = {0};
+            int64_t rn = syscall_file_read((int32_t)result, region, sizeof(region));
+            (void)syscall_file_seek((int32_t)result, sv >= 0 ? sv : 0, LINUX_SEEK_SET);
+            serial_write_string(" read@300 n=");
+            serial_write_uint64((uint64_t)rn);
+            serial_write_string(" [");
+            for (int i = 0; i < 48 && i < (int)rn; ++i) {
+                char c = (char)region[i];
+                serial_write_char((c >= 32 && c < 127) ? c : '.');
+            }
+            serial_write_string("]\n");
+        }
+    }
+#endif
 #ifdef LINUX_SYSCALL_TRACE
     serial_write_string("[lx] open '");
     serial_write_string(path);
@@ -1787,6 +2157,39 @@ static int64_t linux_stat_path(const char *path, uint64_t statbuf_ptr)
     return 0;
 }
 
+/* Fill *st for an already-open fd (fstat / statx+AT_EMPTY_PATH). Returns 0 or a
+ * negative LINUX_E* code. Directory fds must report S_ISDIR: glibc's opendir()
+ * fstat()s the fd it just opened and returns NULL for anything that is not a
+ * directory, so without this every opendir() from a foreign binary failed --
+ * which is why Xorg found no loadable modules ("No drivers available" ->
+ * "no screens found") even though modules/{drivers,extensions,input} were on
+ * the medium. */
+static int64_t linux_fill_stat_for_fd(int32_t fd, linux_stat64_t *st)
+{
+    memset(st, 0, sizeof(*st));
+
+    vfs_file_t vf;
+    uint32_t writable = 0;
+    if (syscall_file_get_file_info(fd, &vf, &writable) == 0) {
+        linux_stat_fill_common_ino(st, vf.size, vf.internal_id);
+        st->st_mode = LINUX_S_IFREG | (writable != 0u ? 0x1A4u : 0x124u);
+        return 0;
+    }
+    if (syscall_file_is_dir(fd)) {
+        linux_stat_fill_common(st, 0);
+        st->st_mode = LINUX_S_IFDIR | 0x1EDu; /* drwxr-xr-x */
+        st->st_blksize = 4096;
+        return 0;
+    }
+    syscall_socket_info_t info;
+    if (syscall_socket_get_info(fd, &info) == 0) {
+        linux_stat_fill_common(st, 0);
+        st->st_mode = LINUX_S_IFREG | 0x1A4u;
+        return 0;
+    }
+    return LINUX_EBADF;
+}
+
 static int64_t linux_stat_fd(int32_t fd, uint64_t statbuf_ptr)
 {
     if (statbuf_ptr == 0u ||
@@ -1795,21 +2198,9 @@ static int64_t linux_stat_fd(int32_t fd, uint64_t statbuf_ptr)
         return LINUX_EFAULT;
     }
     linux_stat64_t st;
-    memset(&st, 0, sizeof(st));
-
-    vfs_file_t vf;
-    uint32_t writable = 0;
-    if (syscall_file_get_file_info(fd, &vf, &writable) == 0) {
-        linux_stat_fill_common_ino(&st, vf.size, vf.internal_id);
-        st.st_mode = LINUX_S_IFREG | (writable != 0u ? 0x1A4u : 0x124u);
-    } else {
-        syscall_socket_info_t info;
-        if (syscall_socket_get_info(fd, &info) == 0) {
-            linux_stat_fill_common(&st, 0);
-            st.st_mode = LINUX_S_IFREG | 0x1A4u;
-        } else {
-            return LINUX_EBADF;
-        }
+    int64_t rc = linux_fill_stat_for_fd(fd, &st);
+    if (rc != 0) {
+        return rc;
     }
     if (copy_to_user_trusted((void *)(uintptr_t)statbuf_ptr, &st, sizeof(st)) != 0u) {
         return LINUX_EFAULT;
@@ -2004,8 +2395,19 @@ static int64_t linux_sockaddr_family(uint64_t addr_ptr, uint16_t *family_out)
     return 0;
 }
 
-static int64_t linux_copy_sockaddr_un(uint64_t addr_ptr, char *path_out,
-                                      uint64_t path_cap)
+/* Render a sockaddr_un as the flat string the AF_UNIX table keys on.
+ *
+ * Abstract addresses (sun_path[0] == '\0', the name running to addr_len) must
+ * NOT be flattened with strlen(): that yields "" for every one of them, so
+ * they all alias each other and any connect() matches whichever unrelated
+ * socket happens to be bound to "". That is exactly what broke X clients here
+ * -- libxcb tries the abstract socket first, so Doom's connect() "succeeded"
+ * against the wrong endpoint and then hung on a handshake nobody would answer.
+ * Encode them the way Linux itself displays them (ss, /proc/net/unix): a
+ * leading '@' followed by the name. Names containing embedded NULs are
+ * truncated at the first one; nothing in tree uses those. */
+static int64_t linux_copy_sockaddr_un(uint64_t addr_ptr, uint64_t addr_len,
+                                      char *path_out, uint64_t path_cap)
 {
     if (addr_ptr == 0u) {
         return LINUX_EFAULT;
@@ -2020,6 +2422,34 @@ static int64_t linux_copy_sockaddr_un(uint64_t addr_ptr, char *path_out,
         return LINUX_EAFNOSUPPORT;
     }
     addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    const uint64_t path_off = offsetof(linux_sockaddr_un_t, sun_path);
+
+    if (addr.sun_path[0] == '\0') {
+        /* Unnamed (addr_len covers only sun_family): autobind, unsupported. */
+        if (addr_len <= path_off) {
+            return LINUX_EINVAL;
+        }
+        uint64_t avail = addr_len - path_off;
+        if (avail > sizeof(addr.sun_path) - 1u) {
+            avail = sizeof(addr.sun_path) - 1u;
+        }
+        uint64_t len = strlen(addr.sun_path + 1); /* stops at an embedded NUL */
+        if (len > avail - 1u) {
+            len = avail - 1u;
+        }
+        if (len == 0u) {
+            return LINUX_EINVAL;
+        }
+        if (len + 2u > path_cap) {
+            return LINUX_ENAMETOOLONG;
+        }
+        path_out[0] = '@';
+        memcpy(path_out + 1, addr.sun_path + 1, len);
+        path_out[len + 1u] = '\0';
+        return 0;
+    }
+
     uint64_t len = strlen(addr.sun_path);
     if (len + 1u > path_cap) {
         return LINUX_ENAMETOOLONG;
@@ -2113,15 +2543,14 @@ static int64_t linux_socket_create(uint64_t domain, uint64_t type,
 static int64_t linux_socket_bind(uint64_t fd, uint64_t addr_ptr,
                                  uint64_t addr_len)
 {
-    (void)addr_len;
     uint16_t family = 0;
     int64_t rc = linux_sockaddr_family(addr_ptr, &family);
     if (rc < 0) {
         return rc;
     }
     if (family == LINUX_AF_UNIX) {
-        char path[108];
-        rc = linux_copy_sockaddr_un(addr_ptr, path, sizeof(path));
+        char path[110];
+        rc = linux_copy_sockaddr_un(addr_ptr, addr_len, path, sizeof(path));
         if (rc < 0) return rc;
         rc = unix_socket_bind((int32_t)fd, path);
         return rc < 0 ? LINUX_EINVAL : rc;
@@ -2139,15 +2568,14 @@ static int64_t linux_socket_bind(uint64_t fd, uint64_t addr_ptr,
 static int64_t linux_socket_connect(uint64_t fd, uint64_t addr_ptr,
                                     uint64_t addr_len)
 {
-    (void)addr_len;
     uint16_t family = 0;
     int64_t rc = linux_sockaddr_family(addr_ptr, &family);
     if (rc < 0) {
         return rc;
     }
     if (family == LINUX_AF_UNIX) {
-        char path[108];
-        rc = linux_copy_sockaddr_un(addr_ptr, path, sizeof(path));
+        char path[110];
+        rc = linux_copy_sockaddr_un(addr_ptr, addr_len, path, sizeof(path));
         if (rc < 0) return rc;
         rc = unix_socket_connect((int32_t)fd, path);
         return rc < 0 ? LINUX_ENOENT : rc;
@@ -2268,7 +2696,9 @@ static int64_t linux_socket_sendto(uint64_t fd, uint64_t buf, uint64_t len,
          * exactly like Linux does for a connected/pair-created socket. */
         int64_t sent = unix_socket_send((int32_t)fd,
                                         (const void *)(uintptr_t)buf, len);
-        return sent < 0 ? LINUX_EBUSY : sent;
+        /* As in recvfrom above: EAGAIN (ring full) has to stay EAGAIN so the
+         * caller retries instead of treating the write as fatal. */
+        return sent;
     }
 
     uint32_t dst_ip = 0;
@@ -2321,7 +2751,14 @@ static int64_t linux_socket_recvfrom(uint64_t fd, uint64_t buf, uint64_t len,
     }
     if (unix_socket_fd_in_range((int32_t)fd)) {
         int64_t got = unix_socket_recv((int32_t)fd, (void *)(uintptr_t)buf, len);
-        if (got < 0) return LINUX_EBUSY;
+        /* Report what actually happened. Collapsing every error to EBUSY threw
+         * away the one distinction the caller cares about: EAGAIN means "not
+         * yet, wait" and anything else means "give up". libxcb's read_block()
+         * retries on EAGAIN and aborts the connection on anything else, so an
+         * EBUSY here ended the X11 handshake after a single recv() -- the X
+         * server had accepted the client and was still composing its reply.
+         * See TODO_Doom_Xorg_MethodA.md M23. */
+        if (got < 0) return got;
         if (addr_len_ptr != 0u) {
             int32_t addr_len = 0;
             (void)copy_to_user((void *)(uintptr_t)addr_len_ptr, &addr_len,
@@ -2587,19 +3024,9 @@ static int64_t linux_statx(uint64_t dirfd, uint64_t path_ptr, uint64_t flags,
         char empty[1];
         if (copy_from_user(empty, (const void *)(uintptr_t)path_ptr, 1u) == 0u &&
             empty[0] == '\0') {
-            vfs_file_t vf;
-            uint32_t writable = 0;
-            if (syscall_file_get_file_info((int32_t)dirfd, &vf, &writable) == 0) {
-                linux_stat_fill_common_ino(&st, vf.size, vf.internal_id);
-                st.st_mode = LINUX_S_IFREG | (writable != 0u ? 0x1A4u : 0x124u);
-            } else {
-                syscall_socket_info_t info;
-                if (syscall_socket_get_info((int32_t)dirfd, &info) == 0) {
-                    linux_stat_fill_common(&st, 0);
-                    st.st_mode = LINUX_S_IFREG | 0x1A4u;
-                } else {
-                    return LINUX_EBADF;
-                }
+            int64_t rc = linux_fill_stat_for_fd((int32_t)dirfd, &st);
+            if (rc != 0) {
+                return rc;
             }
         } else {
             return LINUX_ENOTSUP;
@@ -3173,7 +3600,7 @@ static int64_t linux_clock_nanosleep(uint64_t clockid, uint64_t flags,
  * it in preference to wait4() (TODO_Chromium_LinuxABI.md section 4). */
 static int64_t linux_waitid(uint64_t idtype, uint64_t id, uint64_t infop_ptr,
                             uint64_t options, uint64_t rusage_ptr,
-                            int *should_switch_out)
+                            int *should_switch_out, int *restart_out)
 {
     if (rusage_ptr != 0u &&
         process_user_buffer_is_valid((void *)(uintptr_t)rusage_ptr, 144u)) {
@@ -3206,10 +3633,16 @@ static int64_t linux_waitid(uint64_t idtype, uint64_t id, uint64_t infop_ptr,
     if (child == 0) {
         if ((options & LINUX_WNOHANG) == 0u) {
             /* Blocking waitid(): a child exists but has not exited. Park the
-             * caller for a slice so its retry loop does not spin the CPU. */
+             * caller for a slice, then run the call again when it is next
+             * scheduled. Returning 0 would report success with an untouched
+             * siginfo_t, i.e. a child that has not exited read as one that
+             * has -- the same defect fixed in linux_wait4(). */
             if (process_sleep_current_ms(LINUX_WAIT_POLL_SLICE_MS) == 0 &&
                 should_switch_out != NULL) {
                 *should_switch_out = 1;
+            }
+            if (restart_out != NULL) {
+                *restart_out = 1;
             }
             return 0;
         }
@@ -3434,6 +3867,146 @@ static void linux_trace_exit(uint64_t num, int64_t result)
 #define LINUX_TRACE_EXIT(n, r) ((void)0)
 #endif
 
+/* A blocking AF_UNIX read that found the ring empty. EAGAIN is not a value a
+ * blocking recv() may return, and a client that gets one where it expected to
+ * wait simply gives up: the X11 handshake died right here, with libxcb's first
+ * read of the server's setup reply. Park the caller for a slice and run the
+ * syscall again (same mechanism as linux_wait4/linux_epoll_wait). */
+static void linux_unix_block_retry(int32_t fd, int64_t *result,
+                                   int *should_switch, int *restart_out)
+{
+    if (*result != LINUX_EAGAIN || !unix_socket_fd_in_range(fd)) {
+        return;
+    }
+    if (unix_socket_is_nonblock(fd)) {
+        /* Bring-up trace: the caller asked for a non-blocking read, so EAGAIN
+         * is the right answer and it is on the caller to wait. Printed because
+         * "the client gave up after one EAGAIN" looks identical whether the
+         * socket really was non-blocking or we simply failed to block. */
+        unix_socket_trace_note("rx-NB", fd);
+        return;
+    }
+    if (process_sleep_current_ms(LINUX_WAIT_POLL_SLICE_MS) == 0 &&
+        should_switch != NULL) {
+        *should_switch = 1;
+    }
+    if (restart_out != NULL) {
+        *restart_out = 1;
+        *result = 0;
+    }
+}
+
+/* select(2) / pselect6(2).
+ *
+ * Neither was implemented, so both returned ENOSYS -- and Xlib/libxcb wait for
+ * the server's reply with exactly this call. An X client therefore issued one
+ * recv(), got EAGAIN, tried to wait, was told the wait does not exist, and
+ * reported "Couldn't connect to display!" without ever retrying. Built on the
+ * same per-fd readiness probe poll(2) uses; a NULL timeout means "no
+ * deadline", so it re-runs the syscall rather than reporting a timeout. */
+#define LINUX_SELECT_MAX_FDS 1024u
+
+static int64_t linux_select_common(uint64_t nfds, uint64_t rd_ptr,
+                                   uint64_t wr_ptr, uint64_t ex_ptr,
+                                   int64_t timeout_ms, int *should_switch_out,
+                                   int *restart_out)
+{
+    if ((int64_t)nfds < 0 || nfds > LINUX_SELECT_MAX_FDS) {
+        return LINUX_EINVAL;
+    }
+    uint64_t bytes = (nfds + 7u) / 8u;
+    uint8_t rd[LINUX_SELECT_MAX_FDS / 8];
+    uint8_t wr[LINUX_SELECT_MAX_FDS / 8];
+    uint8_t ex[LINUX_SELECT_MAX_FDS / 8];
+    memset(rd, 0, sizeof(rd));
+    memset(wr, 0, sizeof(wr));
+    memset(ex, 0, sizeof(ex));
+
+    if (bytes != 0u) {
+        if (rd_ptr != 0u &&
+            copy_from_user(rd, (const void *)(uintptr_t)rd_ptr, bytes) != 0u) {
+            return LINUX_EFAULT;
+        }
+        if (wr_ptr != 0u &&
+            copy_from_user(wr, (const void *)(uintptr_t)wr_ptr, bytes) != 0u) {
+            return LINUX_EFAULT;
+        }
+        if (ex_ptr != 0u &&
+            copy_from_user(ex, (const void *)(uintptr_t)ex_ptr, bytes) != 0u) {
+            return LINUX_EFAULT;
+        }
+    }
+
+    uint8_t rd_out[LINUX_SELECT_MAX_FDS / 8];
+    uint8_t wr_out[LINUX_SELECT_MAX_FDS / 8];
+    memset(rd_out, 0, sizeof(rd_out));
+    memset(wr_out, 0, sizeof(wr_out));
+
+    int64_t ready = 0;
+    for (uint64_t fd = 0; fd < nfds; ++fd) {
+        uint32_t bit = 1u << (fd & 7u);
+        uint64_t idx = fd >> 3;
+        int want_rd = (rd_ptr != 0u) && ((rd[idx] & bit) != 0u);
+        int want_wr = (wr_ptr != 0u) && ((wr[idx] & bit) != 0u);
+        if (!want_rd && !want_wr) {
+            continue;
+        }
+        uint32_t want = 0u;
+        if (want_rd) want |= 0x1u;
+        if (want_wr) want |= 0x4u;
+        uint32_t r = syscall_poll_one_fd((int32_t)fd, want);
+        /* An error or hangup makes the fd readable as far as select() is
+         * concerned - that is how a caller learns to go and collect it. */
+        if (want_rd && (r & (0x1u | 0x8u | 0x10u | 0x20u)) != 0u) {
+            rd_out[idx] |= (uint8_t)bit;
+            ++ready;
+        }
+        if (want_wr && (r & (0x4u | 0x8u)) != 0u) {
+            wr_out[idx] |= (uint8_t)bit;
+            ++ready;
+        }
+    }
+
+    if (ready == 0 && timeout_ms != 0) {
+        uint32_t slice_ms = LINUX_POLL_SLICE_MS;
+        if (timeout_ms > 0 && (uint64_t)timeout_ms < slice_ms) {
+            slice_ms = (uint32_t)timeout_ms;
+        }
+        if (process_sleep_current_ms(slice_ms) == 0 &&
+            should_switch_out != NULL) {
+            *should_switch_out = 1;
+        }
+        (void)restart_out;
+        /* Deliberately NOT restarted in-kernel the way epoll_wait() is, even
+         * for a NULL timeout: measured, that hangs the X server somewhere in
+         * its input-device init (it stopped after adding kbd0 and never
+         * reached Dispatch(), so no client was ever accepted). A spurious
+         * zero return is a wakeup the caller retries; an in-kernel wait that
+         * never yields is a deadlock. See TODO_Doom_Xorg_MethodA.md M23.
+         *
+         * The caller may not observe a partially-updated set on timeout. */
+        return 0;
+    }
+
+    if (bytes != 0u) {
+        if (rd_ptr != 0u &&
+            copy_to_user((void *)(uintptr_t)rd_ptr, rd_out, bytes) != 0u) {
+            return LINUX_EFAULT;
+        }
+        if (wr_ptr != 0u &&
+            copy_to_user((void *)(uintptr_t)wr_ptr, wr_out, bytes) != 0u) {
+            return LINUX_EFAULT;
+        }
+        if (ex_ptr != 0u) {
+            memset(ex, 0, sizeof(ex)); /* no exceptional conditions modelled */
+            if (copy_to_user((void *)(uintptr_t)ex_ptr, ex, bytes) != 0u) {
+                return LINUX_EFAULT;
+            }
+        }
+    }
+    return ready;
+}
+
 uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
                                 uint64_t num,
                                 uint64_t arg1,
@@ -3445,13 +4018,21 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
 {
     int64_t result = LINUX_ENOSYS;
     int request_switch = 0;
+    int request_restart = 0;
 
     LINUX_TRACE_ENTER(num, arg1, arg2, arg3, arg4, arg5, arg6);
 
     switch (num) {
-        case LINUX_SYS_READ:
+        case LINUX_SYS_READ: {
+            int should_switch = 0;
             result = linux_read(arg1, arg2, arg3);
+            linux_unix_block_retry((int32_t)arg1, &result, &should_switch,
+                                   &request_restart);
+            if (should_switch) {
+                request_switch = 1;
+            }
             break;
+        }
 
         case LINUX_SYS_WRITE:
             result = write((int32_t)arg1, (const void *)(uintptr_t)arg2,
@@ -3558,6 +4139,9 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             if (self >= 0 && arg2 != 0u) {
                 /* Flush + drop any MAP_SHARED file mapping in this range. */
                 linux_mshared_flush_range(self, arg1, arg1 + arg2, 1);
+                /* ...and release any demand-paged file mapping it covers, so
+                 * the reference on the open file description goes away. */
+                filemap_unregister_range(self, arg1, arg2);
             }
             result = (int64_t)process_user_munmap((void *)(uintptr_t)arg1,
                                                   arg2);
@@ -3703,9 +4287,15 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             result = linux_sendfile(arg1, arg2, arg3, arg4);
             break;
 
-        case LINUX_SYS_CLONE:
-            result = linux_clone(saved_rsp, arg1, arg2, arg3, arg4, arg5);
+        case LINUX_SYS_CLONE: {
+            int should_switch = 0;
+            result = linux_clone(saved_rsp, arg1, arg2, arg3, arg4, arg5,
+                                 &should_switch);
+            if (should_switch) {
+                request_switch = 1;
+            }
             break;
+        }
 
         case LINUX_SYS_FORK:
         case LINUX_SYS_VFORK: {
@@ -3740,7 +4330,8 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
 
         case LINUX_SYS_WAIT4: {
             int should_switch = 0;
-            result = linux_wait4(arg1, arg2, arg3, arg4, &should_switch);
+            result = linux_wait4(arg1, arg2, arg3, arg4, &should_switch,
+                                 &request_restart);
             if (should_switch) {
                 request_switch = 1;
             }
@@ -4016,7 +4607,8 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
 
         case LINUX_SYS_EPOLL_WAIT: {
             int should_switch = 0;
-            result = linux_epoll_wait(arg1, arg2, arg3, arg4, &should_switch);
+            result = linux_epoll_wait(arg1, arg2, arg3, arg4, &should_switch,
+                                      &request_restart);
             if (should_switch) {
                 request_switch = 1;
             }
@@ -4228,9 +4820,16 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             result = linux_socket_sendto(arg1, arg2, arg3, arg4, arg5, arg6);
             break;
 
-        case LINUX_SYS_RECVFROM:
+        case LINUX_SYS_RECVFROM: {
+            int should_switch = 0;
             result = linux_socket_recvfrom(arg1, arg2, arg3, arg4, arg5, arg6);
+            linux_unix_block_retry((int32_t)arg1, &result, &should_switch,
+                                   &request_restart);
+            if (should_switch) {
+                request_switch = 1;
+            }
             break;
+        }
 
         case LINUX_SYS_SENDMSG:
             /* Only AF_UNIX (Mojo IPC's SCM_RIGHTS fd-passing transport)
@@ -4249,7 +4848,8 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             }
             break;
 
-        case LINUX_SYS_RECVMSG:
+        case LINUX_SYS_RECVMSG: {
+            int should_switch = 0;
             if (!unix_socket_fd_in_range((int32_t)arg1)) {
                 result = LINUX_ENOTSUP;
             } else if (!process_user_buffer_is_valid(
@@ -4257,8 +4857,14 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
                 result = LINUX_EFAULT;
             } else {
                 result = unix_socket_recvmsg((int32_t)arg1, arg2);
+                linux_unix_block_retry((int32_t)arg1, &result, &should_switch,
+                                       &request_restart);
+            }
+            if (should_switch) {
+                request_switch = 1;
             }
             break;
+        }
 
         case LINUX_SYS_SHUTDOWN:
             if (unix_socket_fd_in_range((int32_t)arg1)) {
@@ -4326,7 +4932,8 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             /* Identical to epoll_wait; the signal mask (arg5/arg6) is
              * ignored because signals are delivered synchronously here. */
             int should_switch = 0;
-            result = linux_epoll_wait(arg1, arg2, arg3, arg4, &should_switch);
+            result = linux_epoll_wait(arg1, arg2, arg3, arg4, &should_switch,
+                                      &request_restart);
             if (should_switch) {
                 request_switch = 1;
             }
@@ -4349,7 +4956,54 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
                 }
             }
             result = linux_epoll_wait(arg1, arg2, arg3, timeout_ms,
-                                      &should_switch);
+                                      &should_switch, &request_restart);
+            if (should_switch) {
+                request_switch = 1;
+            }
+            break;
+        }
+
+        case LINUX_SYS_SELECT: {
+            /* arg5 is `struct timeval *`; NULL means block. */
+            int should_switch = 0;
+            int64_t timeout_ms = -1;
+            if (arg5 != 0u) {
+                struct { int64_t sec; int64_t usec; } tv;
+                if (copy_from_user(&tv, (const void *)(uintptr_t)arg5,
+                                   sizeof(tv)) != 0u) {
+                    result = LINUX_EFAULT;
+                    break;
+                }
+                timeout_ms = (tv.sec >= 0 && tv.usec >= 0)
+                                 ? (tv.sec * 1000 + (tv.usec + 999) / 1000)
+                                 : 0;
+            }
+            result = linux_select_common(arg1, arg2, arg3, arg4, timeout_ms,
+                                         &should_switch, &request_restart);
+            if (should_switch) {
+                request_switch = 1;
+            }
+            break;
+        }
+
+        case LINUX_SYS_PSELECT6: {
+            /* arg5 is `struct timespec *`; the arg6 sigmask is ignored, as it
+             * is for ppoll/epoll_pwait (signals are delivered synchronously). */
+            int should_switch = 0;
+            int64_t timeout_ms = -1;
+            if (arg5 != 0u) {
+                struct { int64_t sec; int64_t nsec; } ts;
+                if (copy_from_user(&ts, (const void *)(uintptr_t)arg5,
+                                   sizeof(ts)) != 0u) {
+                    result = LINUX_EFAULT;
+                    break;
+                }
+                timeout_ms = (ts.sec >= 0 && ts.nsec >= 0)
+                                 ? (ts.sec * 1000 + (ts.nsec + 999999) / 1000000)
+                                 : 0;
+            }
+            result = linux_select_common(arg1, arg2, arg3, arg4, timeout_ms,
+                                         &should_switch, &request_restart);
             if (should_switch) {
                 request_switch = 1;
             }
@@ -4359,7 +5013,7 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
         case LINUX_SYS_POLL: {
             int should_switch = 0;
             result = linux_poll_common(arg1, arg2, (int64_t)(int32_t)arg3,
-                                       &should_switch);
+                                       &should_switch, &request_restart);
             if (should_switch) {
                 request_switch = 1;
             }
@@ -4368,7 +5022,8 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
 
         case LINUX_SYS_PPOLL: {
             int should_switch = 0;
-            result = linux_ppoll(arg1, arg2, arg3, &should_switch);
+            result = linux_ppoll(arg1, arg2, arg3, &should_switch,
+                                 &request_restart);
             if (should_switch) {
                 request_switch = 1;
             }
@@ -4377,7 +5032,8 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
 
         case LINUX_SYS_WAITID: {
             int should_switch = 0;
-            result = linux_waitid(arg1, arg2, arg3, arg4, arg5, &should_switch);
+            result = linux_waitid(arg1, arg2, arg3, arg4, arg5, &should_switch,
+                                  &request_restart);
             if (should_switch) {
                 request_switch = 1;
             }
@@ -4624,9 +5280,43 @@ uint64_t linux_syscall_dispatch(uint64_t saved_rsp,
             break;
     }
 
+    /* Bring-up trace (TODO_Doom_Xorg_MethodA.md M8). Xorg can only run
+     * xkbcomp through Popen(), i.e. pipe() + fork() + dup2() +
+     * execve("/bin/sh"), and when any one of those fails it reports nothing
+     * but "XKB: Could not invoke xkbcomp" -- which is then fatal. Name the
+     * failing call here instead of guessing. Restricted to this handful of
+     * process-spawn syscalls and to failures only, so it stays silent once
+     * the path works. */
+    if (result < 0 && !request_restart) {
+        switch (num) {
+        case LINUX_SYS_PIPE:
+        case LINUX_SYS_PIPE2:
+        case LINUX_SYS_CLONE:
+        case LINUX_SYS_FORK:
+        case LINUX_SYS_VFORK:
+        case LINUX_SYS_EXECVE:
+        case LINUX_SYS_DUP2:
+        case LINUX_SYS_DUP3:
+        case LINUX_SYS_SETITIMER:
+        case LINUX_SYS_WAIT4:
+            serial_write_string("[lxproc] syscall ");
+            serial_write_uint64(num);
+            serial_write_string(" failed -> ");
+            serial_write_uint64((uint64_t)result);
+            serial_write_char('\n');
+            break;
+        default:
+            break;
+        }
+    }
+
     LINUX_TRACE_EXIT(num, result);
 
-    linux_syscall_result(saved_rsp, result);
+    if (request_restart) {
+        linux_syscall_restart(saved_rsp, num);
+    } else {
+        linux_syscall_result(saved_rsp, result);
+    }
     return (uint64_t)(uint32_t)request_switch;
 }
 

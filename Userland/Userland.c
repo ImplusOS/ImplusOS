@@ -1119,6 +1119,13 @@ void _start(void) {
         spawn_with_fallbacks(sysnotif_paths, 1);
     }
 
+    if (wm_pid >= 0) {
+        static const char *const doom_paths[] = {
+            "/Userland/Doom/Doom.ELF",
+        };
+        spawn_with_fallbacks(doom_paths, 1);
+    }
+
     if (g_bg_cache) {
         free(g_bg_cache);
         g_bg_cache = NULL;

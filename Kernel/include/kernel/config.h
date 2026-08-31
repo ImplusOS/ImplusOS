@@ -55,8 +55,17 @@
 /* NOTE: this is a *global*, system-wide fd table (Syscall_File.c), shared
  * by every process, not a per-process limit. Keep it comfortably below
  * Syscall_Socket.c's SOCKET_FD_BASE (socket fds live in a disjoint numeric
- * range starting there) - see OS_CONFIG_FILE_MAX_FD_MAX below. */
-#define OS_CONFIG_FILE_MAX_FD 256
+ * range starting there) - see OS_CONFIG_FILE_MAX_FD_MAX below.
+ *
+ * 192, not 256, because UnixSocket.h's UNIX_SOCK_FD_BASE follows immediately
+ * after this table and the X server refuses a client whose fd is >= its
+ * lastfdesc -- which is min(RLIMIT_NOFILE-1, MAXSELECT, MAXCLIENTS) and so is
+ * pinned at the compile-time MAXCLIENTS of 256 no matter what -maxclients
+ * says. With the table at 256 every AF_UNIX fd started at 256, so every X
+ * client was accepted and instantly closed. 192 files + 64 AF_UNIX keeps the
+ * whole range a client can land in under 256. See
+ * Docs/Others/TODO_Doom_Xorg_MethodA.md M22. */
+#define OS_CONFIG_FILE_MAX_FD 192
 #endif
 #endif
 
@@ -64,7 +73,9 @@
 #ifdef FILE_MAX_DIR_HANDLE_CONFIG
 #define OS_CONFIG_FILE_MAX_DIR_HANDLE FILE_MAX_DIR_HANDLE_CONFIG
 #else
-#define OS_CONFIG_FILE_MAX_DIR_HANDLE 256
+/* Kept <= OS_CONFIG_FILE_MAX_FD, which dropped to 192 so the AF_UNIX fd
+ * range that follows it stays under the X server's 256-fd client limit. */
+#define OS_CONFIG_FILE_MAX_DIR_HANDLE 192
 #endif
 #endif
 

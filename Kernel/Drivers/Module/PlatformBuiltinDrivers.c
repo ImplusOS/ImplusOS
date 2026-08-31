@@ -1,6 +1,7 @@
 #include "PlatformBuiltinDrivers.h"
 #include "DriverManager.h"
 #include "kernel/interfaces/device.h"
+#include "Platform/rtc/RTC.h"
 
 #ifdef PLATFORM_X86_64
 #include "Platform/interrupt/LAPIC.h"
@@ -35,11 +36,21 @@ typedef struct {
     const char *description;
 } platform_builtin_driver_ops_t;
 
+/* RTC gets a genuine callable vtable (not just a description) so a registry
+ * consumer can read the wall clock without linking Platform/rtc directly. */
+typedef struct {
+    const char *description;
+    void      (*read_time)(rtc_time_t *out);
+} platform_rtc_ops_t;
+
 static const platform_builtin_driver_ops_t g_acpi_ops = {
     "ACPI (RSDP/MADT discovery, SMP + interrupt routing input)"
 };
 static const platform_builtin_driver_ops_t g_timer_ops = {
     "System timer (see arch_ops_t.get_timer_hal for the per-arch backend)"
+};
+static const platform_rtc_ops_t g_rtc_ops = {
+    "CMOS real-time clock (Platform/rtc)", rtc_read_time
 };
 #ifdef PLATFORM_X86_64
 static const platform_builtin_driver_ops_t g_lapic_ops = { "Local APIC" };
@@ -54,6 +65,7 @@ void platform_builtin_drivers_register(void)
 {
     (void)driver_manager_attach("ACPI", DEVICE_TYPE_PLATFORM, &g_acpi_ops);
     (void)driver_manager_attach("Timer", DEVICE_TYPE_PLATFORM, &g_timer_ops);
+    (void)driver_manager_attach("RTC", DEVICE_TYPE_PLATFORM, &g_rtc_ops);
 #ifdef PLATFORM_X86_64
     if (lapic_is_present()) {
         (void)driver_manager_attach("LAPIC", DEVICE_TYPE_PLATFORM, &g_lapic_ops);

@@ -133,9 +133,12 @@ bool vfs_set_default_fs_for_file(const char *path,
  * of the same prefix-matching logic that used to live separately in
  * vfs_find_file/vfs_creat/vfs_mkdir/vfs_opendir/vfs_unlink (see
  * Docs/Others/TODO_OS_Refactor.md 7.2). Rule, unchanged from before this
- * refactor: the longest matching non-empty prefix wins and is the only
- * candidate (possibly more than one driver mounted at exactly that prefix,
- * tried in mount order); with no prefix match, the default filesystem
+ * refactor apart from one fix: the longest matching non-empty prefix wins
+ * and is tried FIRST (possibly more than one driver mounted at exactly that
+ * prefix, tried in mount order), but is no longer the *only* candidate -- the
+ * default/catch-all drivers are appended so a prefix-mounted pseudo
+ * filesystem cannot hide real files on the boot medium. With no prefix
+ * match, the default filesystem
  * (see vfs_set_default_fs_by_kind()) is tried first, then every
  * empty-prefix ("catch-all") driver as a fallback. Each caller still owns
  * calling its own per-driver operation and deciding what "success" means
@@ -144,6 +147,53 @@ bool vfs_set_default_fs_for_file(const char *path,
  * calling through a candidate's function pointer).
  */
 #define VFS_MAX_CANDIDATES 16
+#define VFS_PATH_MAX 256
+
+/* Collapse duplicate '/' and drop trailing '/' (except for bare "/"). POSIX
+ * treats "/a/b/" and "/a/b" as the same object for a directory, and callers
+ * rely on it: Xorg's module loader probes candidate subdirectories with
+ * stat("<dir>/<name>/") -- a trailing slash -- and recurses only when that
+ * reports S_ISDIR. Without normalization every filesystem's path walker ran
+ * off the end of the final component and returned "not found", so
+ * modules/drivers, modules/extensions and modules/input were never searched
+ * ("Failed to load module ... module does not exist").
+ * Returns `path` itself when no rewrite is needed, else `buf`. */
+static const char *vfs_normalize_path(const char *path, char *buf, size_t cap)
+{
+    if (path == NULL) {
+        return NULL;
+    }
+    size_t len = strlen(path);
+    if (len == 0u || len >= cap) {
+        return path; /* nothing to do, or too long to rewrite safely */
+    }
+    /* Fast path: no "//" and no trailing '/' (or it is exactly "/"). */
+    bool needs_fix = (len > 1u && path[len - 1u] == '/');
+    if (!needs_fix) {
+        for (size_t i = 1; i < len; ++i) {
+            if (path[i] == '/' && path[i - 1u] == '/') {
+                needs_fix = true;
+                break;
+            }
+        }
+    }
+    if (!needs_fix) {
+        return path;
+    }
+
+    size_t out = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (path[i] == '/' && out > 0u && buf[out - 1u] == '/') {
+            continue; /* collapse runs of '/' */
+        }
+        buf[out++] = path[i];
+    }
+    while (out > 1u && buf[out - 1u] == '/') {
+        --out; /* strip trailing '/', but keep a bare root "/" */
+    }
+    buf[out] = '\0';
+    return buf;
+}
 
 static int vfs_resolve_candidates(const char *path,
                                   const vfs_driver_t *out[VFS_MAX_CANDIDATES])
@@ -167,7 +217,14 @@ static int vfs_resolve_candidates(const char *path,
                 out[n++] = &g_vfs_drivers[i];
             }
         }
-        return n;
+        /* Deliberately NO early return: a prefix-mounted pseudo filesystem
+         * takes priority for the names it owns but must not *hide* real files
+         * living under the same prefix on the boot medium. EtcFS is mounted at
+         * "/etc" and only knows a handful of synthesized files, yet the image
+         * also ships /etc/X11/xorg.conf and /etc/fonts/fonts.conf -- with an
+         * early return those were unreachable and Xorg fell back to its
+         * built-in config ("Unable to locate/open config file").
+         * See Docs/Others/TODO_Doom_Xorg_MethodA.md M6. */
     }
 
     if (g_default_fs && n < VFS_MAX_CANDIDATES) {
@@ -183,6 +240,8 @@ static int vfs_resolve_candidates(const char *path,
 }
 
 bool vfs_find_file(const char *path, vfs_file_t *out_file) {
+    char norm[VFS_PATH_MAX];
+    path = vfs_normalize_path(path, norm, sizeof(norm));
     const vfs_driver_t *candidates[VFS_MAX_CANDIDATES];
     int n = vfs_resolve_candidates(path, candidates);
     for (int i = 0; i < n; i++) {
@@ -247,7 +306,7 @@ bool vfs_write_at(vfs_file_t *file, uint32_t offset, const uint8_t *buffer, uint
 }
 
 bool vfs_truncate(vfs_file_t *file, uint32_t new_size) {
-    if (!file || !file->fs_driver) return false;
+    if (!file || !file->fs_driver || !file->fs_driver->truncate) return false;
     return file->fs_driver->truncate(file, new_size);
 }
 
@@ -269,6 +328,8 @@ bool vfs_close_file(vfs_file_t *file) {
 }
 
 bool vfs_creat(const char *path) {
+    char norm[VFS_PATH_MAX];
+    path = vfs_normalize_path(path, norm, sizeof(norm));
     const vfs_driver_t *candidates[VFS_MAX_CANDIDATES];
     int n = vfs_resolve_candidates(path, candidates);
     for (int i = 0; i < n; i++) {
@@ -278,6 +339,8 @@ bool vfs_creat(const char *path) {
 }
 
 bool vfs_mkdir(const char *path) {
+    char norm[VFS_PATH_MAX];
+    path = vfs_normalize_path(path, norm, sizeof(norm));
     const vfs_driver_t *candidates[VFS_MAX_CANDIDATES];
     int n = vfs_resolve_candidates(path, candidates);
     for (int i = 0; i < n; i++) {
@@ -289,6 +352,8 @@ bool vfs_mkdir(const char *path) {
 int32_t vfs_opendir(const char *path) {
     const vfs_driver_t *drv = NULL;
     int32_t handle = -1;
+    char norm[VFS_PATH_MAX];
+    path = vfs_normalize_path(path, norm, sizeof(norm));
 
     const vfs_driver_t *candidates[VFS_MAX_CANDIDATES];
     int n = vfs_resolve_candidates(path, candidates);
@@ -315,6 +380,24 @@ int32_t vfs_opendir(const char *path) {
         drv->closedir(handle);
     }
     return -1;
+}
+
+bool vfs_dir_is_writable(const char *path) {
+    char norm[VFS_PATH_MAX];
+    path = vfs_normalize_path(path, norm, sizeof(norm));
+
+    const vfs_driver_t *candidates[VFS_MAX_CANDIDATES];
+    int n = vfs_resolve_candidates(path, candidates);
+    for (int i = 0; i < n; i++) {
+        if (!candidates[i]->opendir) continue;
+        int32_t handle = candidates[i]->opendir(path);
+        if (handle < 0) continue;
+        /* Close through the driver, not vfs_closedir(): `handle` is the
+         * driver's own handle, never registered in g_vfs_directory_handles. */
+        if (candidates[i]->closedir) (void)candidates[i]->closedir(handle);
+        return candidates[i]->creat != NULL;
+    }
+    return false;
 }
 
 int32_t vfs_readdir(int32_t handle, vfs_dirent_t *out_entry) {

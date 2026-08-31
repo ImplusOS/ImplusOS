@@ -23,6 +23,10 @@ typedef struct {
     uint8_t used;
     uint8_t listening;
     uint8_t connected;
+    /* O_NONBLOCK, as set by fcntl(F_SETFL) or SOCK_NONBLOCK. Default 0, i.e.
+     * blocking -- the caller of a blocking recv() must be made to wait rather
+     * than handed EAGAIN, which is not a value a blocking recv may return. */
+    uint8_t nonblock;
     int32_t owner_pid;
     int32_t peer_fd;
     char path[UNIX_SOCK_PATH_MAX];
@@ -90,7 +94,33 @@ int64_t unix_socket_listen(int32_t fd, int32_t backlog) {
     unix_sock_t *s = usock_get(fd);
     if (!s) return -9;
     s->listening = 1;
+    /* Bring-up trace: one line per listening socket, so a client that cannot
+     * find the server has something concrete to be compared against. */
+    serial_write_string("[usock] listen '");
+    serial_write_string(s->path);
+    serial_write_string("'\n");
     return 0;
+}
+
+/* Bring-up trace for the X11 handshake over AF_UNIX (TODO_Doom_Xorg_MethodA.md
+ * M22). A client that connects, is accepted, and then goes away looks exactly
+ * like an authorization refusal and exactly like a lost reply, so log the
+ * connect/accept pairing and the first few payload sizes. Hard-capped so it
+ * cannot flood the console. */
+#define USOCK_TRACE_MAX 48
+static uint32_t g_usock_trace_count;
+
+static void usock_trace2(const char *tag, int32_t a, int64_t b)
+{
+    if (g_usock_trace_count >= USOCK_TRACE_MAX) return;
+    ++g_usock_trace_count;
+    serial_write_string("[usock] ");
+    serial_write_string(tag);
+    serial_write_string(" fd=");
+    serial_write_uint64((uint64_t)(uint32_t)a);
+    serial_write_string(" n=");
+    serial_write_uint64((uint64_t)b);
+    serial_write_char('\n');
 }
 
 int64_t unix_socket_accept(int32_t fd) {
@@ -126,6 +156,7 @@ int64_t unix_socket_accept(int32_t fd) {
                 spinlock_unlock(&s->lock);
                 g_usocks[i].peer_fd = (int32_t)new_fd;
             }
+            usock_trace2("accept", fd, new_fd);
             return new_fd;
         }
     }
@@ -135,6 +166,10 @@ int64_t unix_socket_accept(int32_t fd) {
 int64_t unix_socket_connect(int32_t fd, const char *path) {
     unix_sock_t *s = usock_get(fd);
     if (!s || !path) return -14;
+    /* An empty name matches nothing. A socket that was listen()ed without a
+     * successful bind() keeps path[0] == '\0', and letting "" compare equal
+     * made every such socket a catch-all that swallowed unrelated connects. */
+    if (path[0] == '\0') return -111;
     for (int i = 0; i < UNIX_SOCK_MAX; i++) {
         if (g_usocks[i].used && g_usocks[i].listening) {
             size_t plen = 0; while (g_usocks[i].path[plen]) plen++;
@@ -142,18 +177,30 @@ int64_t unix_socket_connect(int32_t fd, const char *path) {
             if (plen == clen && memcmp(g_usocks[i].path, path, plen) == 0) {
                 s->connected = 1;
                 s->peer_fd = UNIX_SOCK_FD_BASE + i;
+                usock_trace2("conn-ok", fd, UNIX_SOCK_FD_BASE + i);
                 return 0;
             }
         }
     }
+    /* Bring-up trace: only on failure. ECONNREFUSED here is what an X client
+     * sees as "Couldn't connect to display!", with no further detail. */
+    serial_write_string("[usock] connect FAILED '");
+    serial_write_string(path);
+    serial_write_string("'\n");
     return -111;
 }
 
 int64_t unix_socket_send(int32_t fd, const void *buf, uint64_t len) {
     unix_sock_t *s = usock_get(fd);
-    if (!s || !s->connected || !buf) return -14;
+    if (!s || !s->connected || !buf) {
+        usock_trace2("tx-BADF", fd, (int64_t)len);
+        return -14;
+    }
     unix_sock_t *peer = usock_get(s->peer_fd);
-    if (!peer) return -32;
+    if (!peer) {
+        usock_trace2("tx-NOPEER", fd, (int64_t)len);
+        return -32;
+    }
     spinlock_lock(&peer->lock);
     uint64_t written = 0;
     const uint8_t *src = (const uint8_t*)buf;
@@ -164,13 +211,20 @@ int64_t unix_socket_send(int32_t fd, const void *buf, uint64_t len) {
         peer->buf_head = next;
     }
     spinlock_unlock(&peer->lock);
-    if (written == 0 && len > 0) return -11; /* EAGAIN: ring full */
+    if (written == 0 && len > 0) {
+        usock_trace2("tx-EAGAIN", fd, (int64_t)len);
+        return -11; /* EAGAIN: ring full */
+    }
+    usock_trace2("tx", fd, (int64_t)written);
     return (int64_t)written;
 }
 
 int64_t unix_socket_recv(int32_t fd, void *buf, uint64_t len) {
     unix_sock_t *s = usock_get(fd);
-    if (!s || !buf) return -14;
+    if (!s || !buf) {
+        usock_trace2("rx-BADF", fd, (int64_t)len);
+        return -14;
+    }
     spinlock_lock(&s->lock);
     uint64_t rd = 0;
     uint8_t *dst = (uint8_t*)buf;
@@ -184,8 +238,11 @@ int64_t unix_socket_recv(int32_t fd, void *buf, uint64_t len) {
          * libwayland treats a 0-length recv as the compositor closing the
          * connection, so an empty-but-open socket must not return 0. */
         unix_sock_t *peer = (s->connected) ? usock_get(s->peer_fd) : NULL;
-        return (s->connected && !peer) ? 0 : -11; /* 0 = EOF, -11 = EAGAIN */
+        int is_eof = (s->connected && !peer);
+        usock_trace2(is_eof ? "rx-EOF" : "rx-EAGAIN", fd, (int64_t)len);
+        return is_eof ? 0 : -11; /* 0 = EOF, -11 = EAGAIN */
     }
+    usock_trace2("rx", fd, (int64_t)rd);
     return (int64_t)rd;
 }
 
@@ -384,6 +441,25 @@ int unix_socket_fd_in_range(int32_t fd) {
  * EPOLL / POLL bit values (IN=0x1, OUT=0x4, ERR=0x8, HUP=0x10). Without
  * this, AF_UNIX fds fell through poll's fd-type switch to EPOLLERR and any
  * client polling its Wayland display fd saw a dead connection. */
+void unix_socket_trace_note(const char *tag, int32_t fd)
+{
+    usock_trace2(tag, fd, 0);
+}
+
+int unix_socket_set_nonblock(int32_t fd, int on)
+{
+    unix_sock_t *s = usock_get(fd);
+    if (!s) return -14;
+    s->nonblock = on ? 1u : 0u;
+    return 0;
+}
+
+int unix_socket_is_nonblock(int32_t fd)
+{
+    unix_sock_t *s = usock_get(fd);
+    return (s && s->nonblock) ? 1 : 0;
+}
+
 uint32_t unix_socket_poll(int32_t fd, uint32_t events) {
     unix_sock_t *s = usock_get(fd);
     if (!s) return 0x8u; /* EPOLLERR */

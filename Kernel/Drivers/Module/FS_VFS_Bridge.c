@@ -2,24 +2,37 @@
 
 #include "Drivers/Module/DriverBinary.h"
 #include "Drivers/Module/DriverManager.h"
+#include "Drivers/Module/DeviceRegistry.h"
+#include "Core/vfs/VFS.h"
 #include "kernel/interfaces/fs_module_ops.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
+
+/*
+ * A bridge slot is bound to one DEVICE_TYPE_FILESYSTEM registry entry at
+ * runtime -- there is no compile-time table of filesystem names. FS_BRIDGE_MAX
+ * only bounds how many distinct filesystem modules can be mounted at once
+ * (realistically <= 4: an optical fs plus one or two disk filesystems); each
+ * slot carries only pointers and a small vfs_driver_t, so the headroom is
+ * cheap.
+ */
+#define FS_BRIDGE_MAX 8
 
 typedef struct {
-    const char            *elf_name;
+    const char            *name;        /* the module's own registry name (not kernel-authored) */
+    const device_t        *dev;         /* the DeviceRegistry entry this slot was discovered from */
     const fs_module_ops_t *ops;         /* resolved lazily via driver_manager_find() */
     bool                   initialized;
     bool                   init_failed;
+    bool                   mounted;
     vfs_driver_t           vfs;         /* handed to vfs_mount(); hooks are this file's thunks */
 } fs_bridge_state_t;
 
-static fs_bridge_state_t g_fs_bridges[FS_BRIDGE_COUNT] = {
-    [FS_BRIDGE_FAT32]   = { .elf_name = "FAT32_Driver.ELF" },
-    [FS_BRIDGE_EXFAT]   = { .elf_name = "exFAT_Driver.ELF" },
-    [FS_BRIDGE_ISO9660] = { .elf_name = "ISO9660_Driver.ELF" },
-};
+static fs_bridge_state_t g_fs_bridges[FS_BRIDGE_MAX];
+static uint32_t          g_fs_bridge_count = 0u;
 
 /* Per-open wrapper stashed in vfs_file_t.driver_data so the handle-based
  * hooks (which only get a vfs_file_t) can recover both the owning
@@ -34,7 +47,7 @@ typedef struct {
 static bool fs_bridge_ensure(fs_bridge_state_t *state)
 {
     const device_t *device =
-        driver_manager_find(DEVICE_TYPE_FILESYSTEM, state->elf_name);
+        driver_manager_find(DEVICE_TYPE_FILESYSTEM, state->name);
     const fs_module_ops_t *ops =
         device ? (const fs_module_ops_t *)device->ops : NULL;
 
@@ -251,10 +264,12 @@ static bool bridge_get_case_sensitive(fs_bridge_state_t *state)
 }
 
 /*
- * One set of per-entry thunks per filesystem. They exist only to bind the
+ * One set of per-entry thunks per bridge slot. They exist only to bind the
  * fixed vfs_driver_t hook signatures (which carry no filesystem context for
  * path/dir/misc operations) to a specific g_fs_bridges[] row; all real work
- * is in the bridge_* / thunk_* helpers above.
+ * is in the bridge_* / thunk_* helpers above. The rows are a fixed pool
+ * (FS_BRIDGE_MAX of them); which filesystem each is bound to is decided at
+ * runtime by fs_bridge_discover().
  */
 #define FS_BRIDGE_DEFINE_ENTRY(tag, id)                                             \
     static bool    tag##_find_file(const char *p, vfs_file_t *f)                     \
@@ -302,36 +317,116 @@ static bool bridge_get_case_sensitive(fs_bridge_state_t *state)
         s->vfs.get_case_sensitive = tag##_get_case_sensitive;                       \
     }
 
-FS_BRIDGE_DEFINE_ENTRY(fat32,   FS_BRIDGE_FAT32)
-FS_BRIDGE_DEFINE_ENTRY(exfat,   FS_BRIDGE_EXFAT)
-FS_BRIDGE_DEFINE_ENTRY(iso9660, FS_BRIDGE_ISO9660)
+FS_BRIDGE_DEFINE_ENTRY(fs_slot0, 0)
+FS_BRIDGE_DEFINE_ENTRY(fs_slot1, 1)
+FS_BRIDGE_DEFINE_ENTRY(fs_slot2, 2)
+FS_BRIDGE_DEFINE_ENTRY(fs_slot3, 3)
+FS_BRIDGE_DEFINE_ENTRY(fs_slot4, 4)
+FS_BRIDGE_DEFINE_ENTRY(fs_slot5, 5)
+FS_BRIDGE_DEFINE_ENTRY(fs_slot6, 6)
+FS_BRIDGE_DEFINE_ENTRY(fs_slot7, 7)
 
-static void fs_bridge_install_vfs(fs_bridge_id_t id)
+static void fs_bridge_install_vfs(uint32_t id)
 {
     switch (id) {
-    case FS_BRIDGE_FAT32:   fat32_install_vfs();   break;
-    case FS_BRIDGE_EXFAT:   exfat_install_vfs();   break;
-    case FS_BRIDGE_ISO9660: iso9660_install_vfs(); break;
-    default:                                       break;
+    case 0: fs_slot0_install_vfs(); break;
+    case 1: fs_slot1_install_vfs(); break;
+    case 2: fs_slot2_install_vfs(); break;
+    case 3: fs_slot3_install_vfs(); break;
+    case 4: fs_slot4_install_vfs(); break;
+    case 5: fs_slot5_install_vfs(); break;
+    case 6: fs_slot6_install_vfs(); break;
+    case 7: fs_slot7_install_vfs(); break;
+    default:                        break;
     }
 }
 
-bool fs_bridge_init(fs_bridge_id_t id)
+/* Bind any not-yet-seen DEVICE_TYPE_FILESYSTEM registry entry to a free slot. */
+static void fs_bridge_discover(void)
 {
-    if (id >= FS_BRIDGE_COUNT) {
+    for (uint32_t i = 0;; ++i) {
+        const device_t *dev =
+            device_registry_find_by_index(DEVICE_TYPE_FILESYSTEM, i);
+        if (dev == NULL) {
+            break;
+        }
+
+        bool known = false;
+        for (uint32_t s = 0; s < g_fs_bridge_count; ++s) {
+            if (g_fs_bridges[s].dev == dev) {
+                known = true;
+                break;
+            }
+        }
+        if (known) {
+            continue;
+        }
+        if (g_fs_bridge_count >= FS_BRIDGE_MAX) {
+            break;
+        }
+
+        fs_bridge_state_t *st = &g_fs_bridges[g_fs_bridge_count];
+        memset(st, 0, sizeof(*st));
+        st->dev  = dev;
+        st->name = dev->name;
+        ++g_fs_bridge_count;
+    }
+}
+
+bool fs_bridge_mount_all(void)
+{
+    fs_bridge_discover();
+
+    bool any = false;
+
+    /*
+     * Pass 0 mounts writable filesystems, pass 1 the read-only ones. Mount
+     * order at the catch-all ("") prefix is also the tie-break order
+     * vfs_set_default_fs_by_kind() uses ("first mounted driver of a given
+     * kind"), so a writable disk filesystem must reach vfs_mount() before a
+     * read-only one on the same media class -- otherwise a read-only exFAT
+     * could preempt a read-write FAT32 as the default root. Optical media is
+     * read-only and mounts in pass 1, but it is chosen explicitly first
+     * below regardless of mount order.
+     */
+    for (int pass = 0; pass < 2; ++pass) {
+        for (uint32_t i = 0; i < g_fs_bridge_count; ++i) {
+            fs_bridge_state_t *st = &g_fs_bridges[i];
+            if (st->mounted) {
+                continue;
+            }
+
+            bool ready = fs_bridge_ensure(st);
+            fs_bridge_install_vfs(i);   /* pick up fs_type/media_kind from resolved ops */
+            if (!ready) {
+                continue;
+            }
+
+            bool writable = (st->ops->write_at != NULL);
+            if ((pass == 0) != writable) {
+                continue;
+            }
+
+            if (vfs_mount("", &st->vfs)) {
+                st->mounted = true;
+                any = true;
+            }
+        }
+    }
+
+    if (!any) {
         return false;
     }
-    bool ok = fs_bridge_ensure(&g_fs_bridges[id]);
-    fs_bridge_install_vfs(id);   /* pick up fs_type/media_kind from the resolved ops */
-    return ok;
-}
 
-const vfs_driver_t *fs_bridge_vfs_driver(fs_bridge_id_t id)
-{
-    if (id >= FS_BRIDGE_COUNT) {
-        return NULL;
+    /*
+     * Default root filesystem, chosen by media kind rather than by driver
+     * name/fs_type -- see vfs_media_kind_t. Optical media wins when present
+     * (that is how a LiveCD/installer boot works), otherwise fall back to
+     * whatever writable disk filesystem mounted.
+     */
+    if (!vfs_set_default_fs_by_kind(VFS_MEDIA_KIND_OPTICAL)) {
+        (void)vfs_set_default_fs_by_kind(VFS_MEDIA_KIND_DISK);
     }
-    (void)fs_bridge_ensure(&g_fs_bridges[id]);
-    fs_bridge_install_vfs(id);
-    return &g_fs_bridges[id].vfs;
+
+    return true;
 }

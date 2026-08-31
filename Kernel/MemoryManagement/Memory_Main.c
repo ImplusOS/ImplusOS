@@ -103,11 +103,47 @@ static inline void page_bitmap_set(uint64_t page_index, uint8_t used)
     }
 }
 
+/* Physical pages currently free. */
+uint64_t memory_free_pages(void)
+{
+    if (g_page_bitmap == NULL || g_max_pages == 0) return 0;
+    uint64_t irq_flags = irq_save_disable();
+    spinlock_lock(&page_lock);
+    uint64_t free_pages = 0;
+    uint64_t words = (g_max_pages + 63ULL) >> 6;
+    for (uint64_t w = 0; w < words; ++w) {
+        /* SWAR popcount: __builtin_popcountll lowers to libgcc's
+         * __popcountdi2, which a freestanding kernel does not link. */
+        uint64_t v = ~((const uint64_t *)g_page_bitmap)[w];
+        v = v - ((v >> 1) & 0x5555555555555555ULL);
+        v = (v & 0x3333333333333333ULL) + ((v >> 2) & 0x3333333333333333ULL);
+        v = (v + (v >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
+        free_pages += (v * 0x0101010101010101ULL) >> 56;
+    }
+    spinlock_unlock(&page_lock);
+    irq_restore(irq_flags);
+    return free_pages > g_max_pages ? g_max_pages : free_pages;
+}
+
+/* Running out of physical memory used to be completely silent: this counted
+ * the event and threw the site and size away, so every caller that degraded on
+ * a NULL page (execve building a new address space, for one) failed with no
+ * trace at all. Report it, but only the first few times -- an OOM tends to
+ * arrive in storms and the serial console is the only channel there is. */
 static void memory_report_oom(const char *site, uint64_t request)
 {
     ++g_oom_total;
-    (void)site;
-    (void)request;
+    if (g_oom_total <= 8u) {
+        serial_write_string("[mem] OOM at ");
+        serial_write_string(site ? site : "?");
+        serial_write_string(" request=");
+        serial_write_uint64(request);
+        serial_write_string(" free_pages=");
+        serial_write_uint64(memory_free_pages());
+        serial_write_string(" total_pages=");
+        serial_write_uint64(g_max_pages);
+        serial_write_char('\n');
+    }
 }
 
 static memory_block_t *split_block_if_needed(memory_block_t *block, uint64_t size)

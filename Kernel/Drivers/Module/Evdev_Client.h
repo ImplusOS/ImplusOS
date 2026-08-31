@@ -28,7 +28,11 @@ typedef struct {
 
 void evdev_init(void);
 int64_t evdev_open(const char *path);
+/* Returns the queued events, or -EAGAIN when the ring is empty (never 0 --
+ * that would mean EOF to an evdev reader). */
 int64_t evdev_read(int32_t fd, void *buf, uint64_t len);
+/* Non-destructive "is there anything to read?", for poll()/select(). */
+int evdev_has_events(int32_t fd);
 int64_t evdev_ioctl(int32_t fd, uint64_t request, uint64_t arg);
 int64_t evdev_close(int32_t fd);
 void evdev_push_key_event(uint16_t code, int32_t value);

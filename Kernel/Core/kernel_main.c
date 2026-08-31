@@ -16,7 +16,6 @@
 #include "Drivers/Module/DriverManager.h"
 #include "Drivers/Module/DriverSelect.h"
 #include "Drivers/Module/PlatformBuiltinDrivers.h"
-#include "Drivers/Module/NetworkBuiltinDrivers.h"
 #include "Core/elf/ELF_Loader.h"
 #include "Core/syscall/Syscall_Main.h"
 #include "Core/syscall/Syscall_File.h"
@@ -29,11 +28,7 @@
 #include "Platform/acpi/ACPI.h"
 #include "Platform/interrupt/Interrupts.h"
 #include "Core/vfs/VFS.h"
-#include "Core/vfs/DevFS.h"
-#include "Core/vfs/TmpFS.h"
-#include "Core/vfs/ProcFS.h"
-#include "Core/vfs/EtcFS.h"
-#include "Core/drm/DRM_Kms.h"
+#include "Core/vfs/VFS_Pseudo.h"
 #include "Drivers/Module/FS_VFS_Bridge.h"
 #include <string.h>
 #include "IPC/IPC_Main.h"
@@ -210,60 +205,19 @@ bool all_fs_initialize(void)
     if (!vfs_init()) {
         return false;
     }
-    bool iso_ok   = fs_bridge_init(FS_BRIDGE_ISO9660);
-    bool fat_ok   = fs_bridge_init(FS_BRIDGE_FAT32);
-    bool exfat_ok = fs_bridge_init(FS_BRIDGE_EXFAT);
 
-    if (!iso_ok && !fat_ok && !exfat_ok) {
+    /* Real (media-backed) filesystems: every driver that registered itself
+     * as DEVICE_TYPE_FILESYSTEM is discovered, mounted and ranked by media
+     * kind inside FS_VFS_Bridge -- the boot path names no filesystem and
+     * knows no filesystem module. */
+    if (!fs_bridge_mount_all()) {
         return false;
     }
 
-    /* Mount order among VFS_MEDIA_KIND_DISK drivers doubles as the default-
-     * selection priority below (vfs_set_default_fs_by_kind() picks the
-     * first mounted driver of a given kind) -- FAT32 stays the default disk
-     * filesystem exactly as before this refactor; exFAT is available for
-     * explicit mounting/access but is read-only for now (see
-     * Kernel/Drivers/FileSystem/exFAT/exFAT_Main.h) so it deliberately does
-     * not preempt FAT32 as the default. */
-    if (fat_ok) {
-        vfs_mount("", fs_bridge_vfs_driver(FS_BRIDGE_FAT32));
-    }
-    if (exfat_ok) {
-        vfs_mount("", fs_bridge_vfs_driver(FS_BRIDGE_EXFAT));
-    }
-    if (iso_ok) {
-        vfs_mount("", fs_bridge_vfs_driver(FS_BRIDGE_ISO9660));
-    }
-
-    /* Default root filesystem, chosen by media kind rather than by driver
-     * name/fs_type -- see vfs_media_kind_t (kernel/interfaces/vfs_dirent.h)
-     * and Docs/Others/TODO_OS_Refactor.md 6.1. Preference order unchanged
-     * from before this refactor: optical media wins when present (that's
-     * how a LiveCD/installer boot works), otherwise fall back to whatever
-     * writable disk filesystem mounted. */
-    if (iso_ok) {
-        vfs_set_default_fs_by_kind(VFS_MEDIA_KIND_OPTICAL);
-    } else if (fat_ok || exfat_ok) {
-        vfs_set_default_fs_by_kind(VFS_MEDIA_KIND_DISK);
-    }
-
-    /* Linux-ABI pseudo filesystems (see TODO_Chromium_LinuxABI.md 3.3).
-     * Prefix routing in VFS.c picks the longest matching mount prefix, so
-     * "/dev/shm" (tmpfs) wins over "/dev" (devfs) for paths beneath it. */
-    devfs_init();
-    drm_kms_init();          /* /dev/dri/card0 KMS shim (Method A) */
-    vfs_mount("/dev", devfs_vfs_get_driver());
-    tmpfs_init();
-    vfs_mount("/dev/shm", tmpfs_vfs_get_driver());
-    /* Same flat tmpfs also backs /tmp and /run: foreign Linux binaries (Xorg,
-     * fontconfig, GTK) need these writable, and the X11 socket/lock paths
-     * under /tmp are compile-time constants. See TODO_Doom_Xorg_MethodA.md M1. */
-    vfs_mount("/tmp", tmpfs_vfs_get_driver());
-    vfs_mount("/run", tmpfs_vfs_get_driver());
-    procfs_init();
-    vfs_mount("/proc", procfs_vfs_get_driver());
-    etcfs_init();
-    vfs_mount("/etc", etcfs_vfs_get_driver());
+    /* In-kernel pseudo filesystems (devfs / tmpfs / procfs / etcfs) and the
+     * DRM/KMS shim. The list and its mount points live in the VFS layer
+     * (Kernel/Core/vfs/VFS_Pseudo.c), not here. */
+    vfs_mount_pseudo_filesystems();
 
     return true;
 }
@@ -602,12 +556,10 @@ static void kernel_main_after_stack_switch(BOOT_INFO *boot_info)
 
     phase_ns = boot_profile_begin();
     audio_manager_init();
+    /* network_stack_init() -> network_builtin_drivers_init_all() both
+     * registers the DEVICE_TYPE_NET_PROTOCOL layers and brings them up in
+     * dependency order; no separate registration call is needed here. */
     network_stack_init();
-    /* Registry-visibility only, exactly like platform_builtin_drivers_
-     * register() above -- does not change network_stack_init()'s own
-     * Ethernet->ARP->IPv4->{ICMP,UDP,TCP}->DHCP init order or timing. See
-     * Kernel/Drivers/Module/NetworkBuiltinDrivers.c. */
-    network_builtin_drivers_register();
     boot_profile_end("audio_network_init", phase_ns);
 
     timer_start_services();

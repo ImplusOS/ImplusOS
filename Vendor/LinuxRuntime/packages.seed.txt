@@ -125,6 +125,13 @@ xserver-xorg-legacy
 xserver-xorg-input-evdev
 libgl1-mesa-dri
 libglx-mesa0
+# trixie の Mesa 25 では /usr/lib/.../dri/*_dri.so は libdril_dri.so への symlink
+# （薄い DRI ローダ shim）。AIGLX/GLX の swrast プロバイダ経路で libdril は
+# サーフェスレス EGL 経由でスクリーンを作るため libEGL.so.1 を実行時 dlopen する。
+# dlopen 依存なので DT_NEEDED 走査の閉包には出ない → seed で明示する。
+# libegl1 = glvnd ディスパッチ, libegl-mesa0 = 実体 libEGL_mesa.so.0。
+libegl1
+libegl-mesa0
 libxcvt0
 libxfont2
 libpciaccess0

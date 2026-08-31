@@ -24,6 +24,13 @@
  * stack regions which all live in PML4[0] (< 512 GiB). Well inside the 47-bit
  * canonical user half.
  */
+/* Size of the per-process brk()/sbrk() window carved out of the user heap
+ * region. glibc's main malloc arena lives here and must be contiguous and
+ * exclusively owned; nothing else allocates from it. 8 GiB is far more than
+ * any foreign binary in tree needs and still leaves the bump allocator the
+ * bulk of the ~29 GiB heap region. */
+#define USER_BRK_WINDOW_SIZE (8ULL * 1024ULL * 1024ULL * 1024ULL)
+
 #define USER_MMAP_BASE    0x0000010000000000ULL
 #define USER_MMAP_LIMIT   0x0000100000000000ULL
 
@@ -170,6 +177,10 @@ int process_user_buffer_is_valid(const void *ptr, uint64_t len);
 int process_user_cstring_length(const char *str, uint64_t max_len, uint64_t *len_out);
 void *process_user_alloc(uint64_t size);
 uint64_t process_get_heap_cursor(void);
+/* brk(2) support: the current program break, and moving it. Kept separate
+ * from the user_heap_cursor bump allocator - see process_set_brk(). */
+uint64_t process_get_brk(void);
+int process_set_brk(uint64_t addr);
 int process_set_heap_cursor(uint64_t addr);
 void process_set_thread_user_rsp(int32_t tid, uint64_t user_rsp);
 int process_user_free(void *ptr);

@@ -63,6 +63,23 @@ int64_t syscall_memfd_read(int32_t fd, uint8_t *buffer, uint64_t len);
 int64_t syscall_memfd_write(int32_t fd, const uint8_t *buffer, uint64_t len);
 int64_t syscall_signalfd_read(int32_t fd, uint8_t *buffer, uint64_t len);
 
+/* mmap(2) references on the open file description. A mapping must survive the
+ * caller closing its fd, so demand-paged file mappings (Core/memory/FileMap.c)
+ * hold one of these instead. `acquire` takes a reference from an fd,
+ * `reacquire` takes another on a handle already held (fork), `read` fills a
+ * KERNEL buffer from the mapped file, `release` drops one reference. */
+int32_t syscall_file_mmap_acquire(int32_t fd);
+int32_t syscall_file_mmap_reacquire(int32_t handle);
+int64_t syscall_file_mmap_read(int32_t handle, uint64_t offset,
+                               uint8_t *kernel_buffer, uint32_t length);
+void    syscall_file_mmap_release(int32_t handle);
+
+/* Returns 1 if `fd` is a directory handle (opendir/O_DIRECTORY open) owned by
+ * the calling process. Used by the Linux compat fstat/statx path so opendir()
+ * -- which fstat()s its own fd and bails unless S_ISDIR -- works for foreign
+ * binaries (Xorg's module loader walks modules/ with opendir/readdir). */
+int syscall_file_is_dir(int32_t fd);
+
 /* Character-device fds (devfs /dev/dri/card0, /dev/input/event*). Returns 1 if
  * `fd` is an open on a devfs node exposing the vfs_driver_t dev_* hooks. */
 int32_t syscall_file_is_chardev(int32_t fd);
@@ -73,3 +90,10 @@ int64_t syscall_file_ioctl(int32_t fd, uint64_t request, uint64_t arg);
  * bytes into the caller. Returns user VA or -errno. */
 int64_t syscall_file_dev_mmap(int32_t fd, uint64_t offset, uint64_t length,
                               uint64_t prot, uint64_t flags);
+
+/* fork(2): give `child_pid` the same descriptors as `parent_pid`. fd numbers
+ * are global here, so the child is recorded as an additional owner of each
+ * slot rather than getting copies; the backing object survives until the last
+ * owner closes it. Without this a forked child cannot use any inherited fd --
+ * dup2() on the pipe Popen() hands it fails with EFAULT. */
+void syscall_file_fork_inherit(int32_t parent_pid, int32_t child_pid);

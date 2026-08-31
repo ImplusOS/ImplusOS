@@ -239,8 +239,9 @@ const pci_driver_t *driver_manager_get_pci_driver(void)
 
 const driver_input_t *driver_manager_get_ps2_driver(void)
 {
-    return (const driver_input_t *)driver_manager_get_named(DEVICE_TYPE_INPUT,
-                                                            "PS2_Driver.ELF");
+    /* First driver registered as DEVICE_TYPE_INPUT, whichever module that
+     * is -- the kernel no longer hard-codes a module filename here. */
+    return (const driver_input_t *)driver_manager_get_by_kind(DEVICE_TYPE_INPUT);
 }
 
 const usb_master_vtable_t *driver_manager_get_usb_driver(void)

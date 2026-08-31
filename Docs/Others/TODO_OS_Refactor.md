@@ -19,6 +19,37 @@
 > - P7 のドキュメント刷新は 2026-08-29 に再実施
 >   （`README.md` / `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `Docs/Architecture/*`
 >   を現行ソースツリーに合わせて更新）。
+>
+> **現況追記 (2026-08-30) — カーネルのドライバ名/実装依存の除去:**
+> - **FS**: `FS_VFS_Bridge` の `fs_bridge_id_t` 列挙 + `"FAT32_Driver.ELF"`
+>   等のハードコード表を撤廃。`fs_bridge_mount_all()` が
+>   `DEVICE_TYPE_FILESYSTEM` レジストリを走査してマウントし、デフォルト
+>   ルートFSは `vfs_media_kind_t`（光学優先、DISK は書込可能を優先）で選ぶ。
+>   `kernel_main.c all_fs_initialize()` は FS 名を一切知らない。
+> - **擬似FS**: devfs/tmpfs/procfs/etcfs/DRM のリストとマウント先を
+>   新設 `Kernel/Core/vfs/VFS_Pseudo.c` のテーブルへ移動。`kernel_main.c` は
+>   `vfs_mount_pseudo_filesystems()` を呼ぶだけ。
+> - **ネットワーク**: `network_stack_init()` の
+>   `ethernet_init()/arp_init()/…` 直列呼び出しを撤廃。
+>   `network_builtin_drivers_init_all()` が `NetworkBuiltinDrivers.c` の
+>   `deps[]` からトポロジカル順を解いて各層 init を駆動する（9.2 の
+>   `deps[]` が初めて load-bearing になった）。ランタイム経路
+>   （`ethernet_poll()` / `ipv4_process_timer()` / DHCP リトライ）は直呼びのまま。
+> - **入力**: `PS2_Client.c` / `driver_manager_get_ps2_driver()` の
+>   `"PS2_Driver.ELF"` 名指しを撤廃し `DEVICE_TYPE_INPUT` の先頭ドライバに。
+> - **RTC**: `Kernel/Drivers/RTC/` → `Kernel/Platform/rtc/`（port-IO の
+>   プラットフォーム HAL でありドライバモジュールではない）。syscall/Compat の
+>   include から `Drivers/` が消えた。`PlatformBuiltinDrivers.c` が
+>   呼出可能な vtable 付きで DeviceRegistry 登録。
+> - **DriverDB (A8)**: `DriverDB.c` にドライバ名のハードコードは元から無し
+>   （VID/PID→ELF 名は外部マニフェスト `Manifest/DriverDB.txt` のみが持つ、
+>   Linux の modalias 相当）。コード変更不要。
+> - `ACPI/Timer/LAPIC/IOAPIC/GIC` の登録名文字列は
+>   `PlatformBuiltinDrivers.c`（唯一の登録サイト）に残置。これは「組込み
+>   ドライバが自らの identity を宣言する」Plan A の想定どおりで、カーネル
+>   他所がその名前で lookup しているわけではない。
+> - `make ARCH=x86_64 kernel` / `make driver_build` は通過（新規ファイル
+>   の警告ゼロ）。QEMU 実機起動での回帰確認は未実施。
 
 ---
 
