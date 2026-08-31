@@ -234,17 +234,16 @@ define STAGE_FIRMWARE_FAT
 	done;
 endef
 
-# Each app/service is now its own top-level repository (github.com/ImplusOS/
-# <name>) instead of living under a shared Userland/Application/ or
-# Userland/Service/ parent, so each is named explicitly here and guarded
-# with $(wildcard ...) for one not yet checked out as a submodule.
-APP_REPO_NAMES := com.ImplusOS.sysnotif com.ImplusOS.waylandcompositor \
-                   com.ImplusOS.gtk3demo com.ImplusOS.windowmanager
-SERVICE_REPO_NAMES := com.ImplusOS.ldso com.ImplusOS.dynmain \
-                       com.ImplusOS.posix com.ImplusOS.netstack
+# Every immediate subdirectory of Userland/Application/ that carries its own
+# Makefile is a buildable app -- no per-app name is hard-coded here. Drop in a
+# new app directory with a Makefile and it is picked up automatically. A
+# directory with a `.nobuild` marker file is skipped (e.g. an app still
+# being ported off a removed dependency).
+APP_DIRS := $(patsubst %/,%,$(filter-out $(dir $(wildcard Userland/Application/*/.nobuild)),$(dir $(wildcard Userland/Application/*/Makefile))))
 
-APP_DIRS := $(foreach n,$(APP_REPO_NAMES),$(if $(wildcard $(n)/Makefile),$(n)))
-SERVICE_DIRS := $(foreach n,$(SERVICE_REPO_NAMES),$(if $(wildcard $(n)/Makefile),$(n)))
+# Same convention for Userland services (ldso, dynmain, posix, netstack, ...):
+# each Userland/Service/<name>/ with a Makefile builds one hot-loadable ELF/.so.
+SERVICE_DIRS := $(patsubst %/,%,$(dir $(wildcard Userland/Service/*/Makefile)))
 
 LIBRARY_C_SRCS := $(shell find Library/Source -name "*.c" 2>/dev/null)
 
@@ -266,16 +265,16 @@ USERLAND_C_SRCS := \
 	Userland/Source/Syscalls.c \
 	Userland/API/Source/XMLParser.c \
 	Userland/Service/Source/service_client.c \
-	com.ImplusOS.netstack/Source/DNS/DNS.c \
-	com.ImplusOS.posix/Source/src/posix_fdtable.c \
-	com.ImplusOS.posix/Source/src/posix_file.c \
-	com.ImplusOS.posix/Source/src/posix_process.c \
-	com.ImplusOS.posix/Source/src/posix_signal.c \
-	com.ImplusOS.posix/Source/src/posix_thread.c \
-	com.ImplusOS.posix/Source/src/posix_net.c \
-	com.ImplusOS.posix/Source/src/posix_time.c \
-	com.ImplusOS.posix/Source/src/posix_mman.c \
-	com.ImplusOS.posix/Source/src/posix_io.c
+	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_fdtable.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_file.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_process.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_signal.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_thread.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_net.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_time.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_mman.c \
+	Userland/Service/com.ImplusOS.posix/src/posix_io.c
 
 USERLAND_APP_C_SRCS := \
 	libc/I_libc/Source/src/assert.c \
@@ -294,7 +293,7 @@ USERLAND_APP_C_SRCS := \
 	Userland/Source/Syscalls.c \
 	Userland/API/Source/XMLParser.c \
 	Userland/Service/Source/service_client.c \
-	com.ImplusOS.netstack/Source/DNS/DNS.c
+	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c
 
 # Syscalls.c/service_client.c/DNS.c keep their OLD object-output paths
 # (Userland/Syscalls.o, Userland/Service/service_client.o,
@@ -307,8 +306,8 @@ USERLAND_INIT_OBJS := \
 	$(if $(filter Userland/Source/Syscalls.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
 	$(if $(filter Userland/Service/Source/service_client.c,$(USERLAND_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
 	$(patsubst Userland/API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter Userland/API/Source/%.c,$(USERLAND_C_SRCS))) \
-	$(patsubst com.ImplusOS.netstack/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o,$(filter com.ImplusOS.netstack/Source/%.c,$(USERLAND_C_SRCS))) \
-	$(patsubst com.ImplusOS.posix/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o,$(filter com.ImplusOS.posix/Source/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst Userland/Service/com.ImplusOS.netstack/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o,$(filter Userland/Service/com.ImplusOS.netstack/%.c,$(USERLAND_C_SRCS))) \
+	$(patsubst Userland/Service/com.ImplusOS.posix/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o,$(filter Userland/Service/com.ImplusOS.posix/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst libc/I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/Source/%.c,$(USERLAND_C_SRCS))) \
 	$(patsubst Library/Source/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/Source/%.c,$(USERLAND_C_SRCS)))
 
@@ -316,7 +315,7 @@ USERLAND_APP_OBJS := \
 	$(if $(filter Userland/Source/Syscalls.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Syscalls.o) \
 	$(if $(filter Userland/Service/Source/service_client.c,$(USERLAND_APP_C_SRCS)),$(BUILD_DIR)/Userland/Service/service_client.o) \
 	$(patsubst Userland/API/Source/%.c,$(BUILD_DIR)/Userland/API/%.o,$(filter Userland/API/Source/%.c,$(USERLAND_APP_C_SRCS))) \
-	$(patsubst com.ImplusOS.netstack/Source/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o,$(filter com.ImplusOS.netstack/Source/%.c,$(USERLAND_APP_C_SRCS))) \
+	$(patsubst Userland/Service/com.ImplusOS.netstack/%.c,$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o,$(filter Userland/Service/com.ImplusOS.netstack/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst libc/I_libc/Source/%.c,$(BUILD_DIR)/Userland/libc/I_libc/%.o,$(filter libc/I_libc/Source/%.c,$(USERLAND_APP_C_SRCS))) \
 	$(patsubst Library/Source/%.c,$(BUILD_DIR)/Library/%.o,$(filter Library/Source/%.c,$(USERLAND_APP_C_SRCS)))
 
@@ -328,7 +327,7 @@ USERLAND_CFLAGS := \
 	-I. \
 	-IKernel/Source/include \
 	-Ilibc/I_libc/Source/include \
-	-Icom.ImplusOS.posix/Source/include \
+	-IUserland/Service/com.ImplusOS.posix/include \
 	-ILibrary/Source \
 	-IVendor \
 	-IVendor/Library/libjpeg/src \
@@ -432,11 +431,11 @@ $(BUILD_DIR)/Userland/API/%.o: Userland/API/Source/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o: com.ImplusOS.netstack/Source/%.c
+$(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o: Userland/Service/com.ImplusOS.netstack/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o: com.ImplusOS.posix/Source/%.c
+$(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o: Userland/Service/com.ImplusOS.posix/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
 
