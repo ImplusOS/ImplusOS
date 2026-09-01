@@ -228,16 +228,29 @@ once to produce the EFI binaries).
 
 ### Userland
 
-- **Init process**: `Userland/Userland.c` (`_start`) — renders the boot screen,
-  calls `service_load_all()` to load the services in
-  `Userland/Service/services.list` (`com.ImplusOS.posix`, `com.ImplusOS.netstack`),
-  spawns `com.ImplusOS.windowmanager`, waits for it to register, then spawns
-  `com.ImplusOS.sysnotif`, then idles.
+- **Init process**: `Userland/Source/Userland.c` (`_start`) — renders the boot
+  screen, calls `service_load_all()` to load the services in
+  `Userland/Service/Source/services.list` (`com.ImplusOS.posix`,
+  `com.ImplusOS.netstack`), then spawns `com.ImplusOS.loginui`, which owns the
+  rest of the session (falls back to launching the window manager directly if
+  the login app is missing from the image).
+- **Login screen**: `com.ImplusOS.loginui` — graphical, drawn straight to the
+  framebuffer before the WM exists. Paints the WM wallpaper, lists users
+  (icon + name) bottom-left with per-row hit-testing and no panel behind the
+  section, shows a create-user form when the store is empty. Credential store
+  is entirely userland: `/var/System/users.db` (writable tmpfs), one
+  `name:salt_hex:hash_hex` line per user, hash = PBKDF2-HMAC-SHA256 via
+  `Library/Crypto`. uid = 1000 + record index; the chosen session is written
+  to `/run/session.user` + `/run/session.uid`. Optional unattended login via
+  `/var/System/autologin` or the shipped `Resource/autologin.conf` seed
+  (`name` or `name:password`; disabled by default). On success it starts the
+  window-manager session and stays resident as the session leader.
 - **Applications** (`Userland/Application/`, reverse-domain names): the window
   manager (`com.ImplusOS.windowmanager` — compositor, decorations, scene graph,
   theme, IPC input routing), the notification daemon (`com.ImplusOS.sysnotif`),
-  and `BusyBox`. Each has its own `Makefile` that pulls in `Userland/AppCommon.mk`.
-  The window manager's launcher list is `.../windowmanager/Resource/Apps/apps.list`.
+  the login screen (`com.ImplusOS.loginui`), and `BusyBox`. Each has its own
+  `Makefile` that pulls in `Userland/Source/AppCommon.mk`. The window manager's
+  launcher list is `.../windowmanager/Resource/Apps/apps.list`.
 - **Services** (`Userland/Service/`): hot-loadable `.so`s managed by
   `service_client.h` (`service_load`/`service_unload`). `com.ImplusOS.posix` maps
   native syscalls to POSIX (open/read/write/fork/exec/socket/pthread/...);
