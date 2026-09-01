@@ -295,6 +295,7 @@ USERLAND_APP_C_SRCS := \
 	$(LIBRARY_C_SRCS) \
 	Userland/Source/Syscalls.c \
 	Userland/API/Source/XMLParser.c \
+	Userland/API/Source/ImUI.c \
 	Userland/Service/Source/service_client.c \
 	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c
 
@@ -390,7 +391,7 @@ service_build: vendor_libs $(USERLAND_INIT_OBJS)
 			HOMEBREW_PREFIX="$(HOMEBREW_PREFIX)"; \
 	done
 
-app_build: vendor_libs $(USERLAND_INIT_OBJS)
+app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/ImUI.o
 	@set -e; \
 	for dir in $(APP_DIRS); do \
 			$(MAKE) -C $$dir \
