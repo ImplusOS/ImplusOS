@@ -98,13 +98,21 @@ RECOVERY_ESP_IMAGE_SIZE_MB ?= 16
 ISO_MASTER ?= genisoimage
 
 # $(call MASTER_UDF_ISO,<output-iso>,<staging-dir>) -- UEFI-only El Torito
-# boot via the staged esp.img, Rock Ridge + Joliet + UDF over the tree.
-# After mastering, best-effort graft an isohybrid GPT for bare-metal USB
-# boot when the syslinux `isohybrid` helper is available (no-op otherwise;
-# QEMU's -cdrom / OVMF path does not need it).
+# boot via the staged esp.img, Rock Ridge + UDF over the tree.
+#
+# No -J: BootManager reads only the ISO9660 Primary VD + Rock Ridge, the
+# kernel reads UDF, so the Joliet volume is dead weight -- and dropping it
+# keeps the ISO9660 descriptor set short enough that Tools/udf_promote.py
+# can slide the UDF Volume Recognition Sequence to sector 18-20, where
+# `file` (and OS probes) expect it on a bridge disc. Without that the image
+# still carries a full UDF filesystem but keeps reporting as plain ISO9660.
+#
+# Then best-effort graft an isohybrid GPT for bare-metal USB boot when the
+# syslinux `isohybrid` helper is available (no-op otherwise; QEMU's
+# -cdrom / OVMF path does not need it).
 define MASTER_UDF_ISO
 	$(ISO_MASTER) \
-		-R -J -udf \
+		-R -udf \
 		-iso-level 3 \
 		-input-charset utf-8 \
 		-allow-limited-size \
@@ -112,6 +120,7 @@ define MASTER_UDF_ISO
 		-eltorito-alt-boot -e esp.img -no-emul-boot \
 		-o $(1) \
 		$(2)
+	python3 $(CURDIR)/Tools/udf_promote.py $(1)
 	@command -v isohybrid >/dev/null 2>&1 && isohybrid --uefi $(1) || true
 endef
 
