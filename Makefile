@@ -85,6 +85,36 @@ IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
 ESP_IMAGE       := $(IMAGE_DIR)/esp-$(ARCH).img
 RECOVERY_ESP_IMAGE_SIZE_MB ?= 16
 
+# Optical-media mastering. The install/live images are now UDF-bridge discs:
+# an ISO9660 volume (kept for firmware/BootManager compatibility and as the
+# kernel's fallback filesystem) that also carries a full UDF structure over
+# the same files. The kernel's UDF driver
+# (Kernel/Source/Drivers/FileSystem/UDF/) is preferred over ISO9660 for
+# optical media and the running OS therefore reads its root from UDF.
+#
+# xorriso/libisofs cannot author UDF, so mastering uses genisoimage (cdrkit)
+# with -udf. Install it with: sudo apt install -y genisoimage
+# Override with ISO_MASTER=... if your genisoimage lives elsewhere.
+ISO_MASTER ?= genisoimage
+
+# $(call MASTER_UDF_ISO,<output-iso>,<staging-dir>) -- UEFI-only El Torito
+# boot via the staged esp.img, Rock Ridge + Joliet + UDF over the tree.
+# After mastering, best-effort graft an isohybrid GPT for bare-metal USB
+# boot when the syslinux `isohybrid` helper is available (no-op otherwise;
+# QEMU's -cdrom / OVMF path does not need it).
+define MASTER_UDF_ISO
+	$(ISO_MASTER) \
+		-R -J -udf \
+		-iso-level 3 \
+		-input-charset utf-8 \
+		-allow-limited-size \
+		-V IMPLUSOS \
+		-eltorito-alt-boot -e esp.img -no-emul-boot \
+		-o $(1) \
+		$(2)
+	@command -v isohybrid >/dev/null 2>&1 && isohybrid --uefi $(1) || true
+endef
+
 # External Linux runtime (glibc dynamic linker + .so closure + C.UTF-8) staged
 # for external Linux-ABI binaries such as Chromium. x86_64 only; always bundled
 # (Docs/Others/TODO_glibc_Port.md §7-3 -- no opt-out). Build rules live in
@@ -569,17 +599,7 @@ image: install_payload recovery_build
 	@$(call STAGE_DRIVER_ELFS,$(IMAGE_STAGE_DIR))
 	@$(call STAGE_FIRMWARE,$(IMAGE_STAGE_DIR))
 	@cp $(DRIVER_DB_SRC) $(IMAGE_STAGE_DIR)/Kernel/Driver/DriverDB.txt
-	@xorriso -as mkisofs \
-		-R \
-		-J \
-		-iso-level 3 \
-		-V IMPLUSOS \
-		-e esp.img \
-		-no-emul-boot \
-		-part_like_isohybrid \
-		-isohybrid-gpt-basdat \
-		-o $(IMAGE) \
-		$(IMAGE_STAGE_DIR)
+	@$(call MASTER_UDF_ISO,$(IMAGE),$(IMAGE_STAGE_DIR))
 
 image_livecd: all linux_runtime_stage
 	@mkdir -p $(IMAGE_DIR)
@@ -633,17 +653,7 @@ image_livecd: all linux_runtime_stage
 	@$(call STAGE_DRIVER_ELFS,$(IMAGE_STAGE_DIR))
 	@$(call STAGE_FIRMWARE,$(IMAGE_STAGE_DIR))
 	@cp $(DRIVER_DB_SRC) $(IMAGE_STAGE_DIR)/Kernel/Driver/DriverDB.txt
-	@xorriso -as mkisofs \
-		-R \
-		-J \
-		-iso-level 3 \
-		-V IMPLUSOS \
-		-e esp.img \
-		-no-emul-boot \
-		-part_like_isohybrid \
-		-isohybrid-gpt-basdat \
-		-o $(LIVECD_IMAGE) \
-		$(IMAGE_STAGE_DIR)
+	@$(call MASTER_UDF_ISO,$(LIVECD_IMAGE),$(IMAGE_STAGE_DIR))
 
 ifeq ($(ARCH),arm64)
 QEMU_MACHINE := virt

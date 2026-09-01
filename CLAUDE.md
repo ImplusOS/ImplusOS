@@ -46,7 +46,7 @@ ImplusOS/
 │   │   ├── Block/{AHCI,NVMe,VirtIOBlk}
 │   │   ├── Bus/{PCI,USB/{OHCI,UHCI,EHCI,XHCI,HID,MassStorage}}
 │   │   ├── Display/{ImplusOS_Generic,VirtIO}
-│   │   ├── FileSystem/{FAT32,exFAT,ISO9660}
+│   │   ├── FileSystem/{FAT32,exFAT,ISO9660,UDF}
 │   │   ├── Input/PS2
 │   │   ├── NIC/{VirtIONet,I219V,WiFi}
 │   │   ├── Wi-Fi/AX900          Firmware/AX900  RTC  Serial  ExampleDriver
@@ -99,7 +99,7 @@ ImplusOS/
 
 ```bash
 sudo apt install -y build-essential nasm binutils parted \
-  qemu-system-x86 qemu-system-arm dosfstools xorriso mtools util-linux gdb
+  qemu-system-x86 qemu-system-arm dosfstools xorriso genisoimage mtools util-linux gdb
 
 # Cross toolchains (Homebrew formulae are what the Makefile auto-detects;
 # it looks under /home/linuxbrew/.linuxbrew on Linux, /opt/homebrew or
@@ -127,8 +127,8 @@ the `CLANGDWARF` toolchain (`EDK2_TOOLCHAIN=`, `EDK2_TARGET=RELEASE`).
 | `make driver_stage` | Build drivers + copy `.ELF`s into the staging dir |
 | `make recovery_build` | Build the recovery-environment init |
 | `make vendor_libs` | Build the vendored libraries (libpng/zlib/libjpeg/freetype) |
-| `make image` | Build the install-media hybrid ISO (`Image/ImplusOS-$(ARCH)-InstallMedia.iso`) |
-| `make image_livecd` | Build the LiveCD hybrid ISO (`Image/ImplusOS-$(ARCH)-LiveCD.iso`) |
+| `make image` | Build the install-media UDF-bridge ISO (`Image/ImplusOS-$(ARCH)-InstallMedia.iso`) via `genisoimage -udf` |
+| `make image_livecd` | Build the LiveCD UDF-bridge ISO (`Image/ImplusOS-$(ARCH)-LiveCD.iso`) via `genisoimage -udf` |
 | `make run_uefi_usb` | Boot the LiveCD image in QEMU via UEFI, as a USB disk |
 | `make run_uefi_cdrom` | Boot the LiveCD image in QEMU via UEFI, as a CD-ROM |
 | `make run_bios_cdrom` | Boot the LiveCD image in QEMU via legacy BIOS (x86_64 only) |
