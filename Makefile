@@ -167,10 +167,6 @@ ON_DEMAND_MANIFEST := Kernel/Source/Drivers/Manifest/OnDemand.txt
 ON_DEMAND_DRIVER_ELFS := $(if $(wildcard $(ON_DEMAND_MANIFEST)),$(shell sed -e 's/#.*//' -e '/^[[:space:]]*$$/d' $(ON_DEMAND_MANIFEST)))
 DRIVER_DB_SRC := Kernel/Source/Drivers/Manifest/DriverDB.txt
 
-# Statically-linked BusyBox vendored by the BusyBox app (fetched by its own
-# Makefile). Also published as /bin/sh -- see STAGE_POSIX_BIN below.
-BUSYBOX_BIN := Userland/Application/BusyBox/Resource/busybox
-
 # Copies $(DRIVER_STAGE_DIR)/*.ELF into $(1)/Kernel/Driver/ or
 # $(1)/Kernel/Driver/OnDemand/ depending on ON_DEMAND_DRIVER_ELFS.
 define STAGE_DRIVER_ELFS
@@ -195,29 +191,6 @@ define STAGE_FIRMWARE
 		mkdir -p "$(1)/Kernel/Driver/Firmware/$$name"; \
 		cp -a "$$d." "$(1)/Kernel/Driver/Firmware/$$name/"; \
 	done
-endef
-
-# Populates $(1)/bin with the statically-linked BusyBox already vendored for
-# the BusyBox app, published under the POSIX names foreign programs expect.
-#
-# /bin/sh in particular is not optional: Xorg runs xkbcomp -- the only way it
-# can compile a keymap, and a hard requirement for bringing up the virtual
-# core keyboard -- through Popen(), which is fork() + execl("/bin/sh", "sh",
-# "-c", ...). With no /bin/sh the exec fails and X dies with "XKB: Could not
-# invoke xkbcomp". BusyBox is static (musl), so it needs no ld.so or .so
-# closure, and its ash dispatches on argv[0] == "sh".
-#
-# Copied rather than symlinked: the ISO9660 driver's symlink support is not
-# exercised on this path, and BusyBox is ~1 MB.
-define STAGE_POSIX_BIN
-	if [ -f "$(BUSYBOX_BIN)" ]; then \
-		mkdir -p "$(1)/bin"; \
-		cp "$(BUSYBOX_BIN)" "$(1)/bin/busybox"; \
-		cp "$(BUSYBOX_BIN)" "$(1)/bin/sh"; \
-		chmod 0755 "$(1)/bin/busybox" "$(1)/bin/sh"; \
-	else \
-		echo "warning: $(BUSYBOX_BIN) missing; /bin/sh will be absent (Xorg cannot run xkbcomp)" >&2; \
-	fi
 endef
 
 # Same, but into a mounted mtools FAT image ($(1) = image path) via
@@ -510,7 +483,6 @@ install_payload: all linux_runtime_stage
 		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(INSTALL_PAYLOAD_ROOT)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(INSTALL_PAYLOAD_ROOT)/; \
 	fi
-	@$(call STAGE_POSIX_BIN,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_DRIVER_ELFS,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_FIRMWARE,$(INSTALL_PAYLOAD_ROOT))
 	@cp $(DRIVER_DB_SRC) $(INSTALL_PAYLOAD_ROOT)/Kernel/Driver/DriverDB.txt
@@ -651,7 +623,6 @@ image_livecd: all linux_runtime_stage
 		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(IMAGE_STAGE_DIR)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(IMAGE_STAGE_DIR)/; \
 	fi
-	@$(call STAGE_POSIX_BIN,$(IMAGE_STAGE_DIR))
 	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTX64.EFI; \
@@ -680,7 +651,7 @@ else
 QEMU_MACHINE := pc
 endif
 
-QEMU_DISPLAY ?= none
+QEMU_DISPLAY ?= gtk
 QEMU_DISK_SIZE ?= 128M
 
 QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
