@@ -219,6 +219,21 @@ define STAGE_DRIVER_ELFS
 	done
 endef
 
+# Foreign (Linux-ABI) programs that shell out expect /bin/sh to exist. Xorg's
+# Popen() runs the XKB keymap compiler as `/bin/sh -c "/usr/bin/xkbcomp ..."`
+# and hangs in Pclose() when that exec fails, so the X server never reaches its
+# Dispatch loop. The statically linked busybox already in the tree provides the
+# ash applet when argv[0] is "sh", so stage it under that name. $(1) = image
+# root.
+BUSYBOX_BIN := Userland/Application/BusyBox/Resource/busybox
+define STAGE_POSIX_SHELL
+	if [ -f $(BUSYBOX_BIN) ]; then \
+		mkdir -p "$(1)/bin"; \
+		cp $(BUSYBOX_BIN) "$(1)/bin/busybox"; \
+		cp $(BUSYBOX_BIN) "$(1)/bin/sh"; \
+	fi
+endef
+
 # Copies every immediate subdirectory of $(FIRMWARE_SRC_DIR) (e.g. AX900/)
 # verbatim into $(1)/Kernel/Driver/Firmware/<name>/, creating the
 # destination directory as needed. Generic over whatever subdirectories
@@ -523,6 +538,7 @@ install_payload: all linux_runtime_stage
 		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(INSTALL_PAYLOAD_ROOT)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(INSTALL_PAYLOAD_ROOT)/; \
 	fi
+	@$(call STAGE_POSIX_SHELL,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_DRIVER_ELFS,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_FIRMWARE,$(INSTALL_PAYLOAD_ROOT))
 	@cp $(DRIVER_DB_SRC) $(INSTALL_PAYLOAD_ROOT)/Kernel/Driver/DriverDB.txt
@@ -653,6 +669,7 @@ image_livecd: all linux_runtime_stage
 		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(IMAGE_STAGE_DIR)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(IMAGE_STAGE_DIR)/; \
 	fi
+	@$(call STAGE_POSIX_SHELL,$(IMAGE_STAGE_DIR))
 	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTX64.EFI; \
@@ -672,6 +689,10 @@ QEMU_MACHINE := pc
 endif
 
 QEMU_DISPLAY ?= gtk
+# Extra qemu arguments appended to every run_* target, e.g.
+#   make run_uefi_usb QEMU_EXTRA='-monitor unix:/tmp/mon,server,nowait'
+# to drive `screendump` against a running guest.
+QEMU_EXTRA ?=
 QEMU_DISK_SIZE ?= 128M
 
 QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
@@ -684,15 +705,20 @@ QEMU_NET_DEVICES ?= \
 	-netdev user,id=net0 \
 	-device virtio-net-pci,netdev=net0
 
+# Overridable so a run can be narrowed to one CPU, which is the quickest way
+# to tell an SMP-only fault apart from a structural one.
+QEMU_SMP ?= 16,sockets=1,cores=4,threads=4
+
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE) \
-	-smp 16,sockets=1,cores=4,threads=4 \
+	-smp $(QEMU_SMP) \
 	-m 8192 \
 	-device ich9-ahci,id=sata \
 	$(QEMU_INPUT_DEVICES) \
 	$(QEMU_NET_DEVICES) \
 	-display $(QEMU_DISPLAY) \
-	-serial stdio
+	-serial stdio \
+	$(QEMU_EXTRA)
 	
 QEMU_USB := \
 	-drive if=none,id=usbstick,format=raw,file=$(LIVECD_IMAGE) \
