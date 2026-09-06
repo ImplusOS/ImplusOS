@@ -226,11 +226,48 @@ endef
 # ash applet when argv[0] is "sh", so stage it under that name. $(1) = image
 # root.
 BUSYBOX_BIN := Userland/Application/BusyBox/Resource/busybox
+
+# What the Terminal app runs instead of a bare shell. `cat /dev/applog` streams
+# the kernel's Linux-program launch log ([app] lines, see
+# OS_CONFIG_FOREIGN_LAUNCH_LOG) into the window, and then the shell takes the
+# foreground, so the window behaves like a Linux console: kernel messages
+# appear over a usable prompt.
+#
+# /dev/applog and NOT /dev/kmsg: the whole kernel log includes a line per
+# AF_UNIX packet and per page fault, and drawing those lines is itself X
+# traffic that gets logged, so a window streaming /dev/kmsg feeds back on
+# itself. Launch lines come only from exec and exit, so the loop cannot close.
+# `cat /dev/kmsg` by hand is still there when the full log is wanted.
+#
+# Kept as a file on the image rather than an argument because
+# process_spawn_with_arg() splits its argument on whitespace and has no
+# quoting, so `sh -c '...'` cannot survive the trip.
+# Programs init spawns once the session is up, one ELF path per line.
+# Empty by default -- the file is only written when AUTOSTART is set, e.g.
+#
+#   make image_livecd AUTOSTART=/Userland/Chromium/Chromium.ELF
+#
+# which is how a headless QEMU run drives an app with nobody at the keyboard.
+# $(1) = image root.
+AUTOSTART ?=
+define STAGE_AUTOSTART
+	if [ -n "$(AUTOSTART)" ]; then \
+		mkdir -p "$(1)/Userland"; \
+		printf '%s\n' $(foreach p,$(AUTOSTART),'$(p)') > "$(1)/Userland/autostart.list"; \
+	fi
+endef
+
 define STAGE_POSIX_SHELL
 	if [ -f $(BUSYBOX_BIN) ]; then \
 		mkdir -p "$(1)/bin"; \
 		cp $(BUSYBOX_BIN) "$(1)/bin/busybox"; \
 		cp $(BUSYBOX_BIN) "$(1)/bin/sh"; \
+		printf '%s\n' \
+			'#!/bin/sh' \
+			'# ImplusOS terminal session: app launch log + shell.' \
+			'/bin/busybox cat /dev/applog &' \
+			'exec /bin/sh' > "$(1)/bin/imsession"; \
+		chmod +x "$(1)/bin/imsession"; \
 	fi
 endef
 
@@ -320,6 +357,7 @@ USERLAND_APP_C_SRCS := \
 	Userland/Source/Syscalls.c \
 	Userland/API/Source/XMLParser.c \
 	Userland/API/Source/ImUI.c \
+	Userland/API/Source/XSession.c \
 	Userland/Service/Source/service_client.c \
 	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c
 
@@ -385,12 +423,13 @@ vendor_libs:
 # arm64 it is a no-op (Chromium/chrome is an x86_64 binary). The first run
 # needs network; afterwards Vendor/LinuxRuntime/cache/ satisfies it offline.
 # gtkdata: GTK3 demo runtime data;  xorgdata: Xorg + Mesa-DRI + xkb + fonts +
-# xorg.conf for the Doom (Method A) X path.
+# xorg.conf for the Doom (Method A) X path;  fastfetchdata: /usr/bin/fastfetch
+# plus its presets.
 linux_runtime_stage:
 ifeq ($(ARCH),x86_64)
-	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata locale \
+	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata locale \
 		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
-		CHROME_BIN="$(abspath Chromium/Resource/chrome)"
+		CHROME_BIN="$(abspath Userland/Application/Chromium/Resource/chrome)"
 else
 	@echo "linux_runtime_stage: skipped for ARCH=$(ARCH)"
 endif
@@ -415,7 +454,8 @@ service_build: vendor_libs $(USERLAND_INIT_OBJS)
 			HOMEBREW_PREFIX="$(HOMEBREW_PREFIX)"; \
 	done
 
-app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/ImUI.o
+app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/ImUI.o \
+	$(BUILD_DIR)/Userland/API/XSession.o
 	@set -e; \
 	for dir in $(APP_DIRS); do \
 			$(MAKE) -C $$dir \
@@ -539,6 +579,7 @@ install_payload: all linux_runtime_stage
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(INSTALL_PAYLOAD_ROOT)/; \
 	fi
 	@$(call STAGE_POSIX_SHELL,$(INSTALL_PAYLOAD_ROOT))
+	@$(call STAGE_AUTOSTART,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_DRIVER_ELFS,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_FIRMWARE,$(INSTALL_PAYLOAD_ROOT))
 	@cp $(DRIVER_DB_SRC) $(INSTALL_PAYLOAD_ROOT)/Kernel/Driver/DriverDB.txt
@@ -670,6 +711,7 @@ image_livecd: all linux_runtime_stage
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(IMAGE_STAGE_DIR)/; \
 	fi
 	@$(call STAGE_POSIX_SHELL,$(IMAGE_STAGE_DIR))
+	@$(call STAGE_AUTOSTART,$(IMAGE_STAGE_DIR))
 	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
 	@if [ "$(ARCH)" = "x86_64" ]; then \
 		cp $(BOOTLOADER_EFI) $(IMAGE_STAGE_DIR)/EFI/BOOT/BOOTX64.EFI; \
@@ -711,6 +753,8 @@ QEMU_SMP ?= 16,sockets=1,cores=4,threads=4
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE) \
+	-cpu host \
+	-accel kvm \
 	-smp $(QEMU_SMP) \
 	-m 8192 \
 	-device ich9-ahci,id=sata \

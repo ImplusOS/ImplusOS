@@ -140,3 +140,60 @@ x11-xkb-utils
 xfonts-base
 xfonts-encodings
 xfonts-utils
+
+# ---------------------------------------------------------------------------
+# FastFetch 外来バイナリ検証用（Userland/Application/FastFetch）
+#   起点: Debian trixie の /usr/bin/fastfetch（無改変）。DT_NEEDED は
+#   libyyjson.so.0 / libm.so.6 / libc.so.6 の 3 本だけで、それ以外
+#   （libpci, libvulkan, libwayland-client, libX11, libGL, libdconf …）は
+#   すべて実行時 dlopen の任意依存なので、無ければその項目が省かれるだけ。
+#   よって閉包に足すのは fastfetch 本体と libyyjson0 の 2 パッケージのみ。
+#   実行体 /usr/bin/fastfetch と presets は stage-fastfetch.sh が配置する。
+# ---------------------------------------------------------------------------
+fastfetch
+libyyjson0
+
+# ---------------------------------------------------------------------------
+# 画像形式の判定に要る MIME データベース（GTK3）
+#   gdk-pixbuf は先頭バイトから形式を選ぶのに自前の署名表ではなく GIO の
+#   g_content_type_guess() を呼ぶ。これは shared-mime-info の
+#   /usr/share/mime を読むので、無いと「どのローダも名乗り出ない」＝
+#   "Unrecognized image file format" になり、GTK は最初に描くアイコンで
+#   g_assert に落ちる（ローダも画像データも正しいのに、である）。
+#   deb は XML しか持たないので、stage-gtkdata.sh が同梱の
+#   update-mime-database で mime.cache を作る。
+# ---------------------------------------------------------------------------
+shared-mime-info
+
+# ---------------------------------------------------------------------------
+# カーソルテーマ（GTK3 / Wayland）
+#   GDK は GSettings の org.gnome.desktop.interface cursor-theme（既定
+#   "Adwaita"）を libwayland-cursor に渡し、読めなければ cursor_theme_name を
+#   NULL のままにしたうえで、後から
+#   _gdk_wayland_display_get_scaled_cursor_theme() でそれを g_assert する
+#   ＝ テーマが 1 つも無いと必ず落ちる。deb は 500 KiB 程度で、ついでに
+#   Adwaita のアイコンも埋まる（従来は hicolor フォールバックのみだった）。
+# ---------------------------------------------------------------------------
+adwaita-icon-theme
+
+# ---------------------------------------------------------------------------
+# 端末エミュレータ（Userland/Application/Terminal）
+#   xterm を seed に置くだけで足りる: resolve.sh は seed パッケージ内の全 ELF の
+#   DT_NEEDED を閉包の起点にするので、xterm 実体が要求する libXft.so.2 /
+#   libutempter.so.0 は自動で拾われる（残る 12 本の直接依存 — libX11 libXaw
+#   libXt libXmu libXpm libXext libXinerama libICE libfontconfig libfreetype
+#   libtinfo libc6 — は Xorg / GTK3 の閉包に既にある）。
+#
+#   xterm を選ぶ理由は既定フォントが X コアフォント（xfonts-base の fixed）で、
+#   -fa を渡さない限り Xft/fontconfig を一切通らないこと。Xorg 用に配置済みの
+#   フォントパスだけで起動できる。
+#
+#   ncurses-base は /usr/share/terminfo の xterm エントリ（TERM=xterm）。xterm
+#   自身は無くても動くが、中で走る curses アプリが要る。Architecture: all なので
+#   Contents-amd64 には出てこない（Packages 索引には出る）。
+#
+#   xbitmaps は xterm の Depends に入っているがヘッダ（/usr/include/X11/bitmaps）
+#   のビルド時依存なので同梱しない。
+# ---------------------------------------------------------------------------
+xterm
+ncurses-base

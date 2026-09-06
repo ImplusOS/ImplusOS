@@ -9,10 +9,14 @@
 #   - DejaVu フォント + 最小 fonts.conf … これが無いと Pango がテキストを一切描けない
 #   - gtk3-demo の同梱リソース（/usr/share/gtk-3.0 等）
 #
-# 生成しない（既知の TODO、TODO_GTK3_Wayland_LinuxABI.md §G4）:
-#   - gdk-pixbuf loaders.cache（host に gdk-pixbuf-query-loaders が無い。
-#     ラスタ画像ローダ不在。ウィンドウは出るがアイコン/画像は出ない）
-#   - Adwaita アイコンテーマ（巨大。hicolor フォールバックのみ）
+#   - gdk-pixbuf のローダ群 + loaders.cache
+#   - shared-mime-info の mime.cache … gdk-pixbuf は先頭バイトからの形式判定を
+#     自前の署名比較ではなく GIO の g_content_type_guess() で行うので、これが
+#     無いとローダも画像データも正しいのに "Unrecognized image file format" に
+#     なり、GTK は最初に描くアイコンで g_assert に落ちる
+#
+#   - Adwaita のカーソル + アイコン … GDK はカーソルテーマが 1 つも読めないと
+#     cursor_theme_name を NULL のままにし、後でそれを g_assert して落ちる
 #
 # 入力(env): CACHE_DIR WORK_DIR STAGE_DIR
 set -euo pipefail
@@ -93,5 +97,81 @@ cat > "$STAGE_DIR/etc/fonts/fonts.conf" <<'XML'
 </fontconfig>
 XML
 log "wrote /etc/fonts/fonts.conf"
+
+# ---- 4. gdk-pixbuf ローダ + loaders.cache ----------------------------------
+# ローダは dlopen されるだけで DT_NEEDED に現れないので、.so 閉包を辿る
+# stage.sh では拾えない。実行体 gdk-pixbuf-query-loaders は
+# libgdk-pixbuf-2.0-0 の deb に同梱されている（別パッケージは要らない）。
+# 生成したキャッシュはローダの絶対パスを持つので、STAGE_DIR 接頭辞を落として
+# ゲスト上のパスに直す。
+PBDEB="$(deb_of libgdk-pixbuf-2.0-0)"
+if [ -n "$PBDEB" ]; then
+	pbdir="$(extract libgdk-pixbuf-2.0-0 "$PBDEB")"
+	pbrel="usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0"
+	if [ -d "$pbdir/$pbrel/2.10.0/loaders" ]; then
+		mkdir -p "$STAGE_DIR/$pbrel/2.10.0/loaders"
+		cp -a "$pbdir/$pbrel/2.10.0/loaders/." \
+		      "$STAGE_DIR/$pbrel/2.10.0/loaders/"
+		q="$pbdir/$pbrel/gdk-pixbuf-query-loaders"
+		ld="$STAGE_DIR/lib64/ld-linux-x86-64.so.2"
+		cache="$STAGE_DIR/$pbrel/2.10.0/loaders.cache"
+		if [ -x "$q" ] && [ -x "$ld" ]; then
+			# Run the vendored tool against the vendored loaders, using the
+			# vendored ld.so -- the build host's own gdk-pixbuf is a
+			# different version and would write a cache this one rejects.
+			GDK_PIXBUF_MODULEDIR="$STAGE_DIR/$pbrel/2.10.0/loaders" \
+			"$ld" --library-path "$STAGE_DIR/usr/lib/x86_64-linux-gnu" \
+			      "$q" > "$cache" 2>/dev/null || true
+			sed -i "s|$STAGE_DIR||g" "$cache"
+			n=$(grep -c '^"/usr' "$cache" 2>/dev/null || echo 0)
+			[ "$n" -gt 0 ] || die "loaders.cache has no loaders"
+			log "gdk-pixbuf: $n loader(s) -> loaders.cache"
+		else
+			log "WARN: cannot run gdk-pixbuf-query-loaders; no loaders.cache"
+		fi
+	fi
+else
+	log "WARN: libgdk-pixbuf-2.0-0 not in cache; no image loaders"
+fi
+
+# ---- 5. shared-mime-info（mime.cache） --------------------------------------
+# deb は XML しか持たない（Debian は postinst で作る）ので、同梱の
+# update-mime-database を同梱の ld.so 越しに走らせてコンパイルする。
+# ホストにも同名のツールはあるが、バージョンの違うキャッシュを混ぜたくない。
+SMIDEB="$(deb_of shared-mime-info)"
+if [ -n "$SMIDEB" ]; then
+	smidir="$(extract shared-mime-info "$SMIDEB")"
+	if [ -d "$smidir/usr/share/mime/packages" ]; then
+		mkdir -p "$STAGE_DIR/usr/share/mime/packages"
+		cp -a "$smidir/usr/share/mime/packages/." \
+		      "$STAGE_DIR/usr/share/mime/packages/"
+		umd="$smidir/usr/bin/update-mime-database"
+		ld="$STAGE_DIR/lib64/ld-linux-x86-64.so.2"
+		if [ -x "$umd" ] && [ -x "$ld" ]; then
+			"$ld" --library-path "$STAGE_DIR/usr/lib/x86_64-linux-gnu" \
+			      "$umd" "$STAGE_DIR/usr/share/mime" >/dev/null 2>&1 || true
+		fi
+		[ -s "$STAGE_DIR/usr/share/mime/mime.cache" ] || \
+			die "mime.cache not produced"
+		log "mime.cache $(stat -c %s "$STAGE_DIR/usr/share/mime/mime.cache") bytes"
+	fi
+else
+	log "WARN: shared-mime-info not in cache; gdk-pixbuf cannot sniff formats"
+fi
+
+# ---- 6. Adwaita カーソル / アイコンテーマ -----------------------------------
+ADWDEB="$(deb_of adwaita-icon-theme)"
+if [ -n "$ADWDEB" ]; then
+	adwdir="$(extract adwaita-icon-theme "$ADWDEB")"
+	if [ -d "$adwdir/usr/share/icons" ]; then
+		mkdir -p "$STAGE_DIR/usr/share/icons"
+		cp -a "$adwdir/usr/share/icons/." "$STAGE_DIR/usr/share/icons/"
+		c=$(ls "$STAGE_DIR/usr/share/icons/Adwaita/cursors" 2>/dev/null | wc -l)
+		[ "$c" -gt 0 ] || die "no Adwaita cursors staged"
+		log "Adwaita: $c cursor(s)"
+	fi
+else
+	log "WARN: adwaita-icon-theme not in cache; GDK will abort on the cursor theme"
+fi
 
 log "done: $STAGE_DIR"

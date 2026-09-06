@@ -12,8 +12,8 @@ SELF_DIR  := $(abspath .)
 # 閉包解決の起点にする外来 Linux バイナリ群（空白区切り）。
 #   - chrome   : Chromium 外来 ABI 検証（TODO_Chromium_LinuxABI.md）
 #   - linuxxdoom: Userland/Application/Doom（libGL/libGLEW/libopenal/libfluidsynth を追加で要求）
-CHROME_BIN   ?= $(REPO_ROOT)/Chromium/Resource/chrome
-DOOM_BIN     ?= $(REPO_ROOT)/Doom/Resource/linuxxdoom-x86_64
+CHROME_BIN   ?= $(REPO_ROOT)/Userland/Application/Chromium/Resource/chrome
+DOOM_BIN     ?= $(REPO_ROOT)/Userland/Application/Doom/Resource/linuxxdoom-x86_64
 FOREIGN_BINS ?= $(CHROME_BIN) $(DOOM_BIN)
 
 # Debian アーカイブのスナップショット（再現性のため日付固定）。
@@ -32,10 +32,10 @@ SEED      := $(SELF_DIR)/packages.seed.txt
 # ステージ先（イメージビルドが渡す）。既定は自ツリー内の確認用。
 STAGE_DIR ?= $(REPO_ROOT)/Build/x86_64/LinuxRuntime/stage
 
-.PHONY: all resolve fetch stage gtkdata xorgdata locale verify clean help
+.PHONY: all resolve fetch stage gtkdata xorgdata fastfetchdata xtermdata locale verify clean help
 
 help:
-	@echo "targets: resolve | fetch | stage STAGE_DIR=<d> | gtkdata STAGE_DIR=<d> | xorgdata STAGE_DIR=<d> | locale STAGE_DIR=<d> | verify | clean"
+	@echo "targets: resolve | fetch | stage STAGE_DIR=<d> | gtkdata STAGE_DIR=<d> | xorgdata STAGE_DIR=<d> | fastfetchdata STAGE_DIR=<d> | xtermdata STAGE_DIR=<d> | locale STAGE_DIR=<d> | verify | clean"
 	@echo "vars:    DEBIAN_SUITE=$(DEBIAN_SUITE) DEBIAN_SNAPSHOT=$(DEBIAN_SNAPSHOT)"
 	@echo "         FOREIGN_BINS=$(FOREIGN_BINS)"
 
@@ -71,6 +71,18 @@ gtkdata: stage
 xorgdata: stage
 	CACHE_DIR='$(CACHE_DIR)' WORK_DIR='$(WORK_DIR)' STAGE_DIR='$(STAGE_DIR)' \
 	  ./stage-xorg.sh
+
+# FastFetch 用の非 .so データ（/usr/bin/fastfetch 実行体 + presets）を
+# STAGE_DIR へ配置。stage の後に走らせる（.so 閉包が先）。
+fastfetchdata: stage
+	CACHE_DIR='$(CACHE_DIR)' WORK_DIR='$(WORK_DIR)' STAGE_DIR='$(STAGE_DIR)' \
+	  ./stage-fastfetch.sh
+
+# 端末エミュレータ用の非 .so データ（/usr/bin/xterm 実行体 + app-defaults +
+# terminfo）を STAGE_DIR へ配置。stage の後に走らせる（.so 閉包が先）。
+xtermdata: stage
+	CACHE_DIR='$(CACHE_DIR)' WORK_DIR='$(WORK_DIR)' STAGE_DIR='$(STAGE_DIR)' \
+	  ./stage-xterm.sh
 
 # C.UTF-8 locale-archive を STAGE_DIR/usr/lib/locale に生成
 locale:
