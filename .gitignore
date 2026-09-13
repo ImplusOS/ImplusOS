@@ -8,7 +8,7 @@ AAVMF_CODE.fd
 AAVMF_VARS.fd
 *.bin
 Userland/Application/BusyBox/Resource/busybox
-Userland/Application/Chromium
+Userland/Application/Chromium/Resource
 Userland/Application/Doom
 /test/
 
