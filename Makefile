@@ -749,7 +749,7 @@ QEMU_NET_DEVICES ?= \
 
 # Overridable so a run can be narrowed to one CPU, which is the quickest way
 # to tell an SMP-only fault apart from a structural one.
-QEMU_SMP ?= 16,sockets=1,cores=4,threads=4
+QEMU_SMP ?= 4
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE) \
