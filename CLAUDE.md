@@ -210,8 +210,8 @@ once to produce the EFI binaries).
 | Macro | Default | Notes |
 |---|---|---|
 | `OS_CONFIG_PROCESS_MAX_COUNT` | 256 | range 1–256 |
-| `OS_CONFIG_FILE_MAX_FD` | 256 | per process, range 4–256 |
-| `OS_CONFIG_FILE_MAX_DIR_HANDLE` | 256 | per process, range 4–256 |
+| `OS_CONFIG_FILE_MAX_FD` | 512 | system-wide fd table, range 4–512; fds 192–255 are skipped (AF_UNIX socket range) |
+| `OS_CONFIG_FILE_MAX_DIR_HANDLE` | 192 | range 4–256 |
 | `OS_CONFIG_SMP_MAX_CPUS` | 16 | |
 | `OS_CONFIG_SMP_ENABLED` | 1 | |
 | `OS_CONFIG_DRIVER_MODULE_MAX_COUNT` | 64 | |

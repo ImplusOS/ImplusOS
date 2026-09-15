@@ -199,6 +199,13 @@ Section "InputDevice"
     Driver      "evdev"
     Option      "Device"   "/dev/input/event1"
     Option      "CorePointer"
+    # The kernel reports the hosting window's cursor as ABS_X/ABS_Y and also
+    # advertises REL_X/REL_Y so evdev treats it as a mouse (with the wheel)
+    # rather than a touchscreen; take position from the absolute axes.
+    Option      "IgnoreRelativeAxes" "true"
+    # Mice ignore absolute axes by default; setting this to false is what
+    # tells evdev to use them.
+    Option      "IgnoreAbsoluteAxes" "false"
 EndSection
 
 Section "Device"

@@ -77,6 +77,26 @@ if [ ! -e "$STAGE_DIR/lib64/ld-linux-x86-64.so.2" ]; then
 	              || log "ld-linux-x86-64.so.2 not found (libc6 deb missing?)"
 fi
 
+# ---- 3b. dlopen されるだけの .so（DT_NEEDED 閉包に出ないもの） ---------
+# closure.txt は DT_NEEDED しか辿らないので、実行時に dlopen される .so は
+# ここで明示的に置く（Xorg モジュールや DRI ドライバは stage-xorg.sh 側）。
+#   libsoftokn3.so / libfreeblpriv3.so / libfreebl3.so:
+#       NSS のソフトトークン。Chromium は TLS 接続後の証明書処理で
+#       crypto::EnsureNSSInit() を呼び、NSS_NoDB_Init が libsoftokn3.so を
+#       dlopen（さらにそれが libfreeblpriv3.so を dlopen）する。無いと
+#       "FATAL:crypto/nss_util.cc:146] nss_error=-5925" でブラウザごと落ちる。
+#   libnssckbi.so: NSS の組み込みルート証明書モジュール。
+DLOPEN_SONAMES="libsoftokn3.so libfreeblpriv3.so libfreebl3.so libnssckbi.so"
+for soname in $DLOPEN_SONAMES; do
+	real="$(find_real "$soname" || true)"
+	if [ -z "$real" ]; then
+		log "NOT FOUND in extracted debs: $soname (dlopen)"
+		missing=$((missing+1)); continue
+	fi
+	install -m 0755 "$real" "$STAGE_DIR/usr/lib/x86_64-linux-gnu/$soname"
+	placed=$((placed+1))
+done
+
 # ---- 4. 自己検査 --------------------------------------------------------------
 log "placed=$placed missing=$missing"
 [ -e "$STAGE_DIR/lib64/ld-linux-x86-64.so.2" ] || { log "FATAL: no dynamic linker staged"; missing=$((missing+1)); }
