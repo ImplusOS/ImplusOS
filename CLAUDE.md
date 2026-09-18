@@ -210,7 +210,7 @@ once to produce the EFI binaries).
 | Macro | Default | Notes |
 |---|---|---|
 | `OS_CONFIG_PROCESS_MAX_COUNT` | 256 | range 1–256 |
-| `OS_CONFIG_FILE_MAX_FD` | 512 | system-wide fd table, range 4–512; fds 192–255 are skipped (AF_UNIX socket range) |
+| `OS_CONFIG_FILE_MAX_FD` | 512 | system-wide (global) fd table, range 4–512. Linux-ABI processes see per-process numbers (`Compat/Linux/Linux_FdTable.c`); AF_UNIX is 768–1023, inet 512–767 |
 | `OS_CONFIG_FILE_MAX_DIR_HANDLE` | 192 | range 4–256 |
 | `OS_CONFIG_SMP_MAX_CPUS` | 16 | |
 | `OS_CONFIG_SMP_ENABLED` | 1 | |
@@ -219,6 +219,7 @@ once to produce the EFI binaries).
 | `OS_CONFIG_PENDING_SIGNAL_MAX_PER_PROCESS` | 32 | |
 | `OS_CONFIG_LOG_FILE_MAX_BYTES` | 512 KiB | |
 | `OS_CONFIG_BOOT_FADE` | 0 | fade-to-black transition disabled |
+| `KERNEL_COW_FORK` | 1 | copy-on-write fork (needed by multi-process Chromium); `-DKERNEL_COW_FORK=0` for eager copy |
 | `OS_CONFIG_NET_IPV4_ADDR` / `MASK` / `GATEWAY` | 10.0.2.15 / 255.255.255.0 / 10.0.2.2 | QEMU user-net defaults |
 
 ### Process Capabilities (`Kernel/Core/process/ProcessManager.h`)
