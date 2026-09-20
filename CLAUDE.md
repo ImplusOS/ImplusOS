@@ -39,7 +39,8 @@ ImplusOS/
 │   ├── Boot/                  Boot progress bar (LoadBar)
 │   ├── Compat/Linux/          Linux syscall-ABI compat layer + compat_registry
 │   ├── Core/                  kernel_main + drm, elf, hardening, kvm, memory,
-│   │                          process, sync, syscall, sysinfo, timer, usercopy, vfs
+│   │                          process, sound (ALSA ABI + mixer), sync, syscall,
+│   │                          sysinfo, timer, usercopy, vfs
 │   ├── Debug/                 serial, printf, panic
 │   ├── Drivers/               Loadable driver modules + kernel-resident driver glue
 │   │   ├── Audio/{AC97,HDA,VirtIOSound}
@@ -209,8 +210,8 @@ once to produce the EFI binaries).
 
 | Macro | Default | Notes |
 |---|---|---|
-| `OS_CONFIG_PROCESS_MAX_COUNT` | 256 | range 1–256 |
-| `OS_CONFIG_FILE_MAX_FD` | 512 | system-wide (global) fd table, range 4–512. Linux-ABI processes see per-process numbers (`Compat/Linux/Linux_FdTable.c`); AF_UNIX is 768–1023, inet 512–767 |
+| `OS_CONFIG_PROCESS_MAX_COUNT` | 512 | tasks (every thread takes a slot), range 1–1024 |
+| `OS_CONFIG_FILE_MAX_FD` | 2048 | system-wide (global) fd table, range 4–4096. 512–1023 is skipped (inet 512–767, AF_UNIX 768–1023); numbers ≥1024 go only to Linux-ABI processes, which see per-process numbers (`Compat/Linux/Linux_FdTable.c`) |
 | `OS_CONFIG_FILE_MAX_DIR_HANDLE` | 192 | range 4–256 |
 | `OS_CONFIG_SMP_MAX_CPUS` | 16 | |
 | `OS_CONFIG_SMP_ENABLED` | 1 | |
@@ -249,7 +250,9 @@ once to produce the EFI binaries).
 - **Applications** (`Userland/Application/`, reverse-domain names): the window
   manager (`com.ImplusOS.windowmanager` — compositor, decorations, scene graph,
   theme, IPC input routing), the notification daemon (`com.ImplusOS.sysnotif`),
-  the login screen (`com.ImplusOS.loginui`), and `BusyBox`. Each has its own
+  the login screen (`com.ImplusOS.loginui`), `BusyBox`, and `XdgOpen` (staged
+  as `/usr/bin/xdg-open`; hands files Linux programs open — e.g. Chromium
+  downloads — to the editor or file manager). Each has its own
   `Makefile` that pulls in `Userland/Source/AppCommon.mk`. The window manager's
   launcher list is `.../windowmanager/Resource/Apps/apps.list`.
 - **Services** (`Userland/Service/`): hot-loadable `.so`s managed by

@@ -271,6 +271,17 @@ define STAGE_POSIX_SHELL
 	fi
 endef
 
+# /usr/bin/xdg-open for Linux programs: the native forwarder built from
+# Userland/Application/XdgOpen (see its Main.c). Chromium runs it to open a
+# download or show it in its folder.
+XDG_OPEN_ELF := $(BUILD_DIR)/Userland/XdgOpen/XdgOpen.ELF
+define STAGE_XDG_OPEN
+	if [ -f $(XDG_OPEN_ELF) ]; then \
+		mkdir -p "$(1)/usr/bin"; \
+		cp $(XDG_OPEN_ELF) "$(1)/usr/bin/xdg-open"; \
+	fi
+endef
+
 # Copies every immediate subdirectory of $(FIRMWARE_SRC_DIR) (e.g. AX900/)
 # verbatim into $(1)/Kernel/Driver/Firmware/<name>/, creating the
 # destination directory as needed. Generic over whatever subdirectories
@@ -427,7 +438,7 @@ vendor_libs:
 # plus its presets.
 linux_runtime_stage:
 ifeq ($(ARCH),x86_64)
-	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata locale \
+	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata alsadata locale \
 		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
 		CHROME_BIN="$(abspath Userland/Application/Chromium/Resource/chrome)"
 else
@@ -579,6 +590,7 @@ install_payload: all linux_runtime_stage
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(INSTALL_PAYLOAD_ROOT)/; \
 	fi
 	@$(call STAGE_POSIX_SHELL,$(INSTALL_PAYLOAD_ROOT))
+	@$(call STAGE_XDG_OPEN,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_AUTOSTART,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_DRIVER_ELFS,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_FIRMWARE,$(INSTALL_PAYLOAD_ROOT))
@@ -711,6 +723,7 @@ image_livecd: all linux_runtime_stage
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(IMAGE_STAGE_DIR)/; \
 	fi
 	@$(call STAGE_POSIX_SHELL,$(IMAGE_STAGE_DIR))
+	@$(call STAGE_XDG_OPEN,$(IMAGE_STAGE_DIR))
 	@$(call STAGE_AUTOSTART,$(IMAGE_STAGE_DIR))
 	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
 	@if [ "$(ARCH)" = "x86_64" ]; then \
@@ -746,6 +759,15 @@ QEMU_INPUT_DEVICES := \
 QEMU_NET_DEVICES ?= \
 	-netdev user,id=net0 \
 	-device virtio-net-pci,netdev=net0
+# Intel HD Audio (Kernel/Drivers/Audio/HDA), which Linux programs reach
+# through the kernel's ALSA device (Kernel/Source/Core/sound/ALSA.c). With no
+# -audiodev, QEMU picks the first host backend that works (PulseAudio/WSLg,
+# PipeWire, ALSA, ... or none). Override the whole variable to choose, e.g.
+# '-audiodev wav,id=a,path=out.wav -device ich9-intel-hda
+#  -device hda-duplex,audiodev=a' to record what the guest plays.
+QEMU_AUDIO_DEVICES ?= \
+	-device ich9-intel-hda \
+	-device hda-duplex
 
 # Overridable so a run can be narrowed to one CPU, which is the quickest way
 # to tell an SMP-only fault apart from a structural one.
@@ -760,6 +782,7 @@ QEMU_COMMON := \
 	-device ich9-ahci,id=sata \
 	$(QEMU_INPUT_DEVICES) \
 	$(QEMU_NET_DEVICES) \
+	$(QEMU_AUDIO_DEVICES) \
 	-display $(QEMU_DISPLAY) \
 	-serial stdio \
 	$(QEMU_EXTRA)
