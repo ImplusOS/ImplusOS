@@ -60,7 +60,13 @@ Host tools (Ubuntu/Debian; the build is meant for an interactive Linux shell):
 
 ```bash
 sudo apt install -y build-essential nasm binutils parted \
-  qemu-system-x86 qemu-system-arm dosfstools xorriso mtools util-linux gdb
+  qemu-system-x86 qemu-system-arm dosfstools genisoimage mtools util-linux gdb
+```
+
+macOS: install `mkisofs` via cdrtools:
+
+```bash
+brew install cdrtools
 ```
 
 Cross toolchains — the Makefile auto-detects the Homebrew prefix

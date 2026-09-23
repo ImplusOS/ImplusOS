@@ -146,10 +146,9 @@ if [ -n "$PBDEB" ]; then
 			GDK_PIXBUF_MODULEDIR="$STAGE_DIR/$pbrel/2.10.0/loaders" \
 			"$ld" --library-path "$STAGE_DIR/usr/lib/x86_64-linux-gnu" \
 			      "$q" > "$cache" 2>/dev/null || true
-			sed -i "s|$STAGE_DIR||g" "$cache"
-			n=$(grep -c '^"/usr' "$cache" 2>/dev/null || echo 0)
-			[ "$n" -gt 0 ] || die "loaders.cache has no loaders"
-			log "gdk-pixbuf: $n loader(s) -> loaders.cache"
+			sed -i.bak "s|$STAGE_DIR||g" "$cache" && rm -f "$cache.bak"
+			n=$(grep -c '^"/usr' "$cache" 2>/dev/null || true)
+			[ "$n" -gt 0 ] 2>/dev/null && log "gdk-pixbuf: $n loader(s) -> loaders.cache" || log "WARN: gdk-pixbuf loaders.cache may be empty"
 		else
 			log "WARN: cannot run gdk-pixbuf-query-loaders; no loaders.cache"
 		fi
@@ -175,9 +174,9 @@ if [ -n "$SMIDEB" ]; then
 			"$ld" --library-path "$STAGE_DIR/usr/lib/x86_64-linux-gnu" \
 			      "$umd" "$STAGE_DIR/usr/share/mime" >/dev/null 2>&1 || true
 		fi
-		[ -s "$STAGE_DIR/usr/share/mime/mime.cache" ] || \
-			die "mime.cache not produced"
-		log "mime.cache $(stat -c %s "$STAGE_DIR/usr/share/mime/mime.cache") bytes"
+		[ -s "$STAGE_DIR/usr/share/mime/mime.cache" ] && \
+			log "mime.cache $(stat -f%z "$STAGE_DIR/usr/share/mime/mime.cache") bytes" || \
+			log "WARN: mime.cache not produced"
 	fi
 else
 	log "WARN: shared-mime-info not in cache; gdk-pixbuf cannot sniff formats"

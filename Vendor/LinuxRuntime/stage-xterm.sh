@@ -57,7 +57,7 @@ xdir="$(extract xterm "$XDEB")"
 [ -f "$xdir/usr/bin/xterm" ] || die "usr/bin/xterm missing in the .deb"
 mkdir -p "$STAGE_DIR/usr/bin"
 install -m 0755 "$xdir/usr/bin/xterm" "$STAGE_DIR/usr/bin/xterm"
-log "staged /usr/bin/xterm ($(stat -c%s "$STAGE_DIR/usr/bin/xterm") bytes)"
+log "staged /usr/bin/xterm ($(stat -f%z "$STAGE_DIR/usr/bin/xterm") bytes)"
 
 # ---- 2. Xt app-defaults -----------------------------------------------------
 # Debian ships them in /etc/X11; upstream Xt's compiled-in XFILESEARCHPATH

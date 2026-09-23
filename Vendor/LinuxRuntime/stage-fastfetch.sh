@@ -36,7 +36,7 @@ ffdir="$(extract fastfetch "$FFDEB")"
 [ -f "$ffdir/usr/bin/fastfetch" ] || die "usr/bin/fastfetch not in deb"
 mkdir -p "$STAGE_DIR/usr/bin"
 install -m 0755 "$ffdir/usr/bin/fastfetch" "$STAGE_DIR/usr/bin/fastfetch"
-log "staged /usr/bin/fastfetch ($(stat -c%s "$STAGE_DIR/usr/bin/fastfetch") bytes, unmodified)"
+log "staged /usr/bin/fastfetch ($(stat -f%z "$STAGE_DIR/usr/bin/fastfetch") bytes, unmodified)"
 
 if [ -d "$ffdir/usr/share/fastfetch" ]; then
 	mkdir -p "$STAGE_DIR/usr/share/fastfetch"

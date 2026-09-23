@@ -27,8 +27,9 @@ while IFS=$'\t' read -r pkg ver url sha; do
 	[ -s "$deb" ] || die "missing .deb for $pkg (run 'make fetch')"
 	d="$EX/$pkg"; mkdir -p "$d"
 	( cd "$d" && ar x "$deb" && \
-	  { tar --zstd -xf data.tar.zst 2>/dev/null || tar -xf data.tar.xz 2>/dev/null || \
-	    tar -xf data.tar.gz 2>/dev/null || die "cannot extract data.tar for $pkg"; } )
+	  { tar --zstd -xf data.tar.zst 2>/dev/null || tar -I zstd -xf data.tar.zst 2>/dev/null || \
+	    tar -xf data.tar.xz 2>/dev/null || tar -xf data.tar.gz 2>/dev/null || \
+	    die "cannot extract data.tar for $pkg"; } )
 	# copyright 収集
 	cp_src="$(find "$d/usr/share/doc" -maxdepth 2 -name copyright 2>/dev/null | head -n1 || true)"
 	[ -n "$cp_src" ] && cp -f "$cp_src" "$LICENSE_DIR/${pkg}.copyright" || log "no copyright in $pkg"

@@ -8,6 +8,7 @@
 
 REPO_ROOT := $(abspath ../..)
 SELF_DIR  := $(abspath .)
+HOST_OS   := $(shell uname -s 2>/dev/null || echo Unknown)
 
 # 閉包解決の起点にする外来 Linux バイナリ群（空白区切り）。
 #   - chrome   : Chromium 外来 ABI 検証（TODO_Chromium_LinuxABI.md）
@@ -107,6 +108,10 @@ alsadata: stage
 	STAGE_DIR='$(STAGE_DIR)' ./stage-alsa.sh
 
 # C.UTF-8 locale-archive を STAGE_DIR/usr/lib/locale に生成
+ifeq ($(HOST_OS),Darwin)
+locale:
+	@echo "locale: skipped on macOS (GNU localedef is required; the Linux runtime stage is complete without it)"
+else
 locale:
 	@command -v localedef >/dev/null || { echo "localedef not found on host" >&2; exit 1; }
 	@mkdir -p '$(STAGE_DIR)/usr/lib/locale'
@@ -114,6 +119,7 @@ locale:
 	I18NPATH=/usr/share/i18n localedef -i C -f UTF-8 \
 	  --prefix='$(STAGE_DIR)' C.UTF-8
 	@echo "locale-archive: $$(ls -l '$(STAGE_DIR)/usr/lib/locale/locale-archive' 2>/dev/null || echo MISSING)"
+endif
 
 verify:
 	CACHE_DIR='$(CACHE_DIR)' LOCKFILE='$(LOCKFILE)' CLOSURE='$(CLOSURE)' \

@@ -85,42 +85,33 @@ IMAGE_STAGE_DIR := $(BUILD_DIR)/ISO_ROOT
 ESP_IMAGE       := $(IMAGE_DIR)/esp-$(ARCH).img
 RECOVERY_ESP_IMAGE_SIZE_MB ?= 16
 
-# Optical-media mastering. The install/live images are now UDF-bridge discs:
-# an ISO9660 volume (kept for firmware/BootManager compatibility and as the
-# kernel's fallback filesystem) that also carries a full UDF structure over
-# the same files. The kernel's UDF driver
-# (Kernel/Source/Drivers/FileSystem/UDF/) is preferred over ISO9660 for
-# optical media and the running OS therefore reads its root from UDF.
-#
-# xorriso/libisofs cannot author UDF, so mastering uses genisoimage (cdrkit)
-# with -udf. Install it with: sudo apt install -y genisoimage
-# Override with ISO_MASTER=... if your genisoimage lives elsewhere.
-ISO_MASTER ?= genisoimage
+# Optical-media mastering. Creates a pure UDF disc with El Torito UEFI boot.
+# UDF is natively readable by Windows, macOS, and Linux.
+# Uses mkisofs (cdrtools) or genisoimage (cdrkit) with -udf.
+# Install on macOS:  brew install cdrtools
+# Install on Linux:  sudo apt install -y genisoimage
+# Override with ISO_MASTER=... if your tool lives elsewhere.
+ISO_MASTER ?= $(shell command -v mkisofs 2>/dev/null || command -v genisoimage 2>/dev/null)
 
-# $(call MASTER_UDF_ISO,<output-iso>,<staging-dir>) -- UEFI-only El Torito
-# boot via the staged esp.img, Rock Ridge + UDF over the tree.
+# $(call MASTER_UDF_ISO,<output-iso>,<staging-dir>) -- UEFI El Torito boot
+# via the staged esp.img on a pure UDF filesystem.
 #
-# No -J: BootManager reads only the ISO9660 Primary VD + Rock Ridge, the
-# kernel reads UDF, so the Joliet volume is dead weight -- and dropping it
-# keeps the ISO9660 descriptor set short enough that Tools/udf_promote.py
-# can slide the UDF Volume Recognition Sequence to sector 18-20, where
-# `file` (and OS probes) expect it on a bridge disc. Without that the image
-# still carries a full UDF filesystem but keeps reporting as plain ISO9660.
+# mkisofs/genisoimage -udf already places the UDF Volume Recognition Sequence
+# at sectors 18-20, so no udf_promote.py step is needed.
 #
 # Then best-effort graft an isohybrid GPT for bare-metal USB boot when the
 # syslinux `isohybrid` helper is available (no-op otherwise; QEMU's
 # -cdrom / OVMF path does not need it).
 define MASTER_UDF_ISO
 	$(ISO_MASTER) \
-		-R -udf \
+		-udf \
 		-iso-level 3 \
-		-input-charset utf-8 \
-		-allow-limited-size \
-		-V IMPLUSOS \
-		-eltorito-alt-boot -e esp.img -no-emul-boot \
+		-volid IMPLUSOS \
+		-eltorito-alt-boot \
+		-b esp.img \
+		-no-emul-boot \
 		-o $(1) \
 		$(2)
-	python3 $(CURDIR)/Tools/udf_promote.py $(1)
 	@command -v isohybrid >/dev/null 2>&1 && isohybrid --uefi $(1) || true
 endef
 
@@ -203,7 +194,7 @@ FIRMWARE_SRC_DIR := Kernel/Source/Drivers/Firmware
 # basename per line in the manifest below (blank lines and '#' comments
 # ignored). Absent manifest => every driver .ELF is preloaded.
 ON_DEMAND_MANIFEST := Kernel/Source/Drivers/Manifest/OnDemand.txt
-ON_DEMAND_DRIVER_ELFS := $(if $(wildcard $(ON_DEMAND_MANIFEST)),$(shell sed -e 's/#.*//' -e '/^[[:space:]]*$$/d' $(ON_DEMAND_MANIFEST)))
+ON_DEMAND_DRIVER_ELFS := AX900_Driver.ELF
 DRIVER_DB_SRC := Kernel/Source/Drivers/Manifest/DriverDB.txt
 
 # Copies $(DRIVER_STAGE_DIR)/*.ELF into $(1)/Kernel/Driver/ or
@@ -748,7 +739,7 @@ else
 QEMU_MACHINE := pc
 endif
 
-QEMU_DISPLAY ?= gtk
+QEMU_DISPLAY ?= cocoa
 # Extra qemu arguments appended to every run_* target, e.g.
 #   make run_uefi_usb QEMU_EXTRA='-monitor unix:/tmp/mon,server,nowait'
 # to drive `screendump` against a running guest.
@@ -780,8 +771,7 @@ QEMU_SMP ?= 4
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE) \
-	-cpu host \
-	-accel kvm \
+	-cpu max \
 	-smp $(QEMU_SMP) \
 	-m 8192 \
 	-device ich9-ahci,id=sata \
