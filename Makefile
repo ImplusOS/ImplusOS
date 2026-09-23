@@ -748,7 +748,7 @@ else
 QEMU_MACHINE := pc
 endif
 
-QEMU_DISPLAY ?= gtk
+QEMU_DISPLAY ?= cocoa
 # Extra qemu arguments appended to every run_* target, e.g.
 #   make run_uefi_usb QEMU_EXTRA='-monitor unix:/tmp/mon,server,nowait'
 # to drive `screendump` against a running guest.
