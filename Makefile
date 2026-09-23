@@ -367,6 +367,8 @@ USERLAND_APP_C_SRCS := \
 	$(LIBRARY_C_SRCS) \
 	Userland/Source/Syscalls.c \
 	Userland/API/Source/XMLParser.c \
+	Userland/API/Source/Material.c \
+	Userland/API/Source/MaterialTheme.c \
 	Userland/API/Source/ImUI.c \
 	Userland/API/Source/XSession.c \
 	Userland/Service/Source/service_client.c \
@@ -435,10 +437,12 @@ vendor_libs:
 # needs network; afterwards Vendor/LinuxRuntime/cache/ satisfies it offline.
 # gtkdata: GTK3 demo runtime data;  xorgdata: Xorg + Mesa-DRI + xkb + fonts +
 # xorg.conf for the Doom (Method A) X path;  fastfetchdata: /usr/bin/fastfetch
-# plus its presets.
+# plus its presets;  desktopdata: the .desktop entries and application icons
+# every staged .deb carries, which is what the window manager builds its
+# application list from.
 linux_runtime_stage:
 ifeq ($(ARCH),x86_64)
-	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata alsadata locale \
+	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata alsadata desktopdata locale \
 		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
 		CHROME_BIN="$(abspath Userland/Application/Chromium/Resource/chrome)"
 else
@@ -466,7 +470,8 @@ service_build: vendor_libs $(USERLAND_INIT_OBJS)
 	done
 
 app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/ImUI.o \
-	$(BUILD_DIR)/Userland/API/XSession.o
+	$(BUILD_DIR)/Userland/API/XSession.o $(BUILD_DIR)/Userland/API/Material.o \
+	$(BUILD_DIR)/Userland/API/MaterialTheme.o
 	@set -e; \
 	for dir in $(APP_DIRS); do \
 			$(MAKE) -C $$dir \

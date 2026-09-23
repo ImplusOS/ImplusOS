@@ -80,6 +80,22 @@ if [ -n "$FDEB" ]; then
 else
 	log "WARN: fonts-dejavu-core not in cache; Pango will have no font"
 fi
+
+# 日本語（CJK）グリフは DejaVu にも X11 misc の bitmap フォントにも無い。
+# スケーラブルな日本語 TTF が無いため Pango は tofu（□）を並べる -- GTK 製の
+# クラッシュレポーターの文字化けがこれ。ツリー内蔵の Noto Sans JP を
+# /usr/share/fonts へ入れ、下の fonts.conf で lang=ja のフォールバック先にする。
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+JPDIR="$STAGE_DIR/usr/share/fonts/truetype/notojp"
+if [ -f "$REPO_ROOT/BootManager/Source/Resource/Fonts/NotoSansJP-Regular.ttf" ]; then
+	mkdir -p "$JPDIR"
+	install -m 0644 \
+		"$REPO_ROOT/BootManager/Source/Resource/Fonts/NotoSansJP-Regular.ttf" \
+		"$JPDIR/"
+	log "staged NotoSansJP-Regular.ttf -> usr/share/fonts/truetype/notojp"
+else
+	log "WARN: NotoSansJP-Regular.ttf not found in tree; ja text stays tofu"
+fi
 mkdir -p "$STAGE_DIR/etc/fonts"
 cat > "$STAGE_DIR/etc/fonts/fonts.conf" <<'XML'
 <?xml version="1.0"?>
@@ -94,6 +110,14 @@ cat > "$STAGE_DIR/etc/fonts/fonts.conf" <<'XML'
   <match target="pattern"><test name="family"><string>serif</string></test>
     <edit name="family" mode="prepend" binding="strong"><string>DejaVu Serif</string></edit></match>
   <match target="pattern"><edit name="family" mode="append" binding="weak"><string>DejaVu Sans</string></edit></match>
+  <!-- 日本語テキスト: 最優先で Noto Sans JP を当てる（DejaVu に CJK 無し）。 -->
+  <match target="pattern"><test name="lang" qual="any"><string>ja</string></test>
+    <edit name="family" mode="prepend" binding="strong"><string>Noto Sans JP</string></edit></match>
+  <alias><family>sans-serif</family><prefer><family>Noto Sans JP</family><family>DejaVu Sans</family></prefer></alias>
+  <alias><family>serif</family><prefer><family>Noto Sans JP</family><family>DejaVu Serif</family></prefer></alias>
+  <alias><family>monospace</family><prefer><family>DejaVu Sans Mono</family><family>Noto Sans JP</family></prefer></alias>
+  <!-- lang を立てない呼び出しでもフォールバック列に日本語 TTF を並べる。 -->
+  <match target="pattern"><edit name="family" mode="append" binding="weak"><string>Noto Sans JP</string></edit></match>
 </fontconfig>
 XML
 log "wrote /etc/fonts/fonts.conf"

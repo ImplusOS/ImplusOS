@@ -250,11 +250,22 @@ once to produce the EFI binaries).
 - **Applications** (`Userland/Application/`, reverse-domain names): the window
   manager (`com.ImplusOS.windowmanager` — compositor, decorations, scene graph,
   theme, IPC input routing), the notification daemon (`com.ImplusOS.sysnotif`),
-  the login screen (`com.ImplusOS.loginui`), `BusyBox`, and `XdgOpen` (staged
+  the login screen (`com.ImplusOS.loginui`), `BusyBox`, `XdgOpen` (staged
   as `/usr/bin/xdg-open`; hands files Linux programs open — e.g. Chromium
-  downloads — to the editor or file manager). Each has its own
-  `Makefile` that pulls in `Userland/Source/AppCommon.mk`. The window manager's
-  launcher list is `.../windowmanager/Resource/Apps/apps.list`.
+  downloads — to the editor or file manager), and `com.ImplusOS.linuxapp` (the
+  generic X11 host: takes `[Title|][WxH|]/usr/bin/prog --flags` and runs any
+  foreign program through `Userland/API/XSession.c`). Each has its own
+  `Makefile` that pulls in `Userland/Source/AppCommon.mk`.
+- **Application list**: the window manager builds the Start menu and the
+  desktop icons from freedesktop.org desktop entries — `/var/System/applications`,
+  `.../windowmanager/Resource/Applications`, `/usr/local/share/applications`,
+  `/usr/share/applications` (what `Vendor/LinuxRuntime` staged out of the Debian
+  packages), in that precedence order, resolved by desktop file ID. So a Linux
+  program reaches the desktop by way of a text file, not a bespoke launcher.
+  Parser: `.../windowmanager/Linux/WM_DesktopEntry.c`; full description in
+  `Docs/Architecture/Userland_Specification.md` §6.
+  `Resource/Apps/apps.list` is now only a fallback for an image whose entries
+  are missing, and `Resource/Apps/desktop.icons` seeds the desktop grid.
 - **Services** (`Userland/Service/`): hot-loadable `.so`s managed by
   `service_client.h` (`service_load`/`service_unload`). `com.ImplusOS.posix` maps
   native syscalls to POSIX (open/read/write/fork/exec/socket/pthread/...);
@@ -292,6 +303,10 @@ arm64 uses different bases (see `Kernel/Arch/arm64/linker/linker.ld`).
 - There is no automated test suite in-tree. `Docs/Architecture/CI_CD.md`
   describes intended GitHub Actions workflows; the `.github/` directory is not
   currently committed.
+- The window manager does have host-compiled unit tests:
+  `make -C Userland/Application/com.ImplusOS.windowmanager test ARCH=x86_64`
+  builds `Tests/*.c` against the host libc with the file and display syscalls
+  stubbed out, and runs them. Worth doing before a QEMU boot.
 
 ## Important Files to Know
 
@@ -309,6 +324,7 @@ arm64 uses different bases (see `Kernel/Arch/arm64/linker/linker.ld`).
 | `Kernel/Core/process/ProcessManager.h` | Process API + capabilities |
 | `Userland/Userland.c` | Init process |
 | `Userland/Service/services.list` | Services loaded at init |
+| `Userland/Application/com.ImplusOS.windowmanager/Linux/WM_DesktopEntry.c` | Desktop-entry + icon-theme reader behind the Start menu |
 | `Userland/Service/com.ImplusOS.posix/README_POSIX.md` | POSIX layer docs |
 | `Kernel/config/arch.mk` | Per-architecture compiler/linker flags |
 | `Docs/Architecture/Boot_Sequence.md` | Canonical boot-phase reference |
