@@ -416,6 +416,7 @@ USERLAND_CXXFLAGS := \
 	-Wall -Wextra -Os -g0 -ffunction-sections -fdata-sections -MMD -MP
 
 USERLAND_LDFLAGS := -T Userland/Source/Userland.ld -nostdlib --build-id=none --gc-sections
+USERLAND_LIBGCC := $(shell $(CC) -print-libgcc-file-name)
 
 all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel vendor_libs app_build service_build driver_stage $(USERLAND_INIT_ELF)
 
@@ -528,7 +529,7 @@ $(BUILD_DIR)/Userland/%.o: Userland/Source/%.cpp
 
 $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 	@mkdir -p $(dir $@)
-	$(LD) $(USERLAND_LDFLAGS) $^ -o $@.tmp
+	$(LD) $(USERLAND_LDFLAGS) $^ $(USERLAND_LIBGCC) -o $@.tmp
 	$(OBJCOPY) --strip-all -R .note -R .comment $@.tmp $@
 	@rm -f $@.tmp
 
@@ -539,7 +540,7 @@ $(BUILD_DIR)/RecoveryEnvironment/%.o: $(RECOVERY_DIR)/%.c
 
 $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	@mkdir -p $(dir $@)
-	$(LD) $(USERLAND_LDFLAGS) $^ -o $@.tmp
+	$(LD) $(USERLAND_LDFLAGS) $^ $(USERLAND_LIBGCC) -o $@.tmp
 	$(OBJCOPY) --strip-all -R .note -R .comment $@.tmp $@
 	@rm -f $@.tmp
 
@@ -735,8 +736,10 @@ image_livecd: all linux_runtime_stage
 
 ifeq ($(ARCH),arm64)
 QEMU_MACHINE := virt
+QEMU_DISPLAY_DEVICE := -device virtio-gpu-pci
 else
 QEMU_MACHINE := pc
+QEMU_DISPLAY_DEVICE :=
 endif
 
 QEMU_DISPLAY ?= cocoa
@@ -778,7 +781,9 @@ QEMU_COMMON := \
 	$(QEMU_INPUT_DEVICES) \
 	$(QEMU_NET_DEVICES) \
 	$(QEMU_AUDIO_DEVICES) \
+	$(QEMU_DISPLAY_DEVICE) \
 	-display $(QEMU_DISPLAY) \
+	-device ramfb \
 	-serial stdio \
 	$(QEMU_EXTRA)
 	
