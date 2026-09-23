@@ -371,6 +371,7 @@ USERLAND_APP_C_SRCS := \
 	Userland/API/Source/MaterialTheme.c \
 	Userland/API/Source/ImUI.c \
 	Userland/API/Source/XSession.c \
+	Userland/API/Source/LinuxEnv.c \
 	Userland/Service/Source/service_client.c \
 	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c
 
@@ -471,7 +472,8 @@ service_build: vendor_libs $(USERLAND_INIT_OBJS)
 
 app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/ImUI.o \
 	$(BUILD_DIR)/Userland/API/XSession.o $(BUILD_DIR)/Userland/API/Material.o \
-	$(BUILD_DIR)/Userland/API/MaterialTheme.o
+	$(BUILD_DIR)/Userland/API/MaterialTheme.o \
+	$(BUILD_DIR)/Userland/API/LinuxEnv.o
 	@set -e; \
 	for dir in $(APP_DIRS); do \
 			$(MAKE) -C $$dir \
@@ -748,7 +750,7 @@ else
 QEMU_MACHINE := pc
 endif
 
-QEMU_DISPLAY ?= cocoa
+QEMU_DISPLAY ?= gtk
 # Extra qemu arguments appended to every run_* target, e.g.
 #   make run_uefi_usb QEMU_EXTRA='-monitor unix:/tmp/mon,server,nowait'
 # to drive `screendump` against a running guest.
