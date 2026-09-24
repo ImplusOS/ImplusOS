@@ -509,11 +509,11 @@ $(BUILD_DIR)/Userland/API/%.o: Userland/API/Source/%.c
 
 $(BUILD_DIR)/Userland/Service/com.ImplusOS.netstack/%.o: Userland/Service/com.ImplusOS.netstack/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+	$(CC) $(USERLAND_CFLAGS) -fPIC -c $< -o $@
 
 $(BUILD_DIR)/Userland/Service/com.ImplusOS.posix/%.o: Userland/Service/com.ImplusOS.posix/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(USERLAND_CFLAGS) -c $< -o $@
+	$(CC) $(USERLAND_CFLAGS) -fPIC -c $< -o $@
 
 $(BUILD_DIR)/Userland/libc/I_libc/%.o: libc/I_libc/Source/%.c
 	@mkdir -p $(dir $@)

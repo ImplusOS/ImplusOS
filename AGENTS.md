@@ -10,10 +10,11 @@ C library, and userland applications that reach the kernel through an
 architecture-specific trap ABI.
 
 - **Architectures**: `x86_64` (Long Mode) — primary, regularly booted in QEMU —
-  and `arm64` (AArch64) — in progress. The default build target is `x86_64`;
-  pass `ARCH=arm64` to target AArch64. The arm64 kernel link is currently
-  blocked by a pre-existing freestanding-libc issue (`__trunctfdf2` from
-  `vsnprintf`'s `long double` path); see `Docs/Others/TODO_OS_Refactor.md` §8.
+  and `arm64` (AArch64) — builds successfully. The default build target is
+  `x86_64`; pass `ARCH=arm64` to target AArch64. The arm64 service `.so`
+  build was fixed by adding `-fPIC` to the Makefile pattern rules for
+  `com.ImplusOS.posix` and `com.ImplusOS.netstack` (2026-08-30).
+  QEMU arm64 boot verification is still pending.
 - **Boot paths**: UEFI (both architectures, EDK2-based loader + boot manager)
   and legacy BIOS (x86_64 only).
 - Development is expected to happen in an interactive Linux environment; builds

@@ -22,7 +22,7 @@ Most of the code has been written with the help of AI coding tools.
 
 | Component | Description |
 |---|---|
-| **Target** | x86-64 (Long Mode); arm64 (AArch64), in progress |
+| **Target** | x86-64 (Long Mode); arm64 (AArch64), builds successfully |
 | **Boot** | UEFI via EDK2 (both arches) → boot manager → ELF64 kernel; legacy BIOS on x86-64 |
 | **Kernel model** | Monolithic, with loadable driver modules (PIC ELF shared objects) |
 | **Memory** | 4-level paging, bitmap PMM, kernel heap, DMA allocator, KASLR |
@@ -152,9 +152,12 @@ The `run_*` targets boot `Image/ImplusOS-$(ARCH)-LiveCD.iso`, so run
 
 - Verified operation is QEMU-centric (x86_64: OVMF; arm64: AAVMF). Physical
   hardware is not guaranteed.
-- The **arm64** kernel does not currently link (`__trunctfdf2` undefined,
-  from `vsnprintf`'s `long double` path — a pre-existing freestanding-libc
-  bug, not arm64-specific logic).
+ - The **arm64** service `.so` build was fixed by adding `-fPIC` to
+   the Makefile pattern rules for `com.ImplusOS.posix` and
+   `com.ImplusOS.netstack` (2026-08-30). The `__trunctfdf2` issue
+   mentioned in earlier notes is not triggered in kernel builds
+   because `stdio.c` is compiled with `-DKERNEL` which excludes the
+   floating-point code paths via `#ifndef KERNEL` guards.
 - exFAT is **read-only**.
 - No automated test suite is committed. `Docs/Architecture/CI_CD.md` describes
   intended GitHub Actions workflows; the `.github/` directory is not currently

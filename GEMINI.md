@@ -6,7 +6,7 @@
 
 ImplusOS is a hobby OS with a monolithic kernel + loadable driver modules and a
 custom freestanding libc. Targets **x86_64** (primary, booted in QEMU) and
-**arm64** (in progress). Boots via UEFI (both arches) or legacy BIOS (x86_64).
+**arm64** (builds successfully). Boots via UEFI (both arches) or legacy BIOS (x86_64).
 Default build arch is `x86_64`; use `ARCH=arm64` for AArch64.
 
 ## Quick Reference
