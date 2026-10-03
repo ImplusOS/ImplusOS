@@ -130,6 +130,30 @@ fi
 	|| log "WARN: egl_vendor.d/50_mesa.json missing; glvnd EGL vendor discovery fails"
 log "staged EGL: $(ls "$STAGE_DIR"/usr/lib/x86_64-linux-gnu/libEGL* 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
 
+# ---- 2b-2. GBM (generic buffer management) --------------------------------
+# libEGL_mesa.so.0 has DT_NEEDED on libgbm.so.1 — without it the Mesa EGL
+# vendor fails to load and glamor's eglGetPlatformDisplay(GBM) returns
+# EGL_NO_DISPLAY ("couldn't get display device").  gbm_create_device()
+# lives here too, so glamor cannot create a GBM device from the DRM fd.
+# The GBM backend (gbm/dri_gbm.so) is shipped in libgbm1, NOT libgl1-mesa-dri.
+GBMDEB="$(deb_of libgbm1)"
+if [ -n "$GBMDEB" ]; then
+	gbmdir="$(extract libgbm1 "$GBMDEB")"
+	copy_tree_real "$gbmdir/usr/lib/x86_64-linux-gnu" "$STAGE_DIR/usr/lib/x86_64-linux-gnu"
+	copy_tree_real "$gbmdir/usr/lib/x86_64-linux-gnu/gbm" "$STAGE_DIR/usr/lib/x86_64-linux-gnu/gbm"
+fi
+[ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/libgbm.so.1" ] \
+	|| log "WARN: libgbm.so.1 missing; glamor EGL display creation will fail"
+[ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/gbm/dri_gbm.so" ] \
+	|| log "WARN: gbm/dri_gbm.so missing; gbm_create_device() will fail"
+# Mesa constructs the backend path as <dir>/%s%s.so — depending on version this
+# is either "dri_gbm.so" or "gbm_dri.so".  Provide both names.
+if [ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/gbm/dri_gbm.so" ] \
+   && [ ! -e "$STAGE_DIR/usr/lib/x86_64-linux-gnu/gbm/gbm_dri.so" ]; then
+	ln -sf dri_gbm.so "$STAGE_DIR/usr/lib/x86_64-linux-gnu/gbm/gbm_dri.so"
+fi
+log "staged GBM: $(ls "$STAGE_DIR"/usr/lib/x86_64-linux-gnu/libgbm* 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ') gbm_backend=$(ls "$STAGE_DIR"/usr/lib/x86_64-linux-gnu/gbm/ 2>/dev/null | tr '\n' ' ')"
+
 # ---- 2c. GLX vendor (glvnd) ---------------------------------------------
 # libGLX.so.0 (glvnd) は実際の GLX 実装を libGLX_<vendor>.so.0 として
 # **dlopen** する（既定 vendor は "mesa"）。dlopen なので DT_NEEDED に現れず、
@@ -160,20 +184,22 @@ fi
 [ -f "$STAGE_DIR/usr/bin/xkbcomp" ] || log "WARN: xkbcomp missing; Xorg will fail XKB compile"
 log "staged xkb-data + xkbcomp"
 
-# ---- 4. X コアフォント -------------------------------------------------
-for p in xfonts-base xfonts-encodings; do
+# ---- 4. X コアフォント + TTF/OTF fonts (incl. Noto CJK) ----------------
+for p in xfonts-base xfonts-encodings fonts-dejavu-core fonts-noto-cjk; do
 	d="$(deb_of "$p")" || true
 	[ -n "${d:-}" ] || { log "WARN: $p not in cache"; continue; }
 	fdir="$(extract "$p" "$d")"
-	copy_tree_real "$fdir/usr/share/fonts/X11" "$STAGE_DIR/usr/share/fonts/X11"
+	copy_tree_real "$fdir/usr/share/fonts" "$STAGE_DIR/usr/share/fonts"
 done
-log "staged X core fonts: $(find "$STAGE_DIR/usr/share/fonts/X11" -maxdepth 1 -type d 2>/dev/null | tr '\n' ' ')"
+log "staged fonts: $(find "$STAGE_DIR/usr/share/fonts" -maxdepth 2 -type d 2>/dev/null | tr '\n' ' ')"
 
 # ---- 5. /etc/X11/xorg.conf -------------------------------------------
 mkdir -p "$STAGE_DIR/etc/X11"
 cat > "$STAGE_DIR/etc/X11/xorg.conf" <<'CONF'
-# ImplusOS 方法A: Xorg を modesetting DDX で /dev/dri/card0（カーネル KMS shim）に固定。
-# udev/logind/VT は無いので入力自動追加を切り、レガシー modeset で動かす。
+# ImplusOS 方法A+: Xorg を modesetting DDX + glamor で /dev/dri/card0 に固定。
+# atomic modesetting と DRI3 を有効化し、glamor で GPU アクセラレーションを有効化。
+# udev/logind/VT は無いので入力自動追加を切り、card0 は表示専用、renderD128 は Mesa 用。
+
 Section "ServerFlags"
     Option "AutoAddDevices" "false"
     Option "AutoAddGPU"     "false"
@@ -183,8 +209,6 @@ EndSection
 
 Section "Module"
     Load "glx"
-    Disable "dri"
-    Disable "dri2"
 EndSection
 
 Section "InputDevice"
@@ -212,10 +236,36 @@ Section "Device"
     Identifier  "kms0"
     Driver      "modesetting"
     Option      "kmsdev"           "/dev/dri/card0"
-    Option      "ShadowFB"         "true"
-    Option      "Atomic"           "false"
-    Option      "AccelMethod"      "none"
-    Option      "PageFlip"         "false"
+    Option      "ShadowFB"         "false"
+    Option      "Atomic"           "true"
+    Option      "AccelMethod"      "glamor"
+    Option      "PageFlip"         "true"
+    Option      "DRI3"             "true"
+EndSection
+
+# Declared second GPU device -- required by xorg-server's glamor gate.
+#
+# glamor_egl_init() refuses to start when GL_RENDERER starts with "llvmpipe"
+# (or contains "softpipe") *unless* scrn->confScreen->num_gpu_devices > 0;
+# it only then prints "Allowing glamor on llvmpipe for PRIME".  Mesa's only
+# renderer behind our kms_swrast GL stack IS llvmpipe, so without this the
+# server always dies with "Refusing to try glamor on llvmpipe".
+#
+# num_gpu_devices is fed only from Screen-section GPUDevice lines, so this
+# Device section exists to be named there.  Its kmsdev deliberately matches
+# no platform device: xf86platformProbeDev() compares kmsdev against every
+# platform device and `continue`s when none matches, so the entry is counted
+# but never probed -- it is a slot, not a second head.  That keeps the real
+# display on kms0/card0 exactly as before.
+Section "Device"
+    Identifier  "kms1"
+    Driver      "modesetting"
+    Option      "kmsdev"           "/dev/dri/card9"
+    Option      "ShadowFB"         "false"
+    Option      "Atomic"           "true"
+    Option      "AccelMethod"      "glamor"
+    Option      "PageFlip"         "true"
+    Option      "DRI3"             "true"
 EndSection
 
 Section "Monitor"
@@ -226,6 +276,7 @@ EndSection
 Section "Screen"
     Identifier "scr0"
     Device     "kms0"
+    GPUDevice  "kms1"
     Monitor    "mon0"
     DefaultDepth 24
     SubSection "Display"
@@ -241,6 +292,6 @@ Section "ServerLayout"
     InputDevice "mouse0" "CorePointer"
 EndSection
 CONF
-log "wrote /etc/X11/xorg.conf"
+log "wrote /etc/X11/xorg.conf (glamor + DRI3)"
 
 log "done: $STAGE_DIR"

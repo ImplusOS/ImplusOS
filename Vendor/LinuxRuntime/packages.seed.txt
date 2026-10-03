@@ -57,6 +57,9 @@ libpango-1.0-0
 # udev
 libudev1
 
+# CJK font (Noto Sans CJK) for Chinese/Japanese/Korean text rendering
+fonts-noto-cjk
+
 # --- 検証マイルストーン用（M3）。resolve では閉包に含めるが chrome とは無関係 ---
 dash
 

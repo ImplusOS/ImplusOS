@@ -473,7 +473,8 @@ service_build: vendor_libs $(USERLAND_INIT_OBJS)
 app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/ImUI.o \
 	$(BUILD_DIR)/Userland/API/XSession.o $(BUILD_DIR)/Userland/API/Material.o \
 	$(BUILD_DIR)/Userland/API/MaterialTheme.o \
-	$(BUILD_DIR)/Userland/API/LinuxEnv.o
+	$(BUILD_DIR)/Userland/API/LinuxEnv.o \
+	$(BUILD_DIR)/Userland/API/XMLParser.o
 	@set -e; \
 	for dir in $(APP_DIRS); do \
 			$(MAKE) -C $$dir \
@@ -784,7 +785,6 @@ QEMU_COMMON := \
 	-machine $(QEMU_MACHINE) \
 	-cpu host \
 	-accel kvm \
-	-smp $(QEMU_SMP) \
 	-m 8192 \
 	-device ich9-ahci,id=sata \
 	$(QEMU_INPUT_DEVICES) \
