@@ -12,7 +12,7 @@ freestanding-libc issue (see `Docs/Others/TODO_OS_Refactor.md` §8).
 Most of the code has been written with the help of AI coding tools.
 
 <p>
-  <img width="480" alt="ImplusOS running in QEMU and running Linux Chromium" src="Docs/Images/Demonstration/Qemu_10.2.1(Debian).png" />
+  <img width="480" alt="ImplusOS running in QEMU and running Linux Chromium" src="https://github.com/ImplusOS/Docs/blob/9ded82544d5296017aa2e4f82ed364afabc80ea4/Images/Demonstration/Qemu_10.2.1(Debian).png" />
 </p>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
