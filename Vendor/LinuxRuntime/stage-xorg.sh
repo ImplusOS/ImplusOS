@@ -248,15 +248,12 @@ EndSection
 # glamor_egl_init() refuses to start when GL_RENDERER starts with "llvmpipe"
 # (or contains "softpipe") *unless* scrn->confScreen->num_gpu_devices > 0;
 # it only then prints "Allowing glamor on llvmpipe for PRIME".  Mesa's only
-# renderer behind our kms_swrast GL stack IS llvmpipe, so without this the
-# server always dies with "Refusing to try glamor on llvmpipe".
+# renderer behind our GL stack IS llvmpipe, so without this the server refuses
+# to try glamor.
 #
-# num_gpu_devices is fed only from Screen-section GPUDevice lines, so this
-# Device section exists to be named there.  Its kmsdev deliberately matches
-# no platform device: xf86platformProbeDev() compares kmsdev against every
-# platform device and `continue`s when none matches, so the entry is counted
-# but never probed -- it is a slot, not a second head.  That keeps the real
-# display on kms0/card0 exactly as before.
+# num_gpu_devices comes only from Screen-section GPUDevice lines, so this
+# Device section is named there.  Its kmsdev deliberately matches no platform
+# device, so it is counted but never probed -- a slot, not a second head.
 Section "Device"
     Identifier  "kms1"
     Driver      "modesetting"

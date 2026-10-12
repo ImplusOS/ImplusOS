@@ -13,6 +13,29 @@
 libc6
 libgcc-s1
 
+# Wine x86_64 runtime. The optional multimedia/device backends are listed
+# explicitly because Wine dlopens them rather than recording them in the
+# loader's DT_NEEDED closure.
+wine
+wine64
+wine64-preloader
+libwine
+fonts-wine
+libavcodec61
+libavformat61
+libavutil59
+libcapi20-3t64
+libgphoto2-6t64
+libgphoto2-port12t64
+libgstreamer-plugins-base1.0-0
+libgstreamer1.0-0
+libpcap0.8t64
+libpcsclite1
+libusb-1.0-0
+libxkbregistry0
+ocl-icd-libopencl1
+libz-mingw-w64
+
 # GLib / GIO / GObject
 libglib2.0-0t64
 

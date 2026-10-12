@@ -43,10 +43,10 @@ SEED      := $(SELF_DIR)/packages.seed.txt
 # ステージ先（イメージビルドが渡す）。既定は自ツリー内の確認用。
 STAGE_DIR ?= $(REPO_ROOT)/Build/x86_64/LinuxRuntime/stage
 
-.PHONY: all resolve fetch stage gtkdata xorgdata fastfetchdata xtermdata alsadata desktopdata locale verify clean help
+.PHONY: all resolve fetch stage gtkdata xorgdata fastfetchdata xtermdata alsadata desktopdata winedata locale verify clean help
 
 help:
-	@echo "targets: resolve | fetch | stage STAGE_DIR=<d> | gtkdata STAGE_DIR=<d> | xorgdata STAGE_DIR=<d> | fastfetchdata STAGE_DIR=<d> | xtermdata STAGE_DIR=<d> | alsadata STAGE_DIR=<d> | desktopdata STAGE_DIR=<d> | locale STAGE_DIR=<d> | verify | clean"
+	@echo "targets: resolve | fetch | stage STAGE_DIR=<d> | gtkdata STAGE_DIR=<d> | xorgdata STAGE_DIR=<d> | fastfetchdata STAGE_DIR=<d> | xtermdata STAGE_DIR=<d> | alsadata STAGE_DIR=<d> | desktopdata STAGE_DIR=<d> | winedata STAGE_DIR=<d> | locale STAGE_DIR=<d> | verify | clean"
 	@echo "vars:    DEBIAN_SUITE=$(DEBIAN_SUITE) DEBIAN_SNAPSHOT=$(DEBIAN_SNAPSHOT)"
 	@echo "         FOREIGN_BINS=$(FOREIGN_BINS)"
 
@@ -100,6 +100,14 @@ xtermdata: stage
 desktopdata: stage
 	CACHE_DIR='$(CACHE_DIR)' WORK_DIR='$(WORK_DIR)' STAGE_DIR='$(STAGE_DIR)' \
 	  ./stage-desktop.sh
+
+# Wine is not just one ELF: the loader and wineserver live in wine64, while
+# the builtin PE DLLs and the Unix-side drivers live in libwine. Keep these
+# files out of closure.txt (they are not ELF DT_NEEDED libraries) and stage
+# them as a package-owned runtime tree instead.
+winedata: stage
+	CACHE_DIR='$(CACHE_DIR)' WORK_DIR='$(WORK_DIR)' STAGE_DIR='$(STAGE_DIR)' \
+	  ./stage-wine.sh
 
 # alsa-lib の設定（/usr/share/alsa/alsa.conf）を STAGE_DIR へ書き出す。
 # libasound.so.2 自体は閉包（stage）に含まれる。

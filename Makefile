@@ -219,12 +219,11 @@ define STAGE_DRIVER_ELFS
 	done
 endef
 
-# Foreign (Linux-ABI) programs that shell out expect /bin/sh to exist. Xorg's
-# Popen() runs the XKB keymap compiler as `/bin/sh -c "/usr/bin/xkbcomp ..."`
-# and hangs in Pclose() when that exec fails, so the X server never reaches its
-# Dispatch loop. The statically linked busybox already in the tree provides the
-# ash applet when argv[0] is "sh", so stage it under that name. $(1) = image
-# root.
+# Foreign (Linux-ABI) programs that shell out expect /bin/sh to exist. Xorg
+# invokes xkbcomp through `/bin/sh -c`; the statically linked BusyBox is ET_EXEC
+# at 0x400000, which collides with the kernel's low identity map. Use the PIE
+# Debian dash staged by LinuxRuntime as /bin/sh, and keep BusyBox for applets.
+# $(1) = image root.
 BUSYBOX_BIN := Userland/Application/BusyBox/Resource/busybox
 
 # What the Terminal app runs instead of a bare shell. `cat /dev/applog` streams
@@ -261,7 +260,11 @@ define STAGE_POSIX_SHELL
 	if [ -f $(BUSYBOX_BIN) ]; then \
 		mkdir -p "$(1)/bin"; \
 		cp $(BUSYBOX_BIN) "$(1)/bin/busybox"; \
-		cp $(BUSYBOX_BIN) "$(1)/bin/sh"; \
+		if [ -f "$(1)/usr/bin/dash" ]; then \
+			cp "$(1)/usr/bin/dash" "$(1)/bin/sh"; \
+		else \
+			cp $(BUSYBOX_BIN) "$(1)/bin/sh"; \
+		fi; \
 		printf '%s\n' \
 			'#!/bin/sh' \
 			'# ImplusOS terminal session: app launch log + shell.' \
@@ -438,12 +441,13 @@ vendor_libs:
 # needs network; afterwards Vendor/LinuxRuntime/cache/ satisfies it offline.
 # gtkdata: GTK3 demo runtime data;  xorgdata: Xorg + Mesa-DRI + xkb + fonts +
 # xorg.conf for the Doom (Method A) X path;  fastfetchdata: /usr/bin/fastfetch
-# plus its presets;  desktopdata: the .desktop entries and application icons
+# plus its presets;  desktopdata: the .desktop entries and application icons;
+# winedata: the x86_64 Wine loader, wineserver, builtin PE DLLs and fonts.
 # every staged .deb carries, which is what the window manager builds its
 # application list from.
 linux_runtime_stage:
 ifeq ($(ARCH),x86_64)
-	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata alsadata desktopdata locale \
+	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata alsadata desktopdata winedata locale \
 		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
 		CHROME_BIN="$(abspath Userland/Application/Chromium/Resource/chrome)"
 else

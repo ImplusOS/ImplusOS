@@ -34,6 +34,17 @@ while IFS=$'\t' read -r pkg ver url sha; do
 	[ -n "$cp_src" ] && cp -f "$cp_src" "$LICENSE_DIR/${pkg}.copyright" || log "no copyright in $pkg"
 done < "$LOCKFILE"
 
+# Xorg invokes xkbcomp through `/bin/sh -c`. The statically linked BusyBox
+# staged by the top-level image builder is ET_EXEC at 0x400000, where the
+# kernel keeps its low identity map. Stage Debian's PIE shell so the Linux ELF
+# loader can relocate it into the foreign-process address region.
+dash="$EX/dash/usr/bin/dash"
+[ -f "$dash" ] || die "dash binary missing from extracted dash package"
+dash_type="$(readelf -h "$dash" | awk '/Type:/{print $2}')"
+[ "$dash_type" = DYN ] || die "dash must be a PIE (ET_DYN) executable"
+mkdir -p "$STAGE_DIR/usr/bin"
+install -m 0755 "$dash" "$STAGE_DIR/usr/bin/dash"
+
 # ---- 2. closure.txt に従って配置（実体解決コピー） -----------------------
 # 展開ツリーから soname を探す。複数版があれば最初に見つかったものを使う。
 find_real(){ # soname -> 実体ファイルパス
