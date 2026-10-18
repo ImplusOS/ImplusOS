@@ -74,7 +74,7 @@ ImplusOS/
 │   │                          sync, syscall, sysinfo, timer, usercopy, vfs
 │   ├── Debug/                 serial, printf, panic
 │   ├── Drivers/               Audio, Block, Bus/{PCI,USB}, Display, FileSystem/{FAT32,exFAT,
-│   │                          ISO9660}, Input/PS2, NIC/{VirtIONet,I219V,WiFi}, Wi-Fi/AX900,
+│   │                          ISO9660}, Input/PS2, NIC/{VirtIONet,I219V,WiFi}, Wi-Fi/AIC8800,
 │   │                          Firmware, RTC, Serial, Manifest/DriverDB.txt,
 │   │                          Module/ (DriverManager/BusRegistry/DeviceRegistry, *_VFS_Bridge,
 │   │                          NetworkBuiltinDrivers, resident bus gateways), module.mk
@@ -166,7 +166,7 @@ driver_module_deferred → audio_network_init
 - Categories (`device_type_t`): PCI, USB host (OHCI/UHCI/EHCI/XHCI + HID +
   MassStorage), Filesystem (FAT32 rw, exFAT ro, ISO9660 ro), Display
   (ImplusOS_Generic FB, VirtIO-GPU), Input (PS/2), NIC (VirtIO-Net, I219V,
-  AX900 Wi-Fi), Block (AHCI, NVMe, VirtIO-Blk), Audio (AC97, HDA, VirtIO-Sound).
+  AIC8800 Wi-Fi), Block (AHCI, NVMe, VirtIO-Blk), Audio (AC97, HDA, VirtIO-Sound).
 - Kernel-resident glue (bus gateways, per-FS `*_VFS_Bridge.c`,
   `NetworkBuiltinDrivers.c`) lives in `Kernel/Drivers/Module/`.
 - Runtime unload/reload via `driver_manager_unload_module()` /

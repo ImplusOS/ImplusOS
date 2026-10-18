@@ -31,7 +31,7 @@ Most of the code has been written with the help of AI coding tools.
 | **IPC** | Ring-buffer message queues (256 B/message, 128 messages/process); AF_UNIX sockets |
 | **Display** | VirtIO-GPU and generic UEFI-GOP framebuffer, double-buffered |
 | **Input** | PS/2 and USB HID (keyboard + mouse) |
-| **Networking** | Ethernet / ARP / IPv4 / UDP / TCP / ICMP / DHCP (VirtIO-Net, Intel I219-V, AX900 Wi-Fi); userland DNS; TLS primitives in `Library/Crypto` |
+| **Networking** | Ethernet / ARP / IPv4 / UDP / TCP / ICMP / DHCP (VirtIO-Net, Intel I219-V, AIC8800 Wi-Fi); userland DNS; TLS primitives in `Library/Crypto` |
 | **Audio** | AC97, Intel HDA, VirtIO-Sound |
 | **Hardening** | Kernel stack protector, `-fPIE` kernel, boot-time KASLR RNG |
 | **Debug** | COM1 serial (115200), kernel `printf`, panic handler, 19-phase boot profiler |
@@ -122,7 +122,7 @@ The `run_*` targets boot `Image/ImplusOS-$(ARCH)-LiveCD.iso`, so run
   - Block: AHCI, NVMe, VirtIO-Blk.
   - Display: VirtIO-GPU, generic UEFI-GOP framebuffer (double-buffered).
   - Input: PS/2 keyboard and mouse; USB HID.
-  - NIC: VirtIO-Net, Intel I219-V, AX900 Wi-Fi (with firmware blob).
+  - NIC: VirtIO-Net, Intel I219-V, AIC8800D80 Wi-Fi (with firmware blob).
   - Audio: AC97, Intel HDA, VirtIO-Sound.
 - Network stack: Ethernet, ARP, IPv4, UDP, TCP, ICMP, DHCP client; userland
   DNS resolver; a crypto library (`Library/Crypto`) with AES-GCM,

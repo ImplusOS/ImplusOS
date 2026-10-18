@@ -49,7 +49,7 @@ ImplusOS/
 │   │   ├── FileSystem/{FAT32,exFAT,ISO9660}
 │   │   ├── Input/PS2
 │   │   ├── NIC/{VirtIONet,I219V,WiFi}
-│   │   ├── Wi-Fi/AX900          Firmware/AX900  RTC  Serial  ExampleDriver
+│   │   ├── Wi-Fi/AIC8800        Firmware/AIC8800  RTC  Serial  ExampleDriver
 │   │   ├── Manifest/DriverDB.txt  usb/pci VID→on-demand-module map
 │   │   ├── Module/              DriverManager/BusRegistry/DeviceRegistry, *_VFS_Bridge,
 │   │   │                        NetworkBuiltinDrivers, DriverSelect, resident bus gateways

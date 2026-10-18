@@ -5,7 +5,8 @@ SHELL := /bin/bash
 export MTOOLSRC := /dev/null
 
 .PHONY: all kernel app_build service_build driver_build driver_stage recovery_build install_payload \
-        image image_livecd qemu_input_status run_uefi_usb run_uefi_cdrom run_bios_cdrom \
+        image image_livecd qemu_input_status qemu_vars verify_usb \
+        run_uefi_usb run_uefi_cdrom run_bios_cdrom \
         qemu_disks clean edk2_bootloader edk2_bootmanager vendor_libs linux_runtime_stage
 
 # ── Host OS detection ──────────────────────────────────────────────
@@ -107,9 +108,22 @@ ISO_MASTER ?= genisoimage
 # `file` (and OS probes) expect it on a bridge disc. Without that the image
 # still carries a full UDF filesystem but keeps reporting as plain ISO9660.
 #
-# Then best-effort graft an isohybrid GPT for bare-metal USB boot when the
-# syslinux `isohybrid` helper is available (no-op otherwise; QEMU's
-# -cdrom / OVMF path does not need it).
+# Then make the same file bootable from a USB stick (USB_HYBRID=1, default).
+# El Torito only works from optical media: a UEFI firmware booting a stick
+# ignores the boot catalog and looks for a GPT/MBR "EFI System" partition, so
+# a bare ISO written with dd shows up as an empty, unbootable disk. The old
+# `isohybrid --uefi` step could not fix that -- it needs an isolinux boot
+# image, fails on this UEFI-only disc, and the failure was swallowed by
+# `|| true`, so the image silently stayed non-USB-bootable.
+#
+# Tools/iso_hybrid_gpt.py writes a protective MBR + GPT into the ISO system
+# area (sectors 0..33, unused by ISO9660), appends a copy of esp.img as a
+# separate EFI System Partition plus the backup GPT after the volume, and
+# verifies the result (FAT type vs. cluster count, GPT CRCs, no overlaps,
+# El Torito EFI entry). Offsets inside the ISO/UDF volume do not move, so
+# optical boot and the kernel's UDF/ISO9660 view are unchanged. The step is
+# idempotent and fails the build on a broken layout; USB_HYBRID=0 skips it.
+USB_HYBRID ?= 1
 define MASTER_UDF_ISO
 	$(ISO_MASTER) \
 		-R -udf \
@@ -121,7 +135,9 @@ define MASTER_UDF_ISO
 		-o $(1) \
 		$(2)
 	python3 $(CURDIR)/Tools/udf_promote.py $(1)
-	@command -v isohybrid >/dev/null 2>&1 && isohybrid --uefi $(1) || true
+	if [ "$(USB_HYBRID)" = "1" ]; then \
+		python3 -I $(CURDIR)/Tools/iso_hybrid_gpt.py --esp-name esp.img $(1); \
+	fi
 endef
 
 # External Linux runtime (glibc dynamic linker + .so closure + C.UTF-8) staged
@@ -130,7 +146,14 @@ endef
 # Vendor/LinuxRuntime/Makefile; this file only delegates.
 LINUX_RUNTIME_DIR   := Vendor/LinuxRuntime
 LINUX_RUNTIME_STAGE := $(BUILD_DIR)/LinuxRuntime/stage
-LIVECD_ESP_IMAGE_SIZE_MB ?= 16
+# Size of the LiveCD ESP (esp.img inside the ISO, and its copy on the USB
+# GPT). It is formatted FAT32 (mformat -F), and UEFI FAT drivers decide the
+# FAT type from the cluster count: below 65525 clusters (~33 MiB with
+# 512-byte clusters) a "FAT32" volume is read as FAT16 and fails to mount.
+# image_livecd refuses anything under 33 MiB; Tools/iso_hybrid_gpt.py checks
+# the same thing on the finished image. (This variable used to be 16 and
+# unused; image_livecd hard-coded 64, which is kept as the default.)
+LIVECD_ESP_IMAGE_SIZE_MB ?= 64
 
 LIVECD_IMAGE := $(IMAGE_DIR)/ImplusOS-$(ARCH)-LiveCD.iso
 
@@ -179,6 +202,10 @@ endef
 # Docs/Others/TODO_OS_Refactor.md 4./5./6.).
 DRIVER_MAKEFILES := $(shell find Kernel/Source/Drivers -mindepth 2 -name Makefile -print 2>/dev/null | sort)
 DRIVER_DIRS      := $(sort $(patsubst %/,%,$(dir $(DRIVER_MAKEFILES))))
+# Every module Makefile names its output with DRIVER_NAME (module.mk turns it
+# into Build/Modules/$(ARCH)/<name>/<name>.ELF). Collected here so driver_stage
+# below can stage exactly the modules the source tree currently defines.
+DRIVER_MODULE_NAMES := $(shell sed -n 's/^DRIVER_NAME[[:space:]]*:=[[:space:]]*//p' $(DRIVER_MAKEFILES) 2>/dev/null | sort -u)
 DRIVER_BUILD_ROOT := $(BUILD_ROOT)/Modules
 DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
 
@@ -186,7 +213,7 @@ DRIVER_STAGE_DIR  := $(BUILD_DIR)/Kernel/Drivers
 # the boot image (the boot image path convention is kept as-is; only the
 # source-tree location moved -- see Docs/Others/TODO_OS_Refactor.md 4.). Every
 # immediate subdirectory of FIRMWARE_SRC_DIR (e.g.
-# Kernel/Drivers/Firmware/AX900/, see its README.md) is copied over as-is by
+# Kernel/Drivers/Firmware/AIC8800/, see its README.md) is copied over as-is by
 # the STAGE_FIRMWARE*/loops below -- adding a new device's firmware
 # directory needs no Makefile change. Ships empty by default; this only
 # wires up the staging, it does not provide any proprietary bytes.
@@ -285,7 +312,7 @@ define STAGE_XDG_OPEN
 	fi
 endef
 
-# Copies every immediate subdirectory of $(FIRMWARE_SRC_DIR) (e.g. AX900/)
+# Copies every immediate subdirectory of $(FIRMWARE_SRC_DIR) (e.g. AIC8800/)
 # verbatim into $(1)/Kernel/Driver/Firmware/<name>/, creating the
 # destination directory as needed. Generic over whatever subdirectories
 # exist -- no per-device name baked in here.
@@ -568,10 +595,20 @@ driver_build:
 driver_stage: driver_build
 	@mkdir -p $(DRIVER_STAGE_DIR)
 	@find $(DRIVER_STAGE_DIR) -maxdepth 1 -type f -name '*.ELF' -delete
-	@if [ -d $(DRIVER_BUILD_ROOT)/$(ARCH) ]; then \
-		find $(DRIVER_BUILD_ROOT)/$(ARCH) -type f -name '*.ELF' \
-			-exec cp {} $(DRIVER_STAGE_DIR)/ \; ; \
-	fi
+	@# Stage one .ELF per module the source tree defines, by name -- not every
+	@# .ELF found under $(DRIVER_BUILD_ROOT). Nothing ever removes a module's
+	@# output directory, so a module deleted from the tree (as Wi-Fi/AX900 was
+	@# when Wi-Fi/AIC8800 replaced it) would keep its last build staged, and
+	@# the bootloader preloads everything staged here. A module missing from
+	@# the build root is reported instead of silently skipped.
+	@for name in $(DRIVER_MODULE_NAMES); do \
+		elf=$(DRIVER_BUILD_ROOT)/$(ARCH)/$$name/$$name.ELF; \
+		if [ -f "$$elf" ]; then \
+			cp "$$elf" $(DRIVER_STAGE_DIR)/; \
+		else \
+			echo "driver_stage: $$elf missing (module did not build?)"; \
+		fi; \
+	done
 
 install_payload: all linux_runtime_stage
 	@rm -rf $(INSTALL_PAYLOAD_ROOT)
@@ -693,9 +730,12 @@ image: install_payload recovery_build
 	@$(call MASTER_UDF_ISO,$(IMAGE),$(IMAGE_STAGE_DIR))
 
 image_livecd: all linux_runtime_stage
+	@[ "$(LIVECD_ESP_IMAGE_SIZE_MB)" -ge 33 ] || { \
+		echo "LIVECD_ESP_IMAGE_SIZE_MB=$(LIVECD_ESP_IMAGE_SIZE_MB) is too small: a FAT32 ESP needs >= 33 MiB (see comment at LIVECD_ESP_IMAGE_SIZE_MB)"; \
+		exit 1; }
 	@mkdir -p $(IMAGE_DIR)
 	@rm -f $(LIVECD_IMAGE) $(ESP_IMAGE)
-	@dd if=/dev/zero of=$(ESP_IMAGE) bs=1M count=64 status=none
+	@dd if=/dev/zero of=$(ESP_IMAGE) bs=1M count=$(LIVECD_ESP_IMAGE_SIZE_MB) status=none
 	@mformat -i $(ESP_IMAGE) -F -v "IMPLUSOS" ::
 	@mmd -i $(ESP_IMAGE) ::/EFI
 	@mmd -i $(ESP_IMAGE) ::/EFI/BOOT
@@ -749,10 +789,32 @@ image_livecd: all linux_runtime_stage
 	@cp $(DRIVER_DB_SRC) $(IMAGE_STAGE_DIR)/Kernel/Driver/DriverDB.txt
 	@$(call MASTER_UDF_ISO,$(LIVECD_IMAGE),$(IMAGE_STAGE_DIR))
 
+# ?= so the machine type can be switched from the command line or the
+# environment (e.g. QEMU_MACHINE=q35 to mimic a modern PCIe/UEFI PC).
 ifeq ($(ARCH),arm64)
-QEMU_MACHINE := virt
+QEMU_MACHINE ?= virt
 else
-QEMU_MACHINE := pc
+QEMU_MACHINE ?= pc
+endif
+
+# Image the run_* targets boot. Defaults to the LiveCD; to try the install
+# media instead:
+#   make run_uefi_usb QEMU_BOOT_IMAGE=Image/ImplusOS-x86_64-InstallMedia.iso
+QEMU_BOOT_IMAGE ?= $(LIVECD_IMAGE)
+
+# Writable UEFI variable store. Real firmware keeps NVRAM (boot entries,
+# BootNext, anything BootManager stores); with only the read-only OVMF code
+# image mapped, variable writes have nowhere to go and the boot behaves
+# differently from hardware. If an OVMF_VARS template sits next to the
+# Makefile (use the one matching OVMF_CODE_4M.fd) a per-build copy is mapped
+# as the second pflash unit; without a template nothing changes.
+QEMU_VARS_TEMPLATE ?= $(CURDIR)/OVMF_VARS_4M.fd
+QEMU_VARS ?= $(BUILD_DIR)/OVMF_VARS.fd
+QEMU_VARS_DRIVE :=
+ifeq ($(ARCH),x86_64)
+ifneq ($(wildcard $(QEMU_VARS_TEMPLATE)),)
+QEMU_VARS_DRIVE := -drive if=pflash,format=raw,file=$(QEMU_VARS)
+endif
 endif
 
 QEMU_DISPLAY ?= gtk
@@ -799,11 +861,11 @@ QEMU_COMMON := \
 	$(QEMU_EXTRA)
 	
 QEMU_USB := \
-	-drive if=none,id=usbstick,format=raw,file=$(LIVECD_IMAGE) \
+	-drive if=none,id=usbstick,format=raw,file=$(QEMU_BOOT_IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick,bootindex=0
 
 QEMU_DISK := \
-	-drive if=none,id=cdrom0,file=$(LIVECD_IMAGE),media=cdrom,format=raw \
+	-drive if=none,id=cdrom0,file=$(QEMU_BOOT_IMAGE),media=cdrom,format=raw \
 	-device ide-cd,drive=cdrom0,bus=sata.0,bootindex=0
 
 qemu_disks:
@@ -812,29 +874,50 @@ qemu_disks:
 
 qemu_input_status:
 	@set +x; \
-	echo "QEMU boot image: $(LIVECD_IMAGE)"; \
+	echo "QEMU boot image: $(QEMU_BOOT_IMAGE)"; \
 	echo "QEMU input devices: $(QEMU_INPUT_DEVICES)"; \
-	echo "QEMU network devices: $(QEMU_NET_DEVICES)"
+	echo "QEMU network devices: $(QEMU_NET_DEVICES)"; \
+	[ -f "$(QEMU_BOOT_IMAGE)" ] || { echo "Missing $(QEMU_BOOT_IMAGE) -- build it first (make image_livecd)"; exit 1; }
 
-run_uefi_usb: qemu_input_status
+qemu_vars:
+	@if [ -n "$(QEMU_VARS_DRIVE)" ] && [ ! -f "$(QEMU_VARS)" ]; then \
+		mkdir -p "$(dir $(QEMU_VARS))"; \
+		cp "$(QEMU_VARS_TEMPLATE)" "$(QEMU_VARS)"; \
+	fi
+
+# Check that an image will boot as a USB stick under UEFI: protective MBR +
+# GPT (primary and backup, CRCs), an EFI System Partition whose FAT type
+# matches its cluster count and whose contents equal esp.img inside the ISO,
+# and an El Torito EFI entry for optical boot. Exit status 1 on any error.
+verify_usb:
+	@python3 -I $(CURDIR)/Tools/iso_hybrid_gpt.py --verify --esp-name esp.img $(QEMU_BOOT_IMAGE)
+
+# Writing the image to a real stick (double-check the device with lsblk --
+# this destroys everything on it, and the image assumes 512-byte sectors):
+#   sudo dd if=Image/ImplusOS-x86_64-LiveCD.iso of=/dev/sdX bs=4M conv=fsync status=progress
+# Boot it in UEFI mode (CSM/legacy off); Secure Boot must be off or the
+# loaders enrolled, since BOOTX64.EFI is not signed by the firmware vendor.
+# The USB layout is for UEFI only -- there is no BIOS boot path on this image.
+
+run_uefi_usb: qemu_input_status qemu_vars
 	@if [ "$(ARCH)" = "arm64" ]; then \
 		$(QEMU_SYSTEM_AARCH64) $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_USB); \
 	else \
-		$(QEMU_SYSTEM_X86_64) $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_USB); \
+		$(QEMU_SYSTEM_X86_64) $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_VARS_DRIVE) $(QEMU_USB); \
 	fi
 
-run_uefi_cdrom: qemu_input_status
+run_uefi_cdrom: qemu_input_status qemu_vars
 	@if [ "$(ARCH)" = "arm64" ]; then \
 		$(QEMU_SYSTEM_AARCH64) $(QEMU_COMMON) -bios $(QEMU_FIRMWARE) $(QEMU_DISK); \
 	else \
-		$(QEMU_SYSTEM_X86_64) $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_DISK); \
+		$(QEMU_SYSTEM_X86_64) $(QEMU_COMMON) -drive if=pflash,format=raw,readonly=on,file=$(QEMU_FIRMWARE) $(QEMU_VARS_DRIVE) $(QEMU_DISK); \
 	fi
 
 run_bios_cdrom:
 	@if [ "$(ARCH)" = "arm64" ]; then \
 		echo "There is no BIOS on arm64."; \
 	else \
-		qemu-system-x86_64 -cdrom $(LIVECD_IMAGE); \
+		qemu-system-x86_64 -cdrom $(QEMU_BOOT_IMAGE); \
 	fi
 
 clean:
