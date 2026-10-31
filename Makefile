@@ -446,14 +446,14 @@ USERLAND_CFLAGS := \
 	-fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
 	$(USERLAND_ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
-	-Os -g0 -ffunction-sections -fdata-sections -MMD -MP \
+	-O2 -g0 -ffunction-sections -fdata-sections -MMD -MP \
 	$(EXTRA_USERLAND_CFLAGS)
 
 USERLAND_CXXFLAGS := \
 	-ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
 	$(USERLAND_ARCH_CXXFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
 	-fno-exceptions -fno-rtti \
-	-Wall -Wextra -Os -g0 -ffunction-sections -fdata-sections -MMD -MP
+	-Wall -Wextra -O2 -g0 -ffunction-sections -fdata-sections -MMD -MP
 
 USERLAND_LDFLAGS := -T Userland/Source/Userland.ld -nostdlib --build-id=none --gc-sections
 
@@ -852,6 +852,7 @@ QEMU_COMMON := \
 	-cpu host \
 	-accel kvm \
 	-m 8192 \
+	-smp $(QEMU_SMP) \
 	-device ich9-ahci,id=sata \
 	$(QEMU_INPUT_DEVICES) \
 	$(QEMU_NET_DEVICES) \
