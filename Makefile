@@ -859,6 +859,7 @@ QEMU_COMMON := \
 	$(QEMU_AUDIO_DEVICES) \
 	-display $(QEMU_DISPLAY) \
 	-serial stdio \
+	-device virtio-gpu-pci \
 	$(QEMU_EXTRA)
 	
 QEMU_USB := \
