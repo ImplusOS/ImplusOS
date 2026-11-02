@@ -64,13 +64,28 @@ checks both pieces and emits a warning if the virgl DRI module or libdrm is
 missing. `swrast_dri.so` and `kms_swrast_dri.so` remain staged for software
 rendering fallback.
 
-At runtime, Mesa should discover `/dev/dri/renderD128` through libdrm. The
-kernel reports the render node's driver as `virtio_gpu` and publishes the
-matching VirtIO PCI identity in sysfs, separately from the active scanout
-device at `/dev/dri/card0`. This permits an Intel display adapter to remain
-the scanout owner while a VirtIO GPU provides virgl rendering.
+At runtime, Mesa discovers `/dev/dri/renderD128` through libdrm. The
+kernel publishes it as a character device (DRM major 226, render minor 128),
+reports `virtio_gpu` through `DRM_IOCTL_VERSION`, and provides the matching
+VirtIO PCI identity at `/sys/dev/char/226:128`. The primary node
+`/dev/dri/card0` remains the Xorg scanout/KMS device. Xorg is configured for
+DRI3 (`Option "DRI" "3"`); the earlier `Option "DRI3" "true"` spelling is not
+a modesetting-driver option and silently left clients on the DRI2
+`kms_swrast` path. With DRI3, GL clients receive the render-node fd and Mesa
+selects `virtio_gpu_dri.so` instead of selecting from the scanout shim's
+`kms_swrast` name. An Intel display adapter can still own scanout while a
+VirtIO GPU provides virgl rendering.
 
-For diagnostics, launch a GL application with:
+Check that the node and the libdrm sysfs identity are both visible:
+
+```sh
+ls -l /dev/dri
+stat -c '%F %t:%T %n' /dev/dri/renderD128
+cat /sys/dev/char/226:128/uevent
+cat /sys/dev/char/226:128/device/uevent
+```
+
+Then verify Mesa's selected driver and renderer:
 
 ```sh
 LIBGL_DEBUG=verbose MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu glxinfo -B
@@ -78,9 +93,9 @@ LIBGL_DEBUG=verbose MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu glxinfo -B
 
 The override is diagnostic only: do not set it globally on systems without a
 ready VirtIO virgl device. A successful Mesa DRI module load is not itself proof
-that GPU command submission works; verify the renderer string and test an
-actual GL workload. Chromium may independently disable GPU acceleration based
-on its build, sandbox, or GPU blocklist policy.
+that GPU command submission works; verify that the renderer is virgl rather
+than `llvmpipe`, and test an actual GL workload. Chromium may independently
+disable GPU acceleration based on its build, sandbox, or GPU blocklist policy.
 
 The kernel implements the legacy VirtIO-GPU DRM path used by Mesa's virgl
 OpenGL winsys. Blob resources, syncobj/sync_file fences, Venus/Vulkan, and
