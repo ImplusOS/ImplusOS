@@ -101,6 +101,25 @@ for want in swrast_dri.so kms_swrast_dri.so; do
 	[ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/dri/$want" ] \
 		|| log "WARN: dri/$want missing; software GL path may not load"
 done
+
+# The virgl Gallium driver is shipped by libgl1-mesa-dri as
+# virtio_gpu_dri.so. Do not rename virgl_dri.so to this name: the DRI entry
+# points at a driver-specific symbol and a filename alias is not sufficient.
+# The kernel's renderD128 reports driver name "virtio_gpu" and publishes the
+# VirtIO PCI identity, allowing Mesa's normal loader to select this module.
+if [ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/dri/virtio_gpu_dri.so" ]; then
+	log "staged Mesa virgl DRI: virtio_gpu_dri.so"
+else
+	log "WARN: virtio_gpu_dri.so missing; hardware GL will fall back to swrast"
+fi
+
+# libdrm is part of the resolved ELF dependency closure. Mesa needs it to
+# discover renderD128 and issue the virtio_gpu DRM ioctls.
+if [ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/libdrm.so.2" ]; then
+	log "staged libdrm: libdrm.so.2"
+else
+	log "WARN: libdrm.so.2 missing; Mesa DRM device discovery will fail"
+fi
 log "staged DRI: $(ls "$STAGE_DIR/usr/lib/x86_64-linux-gnu/dri" 2>/dev/null | tr '\n' ' ')"
 
 # ---- 2b. EGL (glvnd + Mesa vendor) --------------------------------------
@@ -239,21 +258,15 @@ Section "Device"
     Option      "ShadowFB"         "false"
     Option      "Atomic"           "true"
     Option      "AccelMethod"      "glamor"
+    # modesetting's supported PageFlip option uses the DRI3 page-flip path.
+    # DRI3 itself is initialized by Xorg; there is no DRI3 boolean DDX option.
     Option      "PageFlip"         "true"
-    Option      "DRI3"             "true"
 EndSection
 
-# Declared second GPU device -- required by xorg-server's glamor gate.
-#
-# glamor_egl_init() refuses to start when GL_RENDERER starts with "llvmpipe"
-# (or contains "softpipe") *unless* scrn->confScreen->num_gpu_devices > 0;
-# it only then prints "Allowing glamor on llvmpipe for PRIME".  Mesa's only
-# renderer behind our GL stack IS llvmpipe, so without this the server refuses
-# to try glamor.
-#
-# num_gpu_devices comes only from Screen-section GPUDevice lines, so this
-# Device section is named there.  Its kmsdev deliberately matches no platform
-# device, so it is counted but never probed -- a slot, not a second head.
+# Keep a non-existent secondary GPU slot only for Xorg's software-glamor
+# fallback. It is NOT the hardware rendering device. DRI3 clients obtain the
+# actual VirtIO renderer from card0's associated /dev/dri/renderD128 node;
+# this placeholder must never be treated as card1 or renderD128.
 Section "Device"
     Identifier  "kms1"
     Driver      "modesetting"
@@ -262,7 +275,6 @@ Section "Device"
     Option      "Atomic"           "true"
     Option      "AccelMethod"      "glamor"
     Option      "PageFlip"         "true"
-    Option      "DRI3"             "true"
 EndSection
 
 Section "Monitor"

@@ -55,6 +55,100 @@ make -C Vendor/LinuxRuntime locale STAGE_DIR=/path/to/payload_root
 make -C Vendor/LinuxRuntime verify
 ```
 
+## Mesa / VirtIO-GPU virgl
+
+The Xorg runtime staging step also copies Mesa's DRI modules from the pinned
+Debian `libgl1-mesa-dri` package, including `virtio_gpu_dri.so`, when present.
+The ordinary ELF dependency closure supplies `libdrm.so.2`; `stage-xorg.sh`
+checks both pieces and emits a warning if the virgl DRI module or libdrm is
+missing. `swrast_dri.so` and `kms_swrast_dri.so` remain staged for software
+rendering fallback.
+
+At runtime, Mesa discovers `/dev/dri/renderD128` through libdrm. The
+kernel publishes it as a character device (DRM major 226, render minor 128),
+reports `virtio_gpu` through `DRM_IOCTL_VERSION`, and provides the matching
+VirtIO PCI identity at `/sys/dev/char/226:128`. The primary node
+`/dev/dri/card0` remains the Xorg scanout/KMS device. The Xorg log already
+shows the DRI3 extension being initialized. The modesetting DDX's supported
+`PageFlip` option selects DRI3 page flipping and defaults to on; this runtime
+keeps it enabled. The old `Option "DRI3" "true"` entry was not a valid
+modesetting-driver option and has been removed. The separate
+`[DRI2] ... kms_swrast` AIGLX provider line in the Xorg log alone does not
+prove which renderer a DRI3 client receives. DRI3 clients need libdrm to map
+the KMS fd to the associated render node; the kernel now publishes the
+`/sys/dev/char/226:0/device/drm` and `/sys/dev/char/226:128/device/drm`
+entries as well as the node's PCI identity. When the render node is handed to
+Mesa, its `virtio_gpu` name selects `virtio_gpu_dri.so`. An Intel display
+adapter can still own scanout while a VirtIO GPU provides virgl rendering.
+
+The host-side QEMU device must expose the virgl backend and a GL-capable
+display. For a GTK display, use:
+
+```sh
+-display gtk,gl=on -device virtio-gpu-gl-pci
+```
+
+Do not use the plain `virtio-gpu` 2D device for this test. The boot log's
+`[vgpu] features` line is the quickest check: device feature bit 0
+(`VIRGL`) must be set in `dev0`, and bit 0 must appear in
+`negotiated`. If `negotiated` is only `0x2`, the guest has EDID but no
+virgl; Mesa will correctly fall back to software rendering.
+
+Check that the node and the libdrm sysfs identity are both visible:
+
+```sh
+ls -l /dev/dri
+stat -c '%F %t:%T %n' /dev/dri/renderD128
+cat /sys/dev/char/226:128/uevent
+cat /sys/dev/char/226:128/device/uevent
+```
+
+Then verify Mesa's selected driver and renderer:
+
+```sh
+LIBGL_DEBUG=verbose MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu glxinfo -B
+```
+
+The override is diagnostic only: do not set it globally on systems without a
+ready VirtIO virgl device. A successful Mesa DRI module load is not itself proof
+that GPU command submission works; verify that the renderer is virgl rather
+than `llvmpipe`, and test an actual GL workload. Chromium may independently
+disable GPU acceleration based on its build, sandbox, or GPU blocklist policy.
+
+The kernel implements the legacy VirtIO-GPU DRM path used by Mesa's virgl
+OpenGL winsys. Blob resources, syncobj/sync_file fences, Venus/Vulkan, and
+gfxstream are not provided by this implementation. See
+[`Kernel/GPU_ACCELERATION.md`](../../Kernel/GPU_ACCELERATION.md) for the
+kernel ABI subset and validation plan.
+
+### Shell / BusyBox startup diagnostics
+
+A message such as `[execve-fail] path=/bin/busybox elf_err=paging map failed`
+with exit status 127 is not evidence that the `ls` or `rm` applets are missing.
+It means the kernel failed while mapping an ELF load segment into the process
+address space. The kernel now caches each process's display-framebuffer mapping
+instead of allocating a new virtual range on every redraw, and emits
+`[elfmap]` / `[pagemap]` diagnostics with the failing address range and
+remaining free-page count. Rebuild the kernel and image before using these
+messages to diagnose a new boot; older images can still exhibit the repeated
+framebuffer mappings shown in earlier logs.
+
+The statically linked BusyBox is an `ET_EXEC` image linked at
+`0x400000`; it is intentionally kept unchanged. On x86_64 the kernel reserves
+the physical identity window `0x00400000-0x00800000` before creating the
+kernel heap. ELF mappings in that same virtual window receive ordinary private
+physical pages per process, and the page-table mapper permits shadowing the
+identity entries only inside this reserved range. This prevents kernel heap
+objects or PMM allocations from being aliased by the fixed-address user image,
+while preserving the identity-map protection everywhere else.
+
+Rebuild the kernel and image to include this reservation and mapping policy.
+The BusyBox file itself does not need to be rebuilt as PIE. Verify that the
+`[pagemap] map leaf failed ... vaddr=0x400000` diagnostic disappears, then
+check that `/bin/sh`, `ls`, and `rm` can all be launched. This path still
+requires runtime validation, including fork/COW and process teardown of the
+private fixed-address pages.
+
 ## ライセンス
 
 同梱する各ライブラリは動的リンク・無改変。glibc は LGPL-2.1+、X client
