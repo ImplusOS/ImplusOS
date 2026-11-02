@@ -81,6 +81,19 @@ entries as well as the node's PCI identity. When the render node is handed to
 Mesa, its `virtio_gpu` name selects `virtio_gpu_dri.so`. An Intel display
 adapter can still own scanout while a VirtIO GPU provides virgl rendering.
 
+The host-side QEMU device must expose the virgl backend and a GL-capable
+display. For a GTK display, use:
+
+```sh
+-display gtk,gl=on -device virtio-gpu-gl-pci
+```
+
+Do not use the plain `virtio-gpu` 2D device for this test. The boot log's
+`[vgpu] features` line is the quickest check: device feature bit 0
+(`VIRGL`) must be set in `dev0`, and bit 0 must appear in
+`negotiated`. If `negotiated` is only `0x2`, the guest has EDID but no
+virgl; Mesa will correctly fall back to software rendering.
+
 Check that the node and the libdrm sysfs identity are both visible:
 
 ```sh
@@ -119,6 +132,25 @@ instead of allocating a new virtual range on every redraw, and emits
 remaining free-page count. Rebuild the kernel and image before using these
 messages to diagnose a new boot; older images can still exhibit the repeated
 framebuffer mappings shown in earlier logs.
+
+The current statically linked BusyBox is an `ET_EXEC` image linked at
+`0x400000`. That address overlaps the kernel's low identity map. The kernel
+intentionally refuses to replace an already-owned identity frame with an
+unrelated physical frame, because doing so would make kernel physical pointers
+resolve to different memory while the process address space is active. A
+failure such as `[pagemap] identity frame busy ... vaddr=0x400000` is therefore
+an address-layout conflict, not physical-memory exhaustion and not a missing
+BusyBox applet. Do not remove the identity-map safety check to work around it.
+
+The durable userspace-side direction is to rebuild BusyBox as PIE
+(`ET_DYN`, e.g. static PIE) and verify its ELF type before staging it:
+
+```sh
+readelf -h Userland/Application/BusyBox/Resource/busybox | grep 'Type:'
+```
+
+The expected type is `DYN`, not `EXEC`. This still needs runtime validation
+with the ImplusOS ELF loader, including any relocations used by the static PIE.
 
 ## ライセンス
 
