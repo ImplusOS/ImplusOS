@@ -133,24 +133,21 @@ remaining free-page count. Rebuild the kernel and image before using these
 messages to diagnose a new boot; older images can still exhibit the repeated
 framebuffer mappings shown in earlier logs.
 
-The current statically linked BusyBox is an `ET_EXEC` image linked at
-`0x400000`. That address overlaps the kernel's low identity map. The kernel
-intentionally refuses to replace an already-owned identity frame with an
-unrelated physical frame, because doing so would make kernel physical pointers
-resolve to different memory while the process address space is active. A
-failure such as `[pagemap] identity frame busy ... vaddr=0x400000` is therefore
-an address-layout conflict, not physical-memory exhaustion and not a missing
-BusyBox applet. Do not remove the identity-map safety check to work around it.
+The statically linked BusyBox is an `ET_EXEC` image linked at
+`0x400000`; it is intentionally kept unchanged. On x86_64 the kernel reserves
+the physical identity window `0x00400000-0x00800000` before creating the
+kernel heap. ELF mappings in that same virtual window receive ordinary private
+physical pages per process, and the page-table mapper permits shadowing the
+identity entries only inside this reserved range. This prevents kernel heap
+objects or PMM allocations from being aliased by the fixed-address user image,
+while preserving the identity-map protection everywhere else.
 
-The durable userspace-side direction is to rebuild BusyBox as PIE
-(`ET_DYN`, e.g. static PIE) and verify its ELF type before staging it:
-
-```sh
-readelf -h Userland/Application/BusyBox/Resource/busybox | grep 'Type:'
-```
-
-The expected type is `DYN`, not `EXEC`. This still needs runtime validation
-with the ImplusOS ELF loader, including any relocations used by the static PIE.
+Rebuild the kernel and image to include this reservation and mapping policy.
+The BusyBox file itself does not need to be rebuilt as PIE. Verify that the
+`[pagemap] map leaf failed ... vaddr=0x400000` diagnostic disappears, then
+check that `/bin/sh`, `ls`, and `rm` can all be launched. This path still
+requires runtime validation, including fork/COW and process teardown of the
+private fixed-address pages.
 
 ## ライセンス
 
