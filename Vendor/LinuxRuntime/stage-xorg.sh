@@ -258,8 +258,9 @@ Section "Device"
     Option      "ShadowFB"         "false"
     Option      "Atomic"           "true"
     Option      "AccelMethod"      "glamor"
+    # modesetting's supported PageFlip option uses the DRI3 page-flip path.
+    # DRI3 itself is initialized by Xorg; there is no DRI3 boolean DDX option.
     Option      "PageFlip"         "true"
-    Option      "DRI"              "3"
 EndSection
 
 # Keep a non-existent secondary GPU slot only for Xorg's software-glamor
