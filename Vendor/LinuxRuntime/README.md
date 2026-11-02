@@ -108,6 +108,18 @@ gfxstream are not provided by this implementation. See
 [`Kernel/GPU_ACCELERATION.md`](../../Kernel/GPU_ACCELERATION.md) for the
 kernel ABI subset and validation plan.
 
+### Shell / BusyBox startup diagnostics
+
+A message such as `[execve-fail] path=/bin/busybox elf_err=paging map failed`
+with exit status 127 is not evidence that the `ls` or `rm` applets are missing.
+It means the kernel failed while mapping an ELF load segment into the process
+address space. The kernel now caches each process's display-framebuffer mapping
+instead of allocating a new virtual range on every redraw, and emits
+`[elfmap]` / `[pagemap]` diagnostics with the failing address range and
+remaining free-page count. Rebuild the kernel and image before using these
+messages to diagnose a new boot; older images can still exhibit the repeated
+framebuffer mappings shown in earlier logs.
+
 ## ライセンス
 
 同梱する各ライブラリは動的リンク・無改変。glibc は LGPL-2.1+、X client
