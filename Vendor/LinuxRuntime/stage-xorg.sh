@@ -227,7 +227,6 @@ Section "ServerFlags"
 EndSection
 
 Section "Module"
-    Load "dri3"
     Load "glx"
 EndSection
 
@@ -275,7 +274,6 @@ Section "Device"
     Option      "Atomic"           "true"
     Option      "AccelMethod"      "glamor"
     Option      "PageFlip"         "true"
-    Option      "DRI"              "3"
 EndSection
 
 Section "Monitor"
