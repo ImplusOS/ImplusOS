@@ -55,6 +55,39 @@ make -C Vendor/LinuxRuntime locale STAGE_DIR=/path/to/payload_root
 make -C Vendor/LinuxRuntime verify
 ```
 
+## Mesa / VirtIO-GPU virgl
+
+The Xorg runtime staging step also copies Mesa's DRI modules from the pinned
+Debian `libgl1-mesa-dri` package, including `virtio_gpu_dri.so`, when present.
+The ordinary ELF dependency closure supplies `libdrm.so.2`; `stage-xorg.sh`
+checks both pieces and emits a warning if the virgl DRI module or libdrm is
+missing. `swrast_dri.so` and `kms_swrast_dri.so` remain staged for software
+rendering fallback.
+
+At runtime, Mesa should discover `/dev/dri/renderD128` through libdrm. The
+kernel reports the render node's driver as `virtio_gpu` and publishes the
+matching VirtIO PCI identity in sysfs, separately from the active scanout
+device at `/dev/dri/card0`. This permits an Intel display adapter to remain
+the scanout owner while a VirtIO GPU provides virgl rendering.
+
+For diagnostics, launch a GL application with:
+
+```sh
+LIBGL_DEBUG=verbose MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu glxinfo -B
+```
+
+The override is diagnostic only: do not set it globally on systems without a
+ready VirtIO virgl device. A successful Mesa DRI module load is not itself proof
+that GPU command submission works; verify the renderer string and test an
+actual GL workload. Chromium may independently disable GPU acceleration based
+on its build, sandbox, or GPU blocklist policy.
+
+The kernel implements the legacy VirtIO-GPU DRM path used by Mesa's virgl
+OpenGL winsys. Blob resources, syncobj/sync_file fences, Venus/Vulkan, and
+gfxstream are not provided by this implementation. See
+[`Kernel/GPU_ACCELERATION.md`](../../Kernel/GPU_ACCELERATION.md) for the
+kernel ABI subset and validation plan.
+
 ## ライセンス
 
 同梱する各ライブラリは動的リンク・無改変。glibc は LGPL-2.1+、X client
