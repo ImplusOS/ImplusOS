@@ -101,6 +101,25 @@ for want in swrast_dri.so kms_swrast_dri.so; do
 	[ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/dri/$want" ] \
 		|| log "WARN: dri/$want missing; software GL path may not load"
 done
+
+# The virgl Gallium driver is shipped by libgl1-mesa-dri as
+# virtio_gpu_dri.so. Do not rename virgl_dri.so to this name: the DRI entry
+# points at a driver-specific symbol and a filename alias is not sufficient.
+# The kernel's renderD128 reports driver name "virtio_gpu" and publishes the
+# VirtIO PCI identity, allowing Mesa's normal loader to select this module.
+if [ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/dri/virtio_gpu_dri.so" ]; then
+	log "staged Mesa virgl DRI: virtio_gpu_dri.so"
+else
+	log "WARN: virtio_gpu_dri.so missing; hardware GL will fall back to swrast"
+fi
+
+# libdrm is part of the resolved ELF dependency closure. Mesa needs it to
+# discover renderD128 and issue the virtio_gpu DRM ioctls.
+if [ -f "$STAGE_DIR/usr/lib/x86_64-linux-gnu/libdrm.so.2" ]; then
+	log "staged libdrm: libdrm.so.2"
+else
+	log "WARN: libdrm.so.2 missing; Mesa DRM device discovery will fail"
+fi
 log "staged DRI: $(ls "$STAGE_DIR/usr/lib/x86_64-linux-gnu/dri" 2>/dev/null | tr '\n' ' ')"
 
 # ---- 2b. EGL (glvnd + Mesa vendor) --------------------------------------
