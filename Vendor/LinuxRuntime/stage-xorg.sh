@@ -227,6 +227,7 @@ Section "ServerFlags"
 EndSection
 
 Section "Module"
+    Load "dri3"
     Load "glx"
 EndSection
 
@@ -259,20 +260,13 @@ Section "Device"
     Option      "Atomic"           "true"
     Option      "AccelMethod"      "glamor"
     Option      "PageFlip"         "true"
-    Option      "DRI3"             "true"
+    Option      "DRI"              "3"
 EndSection
 
-# Declared second GPU device -- required by xorg-server's glamor gate.
-#
-# glamor_egl_init() refuses to start when GL_RENDERER starts with "llvmpipe"
-# (or contains "softpipe") *unless* scrn->confScreen->num_gpu_devices > 0;
-# it only then prints "Allowing glamor on llvmpipe for PRIME".  Mesa's only
-# renderer behind our GL stack IS llvmpipe, so without this the server refuses
-# to try glamor.
-#
-# num_gpu_devices comes only from Screen-section GPUDevice lines, so this
-# Device section is named there.  Its kmsdev deliberately matches no platform
-# device, so it is counted but never probed -- a slot, not a second head.
+# Keep a non-existent secondary GPU slot only for Xorg's software-glamor
+# fallback. It is NOT the hardware rendering device. DRI3 clients obtain the
+# actual VirtIO renderer from card0's associated /dev/dri/renderD128 node;
+# this placeholder must never be treated as card1 or renderD128.
 Section "Device"
     Identifier  "kms1"
     Driver      "modesetting"
@@ -281,7 +275,7 @@ Section "Device"
     Option      "Atomic"           "true"
     Option      "AccelMethod"      "glamor"
     Option      "PageFlip"         "true"
-    Option      "DRI3"             "true"
+    Option      "DRI"              "3"
 EndSection
 
 Section "Monitor"
