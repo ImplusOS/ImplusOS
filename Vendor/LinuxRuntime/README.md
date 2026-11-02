@@ -68,13 +68,18 @@ At runtime, Mesa discovers `/dev/dri/renderD128` through libdrm. The
 kernel publishes it as a character device (DRM major 226, render minor 128),
 reports `virtio_gpu` through `DRM_IOCTL_VERSION`, and provides the matching
 VirtIO PCI identity at `/sys/dev/char/226:128`. The primary node
-`/dev/dri/card0` remains the Xorg scanout/KMS device. Xorg is configured for
-DRI3 (`Option "DRI" "3"`); the earlier `Option "DRI3" "true"` spelling is not
-a modesetting-driver option and silently left clients on the DRI2
-`kms_swrast` path. With DRI3, GL clients receive the render-node fd and Mesa
-selects `virtio_gpu_dri.so` instead of selecting from the scanout shim's
-`kms_swrast` name. An Intel display adapter can still own scanout while a
-VirtIO GPU provides virgl rendering.
+`/dev/dri/card0` remains the Xorg scanout/KMS device. The Xorg log already
+shows the DRI3 extension being initialized. The modesetting DDX's supported
+`PageFlip` option selects DRI3 page flipping and defaults to on; this runtime
+keeps it enabled. The old `Option "DRI3" "true"` entry was not a valid
+modesetting-driver option and has been removed. The separate
+`[DRI2] ... kms_swrast` AIGLX provider line in the Xorg log alone does not
+prove which renderer a DRI3 client receives. DRI3 clients need libdrm to map
+the KMS fd to the associated render node; the kernel now publishes the
+`/sys/dev/char/226:0/device/drm` and `/sys/dev/char/226:128/device/drm`
+entries as well as the node's PCI identity. When the render node is handed to
+Mesa, its `virtio_gpu` name selects `virtio_gpu_dri.so`. An Intel display
+adapter can still own scanout while a VirtIO GPU provides virgl rendering.
 
 Check that the node and the libdrm sysfs identity are both visible:
 
