@@ -818,39 +818,27 @@ endif
 endif
 
 QEMU_DISPLAY ?= gtk
-# Extra qemu arguments appended to every run_* target, e.g.
-#   make run_uefi_usb QEMU_EXTRA='-monitor unix:/tmp/mon,server,nowait'
-# to drive `screendump` against a running guest.
-QEMU_EXTRA ?=
+QEMU_EXTRA ?= 
 QEMU_DISK_SIZE ?= 128M
 
 QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
 QEMU_SYSTEM_X86_64 ?= qemu-system-x86_64
 QEMU_INPUT_DEVICES := \
-	-device qemu-xhci,id=xhci \
-	-device usb-kbd,bus=xhci.0 \
-	-device usb-mouse,bus=xhci.0
+    -device qemu-xhci,id=xhci \
+    -device usb-kbd,bus=xhci.0 \
+    -device usb-mouse,bus=xhci.0
 QEMU_NET_DEVICES ?= \
 	-netdev user,id=net0 \
 	-device virtio-net-pci,netdev=net0
-# Intel HD Audio (Kernel/Drivers/Audio/HDA), which Linux programs reach
-# through the kernel's ALSA device (Kernel/Source/Core/sound/ALSA.c). With no
-# -audiodev, QEMU picks the first host backend that works (PulseAudio/WSLg,
-# PipeWire, ALSA, ... or none). Override the whole variable to choose, e.g.
-# '-audiodev wav,id=a,path=out.wav -device ich9-intel-hda
-#  -device hda-duplex,audiodev=a' to record what the guest plays.
 QEMU_AUDIO_DEVICES ?= \
 	-device ich9-intel-hda \
 	-device hda-duplex
-
-# Overridable so a run can be narrowed to one CPU, which is the quickest way
-# to tell an SMP-only fault apart from a structural one.
-QEMU_SMP ?= 4
+QEMU_SMP ?= 2
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE) \
 	-cpu host \
-	-accel kvm \
+	-enable-kvm \
 	-m 8192 \
 	-smp $(QEMU_SMP) \
 	-device ich9-ahci,id=sata \
@@ -859,7 +847,6 @@ QEMU_COMMON := \
 	$(QEMU_AUDIO_DEVICES) \
 	-display $(QEMU_DISPLAY) \
 	-serial stdio \
-	-device virtio-gpu-pci \
 	$(QEMU_EXTRA)
 	
 QEMU_USB := \
@@ -887,19 +874,8 @@ qemu_vars:
 		cp "$(QEMU_VARS_TEMPLATE)" "$(QEMU_VARS)"; \
 	fi
 
-# Check that an image will boot as a USB stick under UEFI: protective MBR +
-# GPT (primary and backup, CRCs), an EFI System Partition whose FAT type
-# matches its cluster count and whose contents equal esp.img inside the ISO,
-# and an El Torito EFI entry for optical boot. Exit status 1 on any error.
 verify_usb:
 	@python3 -I $(CURDIR)/Tools/iso_hybrid_gpt.py --verify --esp-name esp.img $(QEMU_BOOT_IMAGE)
-
-# Writing the image to a real stick (double-check the device with lsblk --
-# this destroys everything on it, and the image assumes 512-byte sectors):
-#   sudo dd if=Image/ImplusOS-x86_64-LiveCD.iso of=/dev/sdX bs=4M conv=fsync status=progress
-# Boot it in UEFI mode (CSM/legacy off); Secure Boot must be off or the
-# loaders enrolled, since BOOTX64.EFI is not signed by the firmware vendor.
-# The USB layout is for UEFI only -- there is no BIOS boot path on this image.
 
 run_uefi_usb: qemu_input_status qemu_vars
 	@if [ "$(ARCH)" = "arm64" ]; then \
