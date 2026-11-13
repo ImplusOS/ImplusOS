@@ -1,0 +1,457 @@
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;042;160t[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x1,0x0)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x1,0x0)/Sata(0x0,0xFFFF,0x0)
+[disp] pick=null
+[pat] power-on MSR 0x277 = [disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+0x0007040600070406
+[pat] entries 1,5 -> WC on bsp; this cpu now 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[lapic] timer initial=0x0003D00E hz=0x000000FA
+[IntelGen9] module init
+[PS2] init [vgpu] init enter
+[vgpu] find bus=0x00000000 dev=0x00000004 func=0x00000000 bar4=0x0000007000004000 mem4=0x00000001
+[vgpu] caps common=0xffff800000004000 notify=0xffff800000007000 devcfg=0xffff800000006000
+[vgpu] features dev0=0x0000000030000013 dev1=0x0000000000000101 negotiated=0x0000000000000013
+[vgpu] queue qsize=0x00000100 ring=0x0000000041107000 desc=0x0000000041107000 notify=0xffff800000007000
+[vgpu] submit t=0x00000100 avail=0x00000000 used=0x00000000 resp=0x0000000051adea90
+[vgpu] submit t=0x0000010A avail=0x00000001 used=0x00000001 resp=0x0000000051ade670
+[vgpu] submit t=0x00000101 avail=0x00000002 used=0x00000002 resp=0x0000000051addfa8
+[vgpu] submit t=0x00000106 avail=0x00000003 used=0x00000003 resp=0x0000000051addee8
+[vgpu] submit t=0x00000103 avail=0x00000004 used=0x00000004 resp=0x0000000051addfa8
+[vgpu] apply layout w=0x00000500 h=0x00000320 fb=0x00000000018860e0 bytes=0x003E8000 nmon=0x00000001 mon0fb=0x00000000018860e0
+[vgpu] ready w=0x00000500 h=0x00000320 fb=0x00000000018860e0 bytes=0x003E8000 nmon=0x00000001
+90ms kbd=1 mouse=1
+[vgpu] present rects=0x00000001 fb=0x00000000018860e0 nmon=0x00000001
+[vgpu] submit t=0x00000105 avail=0x00000005 used=0x00000005 resp=0x0000000051ae1310
+[vgpu] submit t=0x00000104 avail=0x00000006 used=0x00000006 resp=0x0000000051ae1310
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[vgpu] present rects=0x00000001 fb=0x00000000018860e0 nmon=0x00000001
+[vgpu] submit t=0x00000105 avail=0x00000007 used=0x00000007 resp=0x0000000051ae0920
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[USB] sweep tried=20 failed=18 441ms done
+[USB] init 713ms (hc-wait 260ms)
+[UDF] mounted, root FE LBA 0x00000103
+[drm] published /dev/dri/card0 (226:0) and /dev/dri/renderD128 (226:128)
+[drm] render backend: virtio_gpu ready
+52:54:00:12:34:56
+[loginui] up 1280x800 users=0 font=1
+[loginui] autologin
+[loginui] session for tester uid=1000
+[loginui] wm spawn -> 3
+[wm] launcher: 18 app(s) from 18 desktop entr(y|ies), 10 running Linux binaries
+[loginui] wm_pid=3
+[autostart] /Userland/Chromium/Chromium.ELF -> 0x00000005
+[xsession] X redirected into a window
+[app] spawn pid=6 path=Xorg args=':0 -config /etc/X11/xorg.conf -nolisten tcp -novtswitch -keeptty +iglx -dumbSched -ac -logfile /dev/tty' at=3350ms
+[     4.241] (WW) Failed to open protocol names file[xsession] Xorg ready after 884 ms
+ /usr/lib/xorg/protocol.txt
+[config] failed to pre-init udev
+[     4.247] [config] failed to pre-init udev
+
+X.Org X Server 1.21.1[elfload] path=[/Userland/Chromium/Resource/chrome  total_ms= 6  read_ms= 1  copy_ms=4.2501 map_ms=]1  eager_mb=
+X0. demand_mb=O3rg X Serv3e2r chunks= 101
+.[app] spawn pid=7 path=chrome args='--ozone-platform=x11 --window-position=0,0 --window-size=1024,680 --user-data-dir=/tmp/chrome-profile  --ignore-gpu-blocklist http://example.com/' at=4266ms
+21.1.16.16
+X Protocol Version 11, Revision 0
+
+X Protocol Version 11, Revision 0
+Current Operating System: Linux implus 6.1.0-implus #1 SMP ImplusOS x86_64
+[     4.285] Current Operating System: Linux implus 6.1.0-implus #1 SMP ImplusOS x86_64
+xorg-server 2:21.1.16-1.3 (https://www.debian.org/support) 
+[     4.296] xorg-server 2:21.1.16-1.3 (https://www.debian.org/support) 
+Current version of pixman: 0.44.0
+[     4.306] Current version of pixman: 0.44.0
+	Before reporting problems, check http://wiki.x.org
+	to make sure that you have the latest version.
+[     4.324] 	Before reporting problems, check http://wiki.x.org
+	to make sure that you have the latest version.
+Markers: [     4.336] Markers: (--) probed, (--) probed, (**) from config file, (**) from config file, (==) default setting,
+	(==) default setting,
+	(++) from command line, (++) from command line, (!!) notice, (!!) notice, (II) informational,
+	(II) informational,
+	(WW) warning, (WW) warning, (EE) error, (EE) error, (NI) not implemented, (NI) not implemented, (??) unknown.
+(??) unknown.
+(++) Log file: "/dev/tty", Time: Fri Nov 13 01:53:53 2026
+[     4.370] (++) Log file: "/dev/tty", Time: Fri Nov 13 01:53:53 2026
+(++) Using config file: "/etc/X11/xorg.conf"
+[     4.400] (++) Using config file: "/etc/X11/xorg.conf"
+[     4.404] (==) ServerLayout "layout0"
+[     4.406] (**) |-->Screen "scr0" (0)
+[     4.409] (**) |   |-->Monitor "mon0"
+[     4.411] (**) |   |-->Device "kms0"
+[     4.414] (**) |   |-->GPUDevice "kms1"
+[     4.416] (**) |-->Input Device "kbd0"
+[     4.419] (**) |-->Input Device "mouse0"
+[     4.424] (**) Option "DontVTSwitch" "true"
+[     4.442] (**) Option "DontZap" "false"
+[     4.453] (**) Option "AutoAddDevices" "false"
+[     4.457] (**) Option "AutoAddGPU" "false"
+[     4.463] (**) Allowing byte-swapped clients
+[     4.466] (**) Not automatically adding devices
+[     4.471] (==) Automatically enabling devices
+[     4.473] (**) Not automatically adding GPU devices
+[     4.476] (==) Automatically binding GPU devices
+[     4.479] (==) Max clients allowed: 256, resource mask: 0x1fffff
+[     4.505] (WW) `fonts.dir' not found (or not valid) in "/usr/share/fonts/X11/misc".
+[     4.510] 	Entry deleted from font path.
+[     4.513] 	(Run 'mkfontdir' on "/usr/share/fonts/X11/misc").
+[     4.517] (WW) The directory "/usr/share/fonts/X11/cyrillic" does not exist.
+[     4.523] 	Entry deleted from font path.
+[     4.527] (WW) The directory "/usr/share/fonts/X11/100dpi/" does not exist.
+[     4.532] 	Entry deleted from font path.
+[     4.536] (WW) The directory "/usr/share/fonts/X11/75dpi/" does not exist.
+[     4.561] 	Entry deleted from font path.
+[     4.570] (WW) The directory "/usr/share/fonts/X11/Type1" does not exist.
+[     4.575] 	Entry deleted from font path.
+[     4.578] (WW) The directory "/usr/share/fonts/X11/100dpi" does not exist.
+[     4.582] 	Entry deleted from font path.
+[     4.587] (WW) The directory "/usr/share/fonts/X11/75dpi" does not exist.
+[     4.590] 	Entry deleted from font path.
+[     4.591] (==) FontPath set to:
+	built-ins
+[     4.594] (==) ModulePath set to "/usr/lib/xorg/modules"
+[     4.599] (II) Loader magic: 0x4000276f00
+[     4.612] (II) Module ABI versions:
+[     4.614] 	X.Org ANSI C Emulation: 0.4
+[     4.619] 	X.Org Video Driver: 25.2
+[     4.620] 	X.Org XInput driver : 24.4
+[     4.623] 	X.Org Server Extension : 10.0
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[     4.629] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[     4.640] (II) no primary bus or device found
+[     4.643] (II) "glx" will be loaded. This was enabled by default and also specified in the config file.
+[     4.659] (II) LoadModule: "glx"
+[     4.671] (II) Loading /usr/lib/xorg/modules/extensions/libglx.so
+[     4.744] (II) Module glx: vendor="X.Org Foundation"
+[     4.748] 	compiled for 1.21.1.16, module version = 1.0.0
+[     4.750] 	ABI class: X.Org Server Extension, version 10.0
+[     4.753] (II) LoadModule: "modesetting"
+[     4.773] (II) Loading /usr/lib/xorg/modules/drivers/modesetting_drv.so
+[     4.785] (II) Module modesetting: vendor="X.Org Foundation"
+[     4.789] 	compiled for 1.21.1.16, module version = 1.21.1
+[     4.794] 	Module class: X.Org Video Driver
+[     4.797] 	ABI class: X.Org Video Driver, version 25.2
+[     4.800] (II) LoadModule: "evdev"
+[     4.807] (II) Loading /usr/lib/xorg/modules/input/evdev_drv.so
+[     4.851] (II) Module evdev: vendor="X.Org Foundation"
+[     4.854] 	compiled for 1.21.1.15, module version = 2.11.0
+[     4.858] 	Module class: X.Org XInput Driver
+[     4.860] 	ABI class: X.Org XInput driver, version 24.4
+[     4.863] (II) modesetting: Driver for Modesetting Kernel Drivers: kms
+[     4.869] (WW) Falling back to old probe method for modesetting
+[     4.873] (II) modeset(0): using /dev/dri/card0
+[     4.891] (EE) open /dev/dri/card9: No such file or directory
+[     4.895] (II) modeset(0): using /dev/dri/card9
+[     4.898] (WW) VGA arbiter: cannot open kernel arbiter, no multi-card support
+[     4.903] (**) modeset(0): Depth 24, (--) framebuffer bpp 32
+[     4.908] (DB) xf86MergeOutputClassOptions unsupported bus type 0
+[     4.913] (**) modeset(0): Option "kmsdev" "/dev/dri/card0"
+[     4.916] (**) modeset(0): Option "ShadowFB" "false"
+[     4.920] (**) modeset(0): Option "AccelMethod" "glamor"
+[     4.932] (**) modeset(0): Option "PageFlip" "true"
+[     4.935] (**) modeset(0): Option "Atomic" "true"
+[     4.940] (==) modeset(0): RGB weight 888
+[     4.943] (==) modeset(0): Default visual is TrueColor
+[     4.947] (II) Loading sub module "glamoregl"
+[     4.949] (II) LoadModule: "glamoregl"
+[     4.956] (II) Loading /usr/lib/xorg/modules/libglamoregl.so
+[     5.019] (II) Module glamoregl: vendor="X.Org Foundation"
+[     5.031] 	compiled for 1.21.1.16, module version = 1.0.1
+[     5.035] 	ABI class: X.Org ANSI C Emulation, version 0.4
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[     6.004] (II) modeset(0): glamor X acceleration enabled on virgl (D3D12 (NVIDIA GeForce RTX 2060))
+[     6.011] (II) modeset(0): glamor initialized
+[     6.016] (==) modeset(0): VariableRefresh: disabled
+[     6.019] (==) modeset(0): AsyncFlipSecondaries: disabled
+[     6.023] (II) modeset(0): Output DVI-I-1 using monitor section mon0
+[     6.027] (II) modeset(0): EDID for output DVI-I-1
+[     6.030] (II) modeset(0): Printing probed modes for output DVI-I-1
+[     6.034] (II) modeset(0): Modeline "1024x680"x57.5   41.78  1024 1032 1040 1056  680 682 684 688 (39.6 kHz P)
+[     6.040] (II) modeset(0): Output DVI-I-1 connected
+[     6.044] (II) modeset(0): Using exact sizes for initial modes
+[     6.047] (II) modeset(0): Output DVI-I-1 using initial mode 1024x680 +0+0
+[     6.051] (==) modeset(0): Using gamma correction (1.0, 1.0, 1.0)
+[     6.054] (==) modeset(0): DPI set to (96, 96)
+[     6.058] (II) Loading sub module "fb"
+[     6.061] (II) LoadModule: "fb"
+[     6.063] (II) Module "fb" already built-in
+[tmpfs] slots in use reached 0x00000020 of 0x00001000
+[tmpfs] slots in use reached 0x00000040 of 0x00001000
+[tmpfs] slots in use reached 0x00000060 of 0x00001000
+[tmpfs] slots in use reached 0x00000080 of 0x00001000
+[tmpfs] slots in use reached 0x000000A0 of 0x00001000
+[exit-cause] status pid=0x00000009 status=0x00000000
+[app] exit pid=9 status=0
+[app] exec pid=10 path=/Userland/Chromium/Resource/chrome_crashpad_handler at=6216ms
+[     6.256] (==) modeset(0): Backing store enabled
+[     6.261] (==) modeset(0): Silken mouse disabled
+[     6.263] (II) modeset(0): Initializing kms c[exit-cause] status pid=ol0xo0r 00ma0p for0 0dep0t9h status= 0x240,0 080 0bp0c0.0
+
+[app] exit pid=9 status=0
+[     6.269] (II) modeset(0): [DRI2] Setup complete
+[     6.274] (II) modeset(0): [DRI2]   DRI driver: virtio_gpu
+[[app] exec pid=11 path=/Userland/Chromium/Resource/chrome_crashpad_handler at=6279ms
+     6.278] (II) modeset(0): [DRI2]   VDPAU driver: virtio_gpu
+[     6.284] (II) Initializing extension Generic Event Extension
+[     6.289] (II) Initializing extension SHAPE
+[     6.291] (II) Initializing extension MIT-SHM
+[     6.294] (II) Initializ[1113/015355.241248:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+ing extension XInputExtension
+[     6.300] (II) Initializing extension XTEST
+[     6.302] (II) Initializing extension BIG-REQUESTS
+[     6.304] (II) Initializing extension SYNC
+[     6.306] (II) Initializing extension XKEYBOARD
+[     6.308] (II) Initializing extension XC-MISC
+[     6.310] (II) Initializing extension SECURITY
+[     6.315] (II) Initializing extension XFIXES
+[     6.318] (II) Initializing extension RENDER
+[     6.319] (II) Initializing extension RANDR
+[     6.323] (II) Initializing extension COMPOSITE
+[     6.326] (II) Initializing extension DAMAGE
+[     6.328] (II) Initializing extension MIT-SCREEN-SAVER
+[     6.331] (II) Initializing extension DOUBLE-BUFFER
+[     6.333] (II) Initializing extension RECORD
+[     6.335] (II) Initializing extension DPMS
+[     6.336] (II) Initializing extension Present
+[     6.339] (II) Initializing extension DRI3
+[     6.350] (II) Initializing extension X-Resource
+[     6.353] (II) Initializing extension XVideo
+[     6.356] (II) Initializing extension XVideo-MotionCompensation
+[     6.359] (II) Initializing extension SELinux
+[     6.361] (II) SELinux: Disabled on system
+[     6.363] (II) Initializing extension GLX
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=[procfs] write_at offset=virtio_gpu version=0.0
+0x[drm-render] VERSION driver=virtio_gpu0 version=0.0
+0000000[drm-render] 3D_FEATURES=1
+00000[drm-render] VERSION driver=0virtio_gpu0 version=0.0
+0[drm-render] VERSION driver=virtio_gpu size= version=0.0
+0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[exit-cause] status pid=0x0000000D status=0x00000000
+[app] exit pid=13 status=0
+[     6.398] (II) AIGLX: Loaded and initialized virtio_gpu
+[     6.402] (II) GLX: Initialized DRI2 GL provider for screen 0
+[     6.404] (II) Initializing extension XFree86-VidModeExtension
+[     6.406] (II) Initializing extension XFree86-DGA
+[     6.408] (II) Initializing extension XFree86-DRI
+[     6.410] (II) Initializing extension DRI2
+[     6.413] (II) modeset(0): Damage tracking initialized
+[     6.415] (II) modeset(0): Setting screen physical size to 270 x 179
+[elfload] path=/Userland/Chromium/Resource/chrome total_ms=13 read_ms=5 copy_ms=0 map_ms=1 eager_mb=0 demand_mb=332 chunks=10
+[app] exec pid=13 path=/Userland/Chromium/Resource/chrome at=6432ms
+[procfs] write_at offset=[lxsys] ENOSYS #0x0x000000000000000000000001B0C00 (0x00000000 size=00x00000000000,0x0000000000000000000000,00x000000000000000040
+0[procfs] write_at offset=00x00000100)
+000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[elfload] path=/Userland/Chromium/Resource/chrome total_ms=21 read_ms=2 copy_ms=0 map_ms=0 eager_mb=0 demand_mb=332 chunks=10
+[app] exec pid=15 path=/Userland/Chromium/Resource/chrome at=6496ms
+[app] exec pid=16 path=/bin/sh at=6501ms
+[app] exec pid=17 path=/usr/bin/xkbcomp at=6832ms
+[exit-cause] status pid=0x00000011 status=0x00000000
+[app] exit pid=17 status=0 lived=643ms
+[lxproc] syscall 0x000000000000003D failed -> 0xFFFFFFFFFFFFFFF6
+[exit-cause] status pid=0x00000010 status=0x00000000
+[app] exit pid=16 status=0 lived=981ms
+[     7.499] (II) Using input driver 'evdev' for 'kbd0'
+[     7.510] (**) Option "CoreKeyboard"
+[     7.512] (**) kbd0: always reports core events
+[     7.513] (**) evdev: kbd0: Device: "/dev/input/event0"
+[     7.518] (--) evdev: kbd0: Vendor 0x1234 Product 0x1
+[     7.521] (--) evdev: kbd0: Found keys
+[     7.524] (II) evdev: kbd0: Configuring as keyboard
+[     7.527] (II) XINPUT: Adding extended input device "kbd0" (type: KEYBOARD, id 6)
+[     7.530] (**) Option "xkb_rules" "evdev"
+[app] exec pid=16 path=/bin/sh at=7574ms
+[app] exec pid=17 path=/usr/bin/xkbcomp at=7774ms
+[exit-cause] status pid=0x00000011 status=0x00000000
+[app] exit pid=17 status=0 lived=687ms
+[lxproc] syscall 0x000000000000003D failed -> 0xFFFFFFFFFFFFFFF6
+[exit-cause] status pid=0x00000010 status=0x00000000
+[app] exit pid=16 status=0 lived=901ms
+[     8.481] (II) Using input driver 'evdev' for 'mouse0'
+[     8.489] (**) Option "CorePointer"
+[     8.490] (**) mouse0: always reports core events
+[     8.492] (**) evdev: mouse0: Device: "/dev/input/event1"
+[     8.494] (--) evdev: mouse0: Vendor 0x1234 Product 0x2
+[     8.497] (**) Option "IgnoreRelativeAxes" "true"
+[     8.499] (**) Option "IgnoreAbsoluteAxes" "false"
+[     8.504] (--) evdev: mouse0: Found 3 mouse buttons
+[     8.507] (--) evdev: mouse0: Found scroll wheel(s)
+[     8.510] (II) evdev: mouse0: Relative axes present but ignored.
+[     8.518] (--) evdev: mouse0: Found absolute axes
+[     8.520] (--) evdev: mouse0: Found x and y absolute axes
+[     8.524] (II) evdev: mouse0: Configuring as mouse
+[     8.532] (II) evdev: mouse0: Adding scrollwheel support
+[     8.535] (**) evdev: mouse0: YAxisMapping: buttons 4 and 5
+[     8.538] (**) evdev: mouse0: EmulateWheelButton: 4, EmulateWheelInertia: 10, EmulateWheelTimeout: 200
+[     8.544] (II) XINPUT: Adding extended input device "mouse0" (type: MOUSE, id 7)
+[     8.551] (II) evdev: mouse0: initialized for relative axes.
+[     8.554] (II) evdev: mouse0: initialized for absolute axes.
+[     8.564] (**) mouse0: (accel) keeping acceleration scheme 1
+[     8.567] (**) mouse0: (accel) acceleration profile 0
+[     8.569] (**) mouse0: (accel) acceleration factor: 2.000
+[     8.571] (**) mouse0: (accel) acceleration threshold: 4
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[     8.578] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[1:1:1113/015359.054533:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[13:13:1113/015359.054986:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[lxsys] ENOSYS #0x000000000000013D (0x0000000000000001,0x0000000000000001,0x0000000000000000)
+[procfs] write_at offset=0x0000000000000000 size=0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[exit-cause] status pid=0x00000010 status=0x00000000
+[app] exit pid=16 status=0
+[7:21:1113/015359.330193:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:26:1113/015359.369692:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/nonexistent'
+[7:26:1113/015359.384976:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[tmpfs] slots in use reached 0x000000C0 of 0x00001000
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:26:1113/015400.708285:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:26:1113/015400.719741:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/nonexistent'
+[7:26:1113/015400.770167:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:23:1113/015400.781983:ERROR:net/base/address_tracker_linux.cc:224] Could not create NETLINK socket: Address family not supported by protocol (97)
+[tmpfs] slots in use reached 0x000000E0 of 0x00001000
+[7:21:1113/015400.990483:ERROR:device/udev_linux/udev_watcher.cc:51] Failed to initialize a udev monitor.
+[7:34:1113/015400.993199:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 36: Input/output error (5)
+[usock] connect FAILED '/nonexistent'
+[usock] (further connect failures silenced)
+[7:7:1113/015401.505808:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/015401.517619:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[elfload] path=/Userland/Chromium/Resource/chrome total_ms=32 read_ms=8 copy_ms=0 map_ms=5 eager_mb=0 demand_mb=332 chunks=10
+[app] exec pid=44 path=/Userland/Chromium/Resource/chrome at=12804ms
+[7:7:1113/015401.752687:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/015401.765492:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1113/015401.781315:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:7:1113/015401.818959:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/015401.838587:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:26:1113/015401.854444:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:26:1113/015401.866278:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1113/015401.868824:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.Properties.GetAll: object_path= /org/freedesktop/UPower/devices/DisplayDevice: unknown error type: 
+[7:7:1113/015401.911404:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/015401.944078:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1113/015401.956882:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/015401.966795:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1113/015401.973037:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm] unhandled ioctl nr=0x000000000000003B type=0x0000000000000064
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[36:36:1113/015405.961591:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 1 times!
+[tmpfs] slots in use reached 0x00000100 of 0x00001000
+[36:36:1113/015406.044268:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 2 times!
+[36:36:1113/015406.081438:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 3 times!
+[44:60:1113/015407.276743:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[    18.595] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    28.605] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    38.616] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    48.647] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    58.670] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)

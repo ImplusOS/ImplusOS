@@ -1,0 +1,704 @@
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;042;160t[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x1,0x0)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x1,0x0)/Sata(0x0,0xFFFF,0x0)
+[disp] pick=null
+[pat] power-on MSR 0x277 = [disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+0x0007040600070406
+[pat] entries 1,5 -> WC on bsp; this cpu now 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[lapic] timer initial=0x0003D013 hz=0x000000FA
+[IntelGen9] module init
+[PS2] init [vgpu] init enter
+[vgpu] find bus=0x00000000 dev=0x00000004 func=0x00000000 bar4=0x0000007000004000 mem4=0x00000001
+[vgpu] caps common=0xffff800000004000 notify=0xffff800000007000 devcfg=0xffff800000006000
+[vgpu] features dev0=0x0000000030000013 dev1=0x0000000000000101 negotiated=0x0000000000000013
+[vgpu] queue qsize=0x00000100 ring=0x000000007003c000 desc=0x000000007003c000 notify=0xffff800000007000
+[vgpu] submit t=0x00000100 avail=0x00000000 used=0x00000000 resp=0x000000002f866510
+[vgpu] submit t=0x0000010A avail=0x00000001 used=0x00000001 resp=0x000000002f8660f0
+[vgpu] submit t=0x00000101 avail=0x00000002 used=0x00000002 resp=0x000000002f865a38
+[vgpu] submit t=0x00000106 avail=0x00000003 used=0x00000003 resp=0x000000002f865978
+[vgpu] submit t=0x00000103 avail=0x00000004 used=0x00000004 resp=0x000000002f865a38
+[vgpu] apply layout w=0x00000500 h=0x00000320 fb=0x00000000307ac0e0 bytes=0x003E8000 nmon=0x00000001 mon0fb=0x00000000307ac0e0
+[vgpu] ready w=0x00000500 h=0x00000320 fb=0x00000000307ac0e0 bytes=0x003E8000 nmon=0x00000001
+272ms kbd=1 mouse=1
+[vgpu] present rects=0x00000001 fb=0x00000000307ac0e0 nmon=0x00000001
+[vgpu] submit t=0x00000105 avail=0x00000005 used=0x00000005 resp=0x000000002f868d90
+[vgpu] submit t=0x00000104 avail=0x00000006 used=0x00000006 resp=0x000000002f868d90
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[vgpu] present rects=0x00000001 fb=0x00000000307ac0e0 nmon=0x00000001
+[vgpu] submit t=0x00000105 avail=0x00000007 used=0x00000007 resp=0x000000002f8683a0
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[USB] sweep tried=20 failed=18 463ms done
+[USB] init 1099ms (hc-wait 611ms)
+[UDF] mounted, root FE LBA 0x00000103
+[drm] published /dev/dri/card0 (226:0) and /dev/dri/renderD128 (226:128)
+[drm] render backend: virtio_gpu ready
+52:54:00:12:34:56
+[loginui] up 1280x800 users=0 font=1
+[loginui] autologin
+[loginui] session for tester uid=1000
+[loginui] wm spawn -> 3
+[wm] launcher: 18 app(s) from 18 desktop entr(y|ies), 10 running Linux binaries
+[loginui] wm_pid=3
+[autostart] /Userland/Chromium/Chromium.ELF -> 0x00000005
+[xsession] X redirected into a window
+[app] spawn pid=6 path=Xorg args=':0 -config /etc/X11/xorg.conf -nolisten tcp -novtswitch -keeptty +iglx -dumbSched -ac -logfile /dev/tty' at=6561ms
+[     7.782] (WW) Failed to open protocol na[xsession] Xorg ready after 1096 ms
+mes file /usr/lib/xorg/pro[chromium] using /Userland/Chromium/Resource/launch.args
+tocol.txt
+[config] failed to pre-init udev
+[     7.811] [config] failed to pre-init ude[elfload] path=v/Userland/Chromium/Resource/chrome
+ total_ms=
+X.Org X Server 1.21.1[     7.827] 
+X.Org X Server 1.21.1.16.16
+X Protocol Version 11, Revision 0
+
+X Protocol Version 11, R1e6vis read_ms=i0on  copy_ms=0
+0Current Operating System: Linux implus 6.1.0-implus #1 SMP ImplusOS x86_64
+ map_ms=5 eager_mb=0 demand_mb=332 chunks=10
+[app] spawn pid=7 path=chrome args='--ozone-platform=x11 --window-position=0,0 --window-size=1024,680 --user-data-dir=/tmp/chrome-profile  --ignore-gpu-blocklist --enable-logging=stderr --v=0 file:///Userland/Chromium/Resource/gputest.html ' at=7855ms
+[     7.844] Current Operating System: Linux implus 6.1.0-implus #1 SMP ImplusOS x86_64
+xorg-server 2:21.1.16-1.3 (https://www.debian.org/support) 
+[     7.955] xorg-server 2:21.1.16-1.3 (https://www.debian.org/support) 
+Current version of pixman: 0.44.0
+[     7.970] Current version of pixman: 0.44.0
+	Before reporting problems, check http://wiki.x.org
+	to make sure that you have the latest version.
+[     7.989] 	Before reporting problems, check http://wiki.x.org
+	to make sure that you have the latest version.
+Markers: [     8.003] Markers: (--) probed, (--) probed, (**) from config file, (**) from config file, (==) default setting,
+	(==) default setting,
+	(++) from command line, (++) from command line, (!!) notice, (!!) notice, (II) informational,
+	(II) informational,
+	(WW) warning, (WW) warning, (EE) error, (EE) error, (NI) not implemented, (NI) not implemented, (??) unknown.
+(??) unknown.
+(++) Log file: "/dev/tty", Time: Fri Nov 13 00:33:36 2026
+[     8.081] (++) Log file: "/dev/tty", Time: Fri Nov 13 00:33:36 2026
+(++) Using config file: "/etc/X11/xorg.conf"
+[     8.157] (++) Using config file: "/etc/X11/xorg.conf"
+[     8.186] (==) ServerLayout "layout0"
+[     8.187] (**) |-->Screen "scr0" (0)
+[     8.189] (**) |   |-->Monitor "mon0"
+[     8.190] (**) |   |-->Device "kms0"
+[     8.202] (**) |   |-->GPUDevice "kms1"
+[     8.204] (**) |-->Input Device "kbd0"
+[     8.205] (**) |-->Input Device "mouse0"
+[     8.207] (**) Option "DontVTSwitch" "true"
+[     8.218] (**) Option "DontZap" "false"
+[     8.219] (**) Option "AutoAddDevices" "false"
+[     8.221] (**) Option "AutoAddGPU" "false"
+[     8.235] (**) Allowing byte-swapped clients
+[     8.248] (**) Not automatically adding devices
+[     8.251] (==) Automatically enabling devices
+[     8.254] (**) Not automatically adding GPU devices
+[     8.287] (==) Automatically binding GPU devices
+[     8.289] (==) Max clients allowed: 256, resource mask: 0x1fffff
+[     8.295] (WW) `fonts.dir' not found (or not valid) in "/usr/share/fonts/X11/misc".
+[     8.308] 	Entry deleted from font path.
+[     8.311] 	(Run 'mkfontdir' on "/usr/share/fonts/X11/misc").
+[     8.326] (WW) The directory "/usr/share/fonts/X11/cyrillic" does not exist.
+[     8.341] 	Entry deleted from font path.
+[     8.354] (WW) The directory "/usr/share/fonts/X11/100dpi/" does not exist.
+[     8.358] 	Entry deleted from font path.
+[     8.369] (WW) The directory "/usr/share/fonts/X11/75dpi/" does not exist.
+[     8.373] 	Entry deleted from font path.
+[     8.399] (WW) The directory "/usr/share/fonts/X11/Type1" does not exist.
+[     8.412] 	Entry deleted from font path.
+[     8.458] (WW) The directory "/usr/share/fonts/X11/100dpi" does not exist.
+[     8.463] 	Entry deleted from font path.
+[     8.475] (WW) The directory "/usr/share/fonts/X11/75dpi" does not exist.
+[     8.478] 	Entry deleted from font path.
+[     8.491] (==) FontPath set to:
+	built-ins
+[     8.493] (==) ModulePath set to "/usr/lib/xorg/modules"
+[     8.495] (II) Loader magic: 0x4000276f00
+[     8.508] (II) Module ABI versions:
+[     8.509] 	X.Org ANSI C Emulation: 0.4
+[     8.511] 	X.Org Video Driver: 25.2
+[     8.521] 	X.Org XInput driver : 24.4
+[     8.523] 	X.Org Server Extension : 10.0
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[     8.537] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[     8.573] (II) no primary bus or device found
+[     8.588] (II) "glx" will be loaded. This was enabled by default and also specified in the config file.
+[     8.592] (II) LoadModule: "glx"
+[     8.606] (II) Loading /usr/lib/xorg/modules/extensions/libglx.so
+[     8.719] (II) Module glx: vendor="X.Org Foundation"
+[     8.721] 	compiled for 1.21.1.16, module version = 1.0.0
+[     8.734] 	ABI class: X.Org Server Extension, version 10.0
+[     8.738] (II) LoadModule: "modesetting"
+[     8.843] (II) Loading /usr/lib/xorg/modules/drivers/modesetting_drv.so
+[     8.907] (II) Module modesetting: vendor="X.Org Foundation"
+[     8.910] 	compiled for 1.21.1.16, module version = 1.21.1
+[     8.923] 	Module class: X.Org Video Driver
+[     8.925] 	ABI class: X.Org Video Driver, version 25.2
+[     8.927] (II) LoadModule: "evdev"
+[     8.940] (II) Loading /usr/lib/xorg/modules/input/evdev_drv.so
+[     9.002] (II) Module evdev: vendor="X.Org Foundation"
+[     9.015] 	compiled for 1.21.1.15, module version = 2.11.0
+[     9.019] 	Module class: X.Org XInput Driver
+[     9.022] 	ABI class: X.Org XInput driver, version 24.4
+[     9.025] (II) modesetting: Driver for Modesetting Kernel Drivers: kms
+[     9.028] (WW) Falling back to old probe method for modesetting
+[drm] render close pid=0x00000006 dumbs=0x00000000
+[     9.042] (II) modeset(0): using /dev/dri/card0
+[     9.057] (EE) open /dev/dri/card9: No such file or directory
+[     9.079] (II) modeset(0): using /dev/dri/card9
+[     9.081] (WW) VGA arbiter: cannot open kernel arbiter, no multi-card support
+[     9.084] (**) modeset(0): Depth 24, (--) framebuffer bpp 32
+[     9.098] (DB) xf86MergeOutputClassOptions unsupported bus type 0
+[     9.100] (**) modeset(0): Option "kmsdev" "/dev/dri/card0"
+[     9.102] (**) modeset(0): Option "ShadowFB" "false"
+[     9.115] (**) modeset(0): Option "AccelMethod" "glamor"
+[     9.118] (**) modeset(0): Option "PageFlip" "true"
+[     9.120] (**) modeset(0): Option "Atomic" "true"
+[     9.137] (==) modeset(0): RGB weight 888
+[     9.151] (==) modeset(0): Default visual is TrueColor
+[     9.154] (II) Loading sub module "glamoregl"
+[     9.156] (II) LoadModule: "glamoregl"
+[     9.282] (II) Loading /usr/lib/xorg/modules/libglamoregl.so
+[     9.474] (II) Module glamoregl: vendor="X.Org Foundation"
+[     9.487] 	compiled for 1.21.1.16, module version = 1.0.1
+[     9.489] 	ABI class: X.Org ANSI C Emulation, version 0.4
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[exit-cause] status pid=0x00000008 status=0x00000000
+[app] exit pid=8 status=0
+[app] exec pid=9 path=/Userland/Chromium/Resource/chrome_crashpad_handler at=11056ms
+[exit-cause] status pid=0x00000008 status=0x00000000
+[app] exit pid=8 status=0
+[app] exec pid=10 path=/Userland/Chromium/Resource/chrome_crashpad_handler at=11358ms
+[1113/003340.062862:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[7:7:1113/003340.213464:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[procfs] write_at offset=0x0000000000000000 size=0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[exit-cause] status pid=0x0000000C status=0x0000libGL: 0000
+Can't open configuration file /etc/drirc: No such file or directory.[app] exit pid=12 status=0
+
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[12:12:1113/003340.749196:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:440] prctl: Operation not supported (95)
+[elfload] path=/Userland/Chromium/Resource/chrome[procfs] write_at offset=0x[lxsys] ENOSYS #00x00000000000000000000001BC (0x0000000000000000,0x0000000000000000,0x000000000 total_ms=03030 read_ms=000 copy_ms= size=0 map_ms=0x000300010 eager_mb=0000000 demand_mb=004
+[procfs] write_at offset=0x000000000000000000001)
+332 chunks=10
+[app] exec pid=12 path=/Userland/Chromium/Resource/chrome at=12207ms
+000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[elfload] path=/Userland/Chromium/Resource/chrome total_ms=94 read_ms=27 copy_ms=0 map_ms=0 eager_mb=0 demand_mb=332 chunks=10
+[app] exec pid=13 path=/Userland/Chromium/Resource/chrome at=12388ms
+libEGL debug: No DRI config supports native format R8  
+libEGL debug: No DRI config supports native format R16 
+libEGL debug: No DRI config supports native format GR88
+libEGL debug: No DRI config supports native format GR32
+libEGL debug: No DRI config supports native format AR15
+libEGL debug: No DRI config supports native format BX24
+libEGL debug: No DRI config supports native format BA24
+libEGL debug: No DRI config supports native format RX24
+libEGL debug: No DRI config supports native format RA24
+libEGL debug: No DRI config supports native format XB24
+libEGL debug: No DRI config supports native format AB24
+libEGL debug: No DRI config supports native format XB30
+libEGL debug: No DRI config supports native format AB30
+libEGL debug: No DRI config supports native format XB48
+libEGL debug: No DRI config supports native format AB48
+[    16.251] (II) modeset(0): glamor X acceleration enabled on virgl (D3D12 (NVIDIA GeForce RTX 2060))
+[    16.255] (II) modeset(0): glamor initialized
+[    16.280] (==) modeset(0): VariableRefresh: disabled
+[    16.282] (==) modeset(0): AsyncFlipSecondaries: disabled
+[    16.296] (II) modeset(0): Output DVI-I-1 using monitor section mon0
+[    16.298] (II) modeset(0): EDID for output DVI-I-1
+[    16.312] (II) modeset(0): Printing probed modes for output DVI-I-1
+[    16.314] (II) modeset(0): Modeline "1024x680"x57.5   41.78  1024 1032 1040 1056  680 682 684 688 (39.6 kHz P)
+[    16.330] (II) modeset(0): Output DVI-I-1 connected
+[    16.344] (II) modeset(0): Using exact sizes for initial modes
+[    16.346] (II) modeset(0): Output DVI-I-1 using initial mode 1024x680 +0+0
+[    16.361] (==) modeset(0): Using gamma correction (1.0, 1.0, 1.0)
+[    16.399] (==) modeset(0): DPI set to (96, 96)
+[    16.401] (II) Loading sub module "fb"
+[    16.402] (II) LoadModule: "fb"
+[    16.404] (II) Module "fb" already built-in
+[tmpfs] slots in use reached 0x00000020 of 0x00001000
+[tmpfs] slots in use reached 0x00000040 of 0x00001000
+[tmpfs] slots in use reached 0x00000060 of 0x00001000
+[tmpfs] slots in use reached 0x00000080 of 0x00001000
+[tmpfs] slots in use reached 0x000000A0 of 0x00001000
+[    19.873] (==) modeset(0): Backing store enabled
+[    19.875] (==) modeset(0): Silken mouse disabled
+[    19.887] (II) modeset(0): Initializing kms color map for depth 24, 8 bpc.
+[    19.901] (II) modeset(0): [DRI2] Setup complete
+[    19.904] (II) modeset(0): [DRI2]   DRI driver: virtio_gpu
+[    19.934] (II) modeset(0): [DRI2]   VDPAU driver: virtio_gpu
+[    19.937] (II) Initializing extension Generic Event Extension
+[    19.950] (II) Initializing extension SHAPE
+[    19.952] (II) Initializing extension MIT-SHM
+[    19.965] (II) Initializing extension XInputExtension
+[    19.967] (II) Initializing extension XTEST
+[    19.980] (II) Initializing extension BIG-REQUESTS
+[    19.982] (II) Initializing extension SYNC
+[    19.984] (II) Initializing extension XKEYBOARD
+[    19.997] (II) Initializing extension XC-MISC
+[    19.999] (II) Initializing extension SECURITY
+[    20.013] (II) Initializing extension XFIXES
+[    20.014] (II) Initializing extension RENDER
+[    20.016] (II) Initializing extension RANDR
+[    20.028] (II) Initializing extension COMPOSITE
+[    20.030] (II) Initializing extension DAMAGE
+[    20.067] (II) Initializing extension MIT-SCREEN-SAVER
+[    20.069] (II) Initializing extension DOUBLE-BUFFER
+[    20.071] (II) Initializing extension RECORD
+[    20.073] (II) Initializing extension DPMS
+[    20.074] (II) Initializing extension Present
+[    20.087] (II) Initializing extension DRI3
+[    20.089] (II) Initializing extension X-Resource
+[    20.103] (II) Initializing extension XVideo
+[    20.105] (II) Initializing extension XVideo-MotionCompensation
+[    20.118] (II) Initializing extension SELinux
+[    20.120] (II) SELinux: Disabled on system
+[    20.134] (II) Initializing extension GLX
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libEGL debug: No DRI config supports native format R8  
+libEGL debug: No DRI config supports native format R16 
+libEGL debug: No DRI config supports native format GR88
+libEGL debug: No DRI config supports native format GR32
+libEGL debug: No DRI config supports native format AR15
+libEGL debug: No DRI config supports native format BX24
+libEGL debug: No DRI config supports native format BA24
+libEGL debug: No DRI config supports native format RX24
+libEGL debug: No DRI config supports native format RA24
+libEGL debug: No DRI config supports native format XB24
+libEGL debug: No DRI config supports native format AB24
+libEGL debug: No DRI config supports native format XB30
+libEGL debug: No DRI config supports native format AB30
+libEGL debug: No DRI config supports native format XB48
+libEGL debug: No DRI config supports native format AB48
+libEGL debug: eglPrintConfigDebug: nothing to print
+libEGL debug: ---------------
+libEGL debug: Configurations:
+libEGL debug: cho       bf lv colourbuffer dp st  ms           vis  cav  bi     renderable           supported
+libEGL debug: sen    id sz  l  r  g  b  a  th cl ns b           id  eat  nd  gl es es2 es3 vg         surfaces
+libEGL debug: ---------------
+libEGL debug:     0x001 32  0 10 10 10  2   0  0  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x002 32  0 10 10 10  2  16  0  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x003 32  0 10 10 10  2  24  0  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x004 32  0 10 10 10  2  24  8  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x005 32  0 10 10 10  2  32  0  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x006 32  0 10 10 10  2   0  0  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x007 32  0 10 10 10  2   0  0  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x008 32  0 10 10 10  2   0  0  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x009 32  0 10 10 10  2  16  0  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00a 32  0 10 10 10  2  16  0  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00b 32  0 10 10 10  2  16  0  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00c 32  0 10 10 10  2  24  0  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00d 32  0 10 10 10  2  24  0  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00e 32  0 10 10 10  2  24  0  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00f 32  0 10 10 10  2  24  8  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x010 32  0 10 10 10  2  24  8  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x011 32  0 10 10 10  2  24  8  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x012 32  0 10 10 10  2  32  0  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x013 32  0 10 10 10  2  32  0  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x014 32  0 10 10 10  2  32  0  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x015 30  0 10 10 10  0   0  0  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x016 30  0 10 10 10  0  16  0  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x017 30  0 10 10 10  0  24  0  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x018 30  0 10 10 10  0  24  8  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x019 30  0 10 10 10  0  32  0  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01a 30  0 10 10 10  0   0  0  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01b 30  0 10 10 10  0   0  0  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01c 30  0 10 10 10  0   0  0  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01d 30  0 10 10 10  0  16  0  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01e 30  0 10 10 10  0  16  0  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01f 30  0 10 10 10  0  16  0  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x020 30  0 10 10 10  0  24  0  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x021 30  0 10 10 10  0  24  0  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x022 30  0 10 10 10  0  24  0  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x023 30  0 10 10 10  0  24  8  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x024 30  0 10 10 10  0  24  8  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x025 30  0 10 10 10  0  24  8  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x026 30  0 10 10 10  0  32  0  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x027 30  0 10 10 10  0  32  0  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x028 30  0 10 10 10  0  32  0  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x029 32  0  8  8  8  8   0  0  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02a 32  0  8  8  8  8  16  0  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02b 32  0  8  8  8  8  24  0  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02c 32  0  8  8  8  8  24  8  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02d 32  0  8  8  8  8  32  0  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02e 32  0  8  8  8  8   0  0  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02f 32  0  8  8  8  8   0  0  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x030 32  0  8  8  8  8   0  0  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x031 32  0  8  8  8  8  16  0  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x032 32  0  8  8  8  8  16  0  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x033 32  0  8  8  8  8  16  0  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x034 32  0  8  8  8  8  24  0  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x035 32  0  8  8  8  8  24  0  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x036 32  0  8  8  8  8  24  0  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x037 32  0  8  8  8  8  24  8  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x038 32  0  8  8  8  8  24  8  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x039 32  0  8  8  8  8  24  8  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x03a 32  0  8  8  8  8  32  0  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x03b 32  0  8  8  8  8  32  0  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x03c 32  0  8  8  8  8  32  0  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x03d 24  0  8  8  8  0   0  0  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x03e 24  0  8  8  8  0  16  0  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x03f 24  0  8  8  8  0  24  0  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x040 24  0  8  8  8  0  24  8  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x041 24  0  8  8  8  0  32  0  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x042 24  0  8  8  8  0   0  0  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x043 24  0  8  8  8  0   0  0  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x044 24  0  8  8  8  0   0  0  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x045 24  0  8  8  8  0  16  0  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x046 24  0  8  8  8  0  16  0  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x047 24  0  8  8  8  0  16  0  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x048 24  0  8  8  8  0  24  0  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x049 24  0  8  8  8  0  24  0  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04a 24  0  8  8  8  0  24  0  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04b 24  0  8  8  8  0  24  8  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04c 24  0  8  8  8  0  24  8  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04d 24  0  8  8  8  0  24  8  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04e 24  0  8  8  8  0  32  0  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04f 24  0  8  8  8  0  32  0  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x050 24  0  8  8  8  0  32  0  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x051 16  0  5  6  5  0   0  0  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x052 16  0  5  6  5  0  16  0  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x053 16  0  5  6  5  0  24  0  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x054 16  0  5  6  5  0  24  8  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x055 16  0  5  6  5  0  32  0  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x056 16  0  5  6  5  0   0  0  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x057 16  0  5  6  5  0   0  0  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x058 16  0  5  6  5  0   0  0  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x059 16  0  5  6  5  0  16  0  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05a 16  0  5  6  5  0  16  0  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05b 16  0  5  6  5  0  16  0  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05c 16  0  5  6  5  0  24  0  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05d 16  0  5  6  5  0  24  0  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05e 16  0  5  6  5  0  24  0  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05f 16  0  5  6  5  0  24  8  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x060 16  0  5  6  5  0  24  8  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x061 16  0  5  6  5  0  24  8  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x062 16  0  5  6  5  0  32  0  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x063 16  0  5  6  5  0  32  0  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x064 16  0  5  6  5  0  32  0  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x065 64  0 16 16 16 16   0  0  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x066 64  0 16 16 16 16  16  0  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x067 64  0 16 16 16 16  24  0  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x068 64  0 16 16 16 16  24  8  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x069 64  0 16 16 16 16  32  0  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06a 64  0 16 16 16 16   0  0  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06b 64  0 16 16 16 16   0  0  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06c 64  0 16 16 16 16   0  0  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06d 64  0 16 16 16 16  16  0  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06e 64  0 16 16 16 16  16  0  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06f 64  0 16 16 16 16  16  0  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x070 64  0 16 16 16 16  24  0  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x071 64  0 16 16 16 16  24  0  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x072 64  0 16 16 16 16  24  0  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x073 64  0 16 16 16 16  24  8  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x074 64  0 16 16 16 16  24  8  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x075 64  0 16 16 16 16  24  8  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x076 64  0 16 16 16 16  32  0  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x077 64  0 16 16 16 16  32  0  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x078 64  0 16 16 16 16  32  0  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x079 48  0 16 16 16  0   0  0  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07a 48  0 16 16 16  0  16  0  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07b 48  0 16 16 16  0  24  0  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07c 48  0 16 16 16  0  24  8  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07d 48  0 16 16 16  0  32  0  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07e 48  0 16 16 16  0   0  0  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07f 48  0 16 16 16  0   0  0  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x080 48  0 16 16 16  0   0  0  8 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x081 48  0 16 16 16  0  16  0  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x082 48  0 16 16 16  0  16  0  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x083 48  0 16 16 16  0  16  0  8 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x084 48  0 16 16 16  0  24  0  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x085 48  0 16 16 16  0  24  0  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x086 48  0 16 16 16  0  24  0  8 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x087 48  0 16 16 16  0  24  8  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x088 48  0 16 16 16  0  24  8  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x089 48  0 16 16 16  0  24  8  8 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x08a 48  0 16 16 16  0  32  0  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x08b 48  0 16 16 16  0  32  0  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x08c 48  0 16 16 16  0  32  0  8 1 0x48344258--            y  y   y   y                win,
+[    23.360] (II) AIGLX: Loaded and initialized virtio_gpu
+[    23.373] (II) GLX: Initialized DRI2 GL provider for screen 0
+[    23.376] (II) Initializing extension XFree86-VidModeExtension
+[    23.390] (II) Initializing extension XFree86-DGA
+[    23.393] (II) Initializing extension XFree86-DRI
+[    23.405] (II) Initializing extension DRI2
+[    23.597] (II) modeset(0): Damage tracking initialized
+[    23.611] (II) modeset(0): Setting screen physical size to 270 x 179
+(EE) glamor0: GL error: GL_OUT_OF_MEMORY in glBufferData
+[    24.051] (EE) glamor0: GL error: GL_OUT_OF_MEMORY in glBufferData
+(EE)[    24.055] (EE)  
+
+(EE)[    24.056] (EE)  Backtrace:
+Backtrace:
+(EE)[    24.229] (EE)  0: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x10000a0b4aa]
+0: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x10000a0b4aa]
+(EE)[    24.355] (EE)  1: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x100009a3292]
+1: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x100009a3292]
+(EE)[    25.818] (EE)  2: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x4100881d05]
+2: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x4100881d05]
+(EE)[    25.854] (EE)  3: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x410087911a]
+3: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x410087911a]
+(EE)[    25.901] (EE)  4: Xorg (?+0x0) [0x400014abeb]
+4: Xorg (?+0x0) [0x400014abeb]
+(EE)[    25.948] (EE)  5: Xorg (?+0x0) [0x40001c0294]
+5: Xorg (?+0x0) [0x40001c0294]
+(EE)[    25.980] (EE)  6: Xorg (?+0x0) [0x40001bff31]
+6: Xorg (?+0x0) [0x40001bff31]
+(EE)[    26.027] (EE)  7: Xorg (?+0x0) [0x40000b9ab3]
+7: Xorg (?+0x0) [0x40000b9ab3]
+(EE)[    26.182] (EE)  8: Xorg (?+0x0) [0x40000934f9]
+8: Xorg (?+0x0) [0x40000934f9]
+(EE)[    26.229] (EE)  9: Xorg (?+0x0) [0x4000068c75]
+9: Xorg (?+0x0) [0x4000068c75]
+(EE)[    26.233] (EE)  10: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179ca8]
+10: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179ca8]
+(EE)[    26.254] (EE)  11: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179d65]
+11: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179d65]
+(EE)[    26.280] (EE)  12: Xorg (?+0x0) [0x4000051641]
+12: Xorg (?+0x0) [0x4000051641]
+(EE)[    26.294] (EE)  
+
+(EE) glamor0: GL error: GL_INVALID_VALUE in glMapBufferRange(offset 0 + length 8 > buffer_size 0)
+[    26.326] (EE) glamor0: GL error: GL_INVALID_VALUE in glMapBufferRange(offset 0 + length 8 > buffer_size 0)
+(EE)[    26.342] (EE)  
+
+(EE)[    26.343] (EE)  Backtrace:
+Backtrace:
+(EE)[    26.357] (EE)  0: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x10000a0b4aa]
+0: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x10000a0b4aa]
+(EE)[    26.413] (EE)  1: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x1000099c2d1]
+1: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x1000099c2d1]
+(EE)[    26.432] (EE)  2: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x100009a6a48]
+2: /usr/lib/x86_64-linux-gnu/libgallium-25.0.7-2.so (?+0x0) [0x100009a6a48]
+(EE)[    26.477] (EE)  3: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x4100881d24]
+3: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x4100881d24]
+(EE)[    26.519] (EE)  4: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x410087911a]
+4: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x410087911a]
+(EE)[    26.581] (EE)  5: Xorg (?+0x0) [0x400014abeb]
+5: Xorg (?+0x0) [0x400014abeb]
+(EE)[    26.596] (EE)  6: Xorg (?+0x0) [0x40001c0294]
+6: Xorg (?+0x0) [0x40001c0294]
+(EE)[    26.673] (EE)  7: Xorg (?+0x0) [0x40001bff31]
+7: Xorg (?+0x0) [0x40001bff31]
+(EE)[    26.738] (EE)  8: Xorg (?+0x0) [0x40000b9ab3]
+8: Xorg (?+0x0) [0x40000b9ab3]
+(EE)[    26.770] (EE)  9: Xorg (?+0x0) [0x40000934f9]
+9: Xorg (?+0x0) [0x40000934f9]
+(EE)[    26.849] (EE)  10: Xorg (?+0x0) [0x4000068c75]
+10: Xorg (?+0x0) [0x4000068c75]
+(EE)[    26.877] (EE)  11: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179ca8]
+11: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179ca8]
+(EE)[    26.915] (EE)  12: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179d65]
+12: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179d65]
+(EE)[    26.966] (EE)  13: Xorg (?+0x0) [0x4000051641]
+13: Xorg (?+0x0) [0x4000051641]
+(EE)[    26.981] (EE)  
+
+[OS] [PF] Page fault pid=0x0000000000000006
+[OS] [PF] cr3=0x00000001070D8000 proc_cr3=0x00000001070D8000
+[OS] [PF] CR2: 0x0000000000000000
+[OS] [PF] RIP: 0x00000100001FDFD8 ref(serial_write_string)=0x000000002F283C80
+[OS] [PF] UserRSP: 0x00000047FFFFF4F8
+[OS] [PF] KernelRSP: 0x0000000034EB7560
+[OS] [PF] RBP: 0x0000000000000000
+[OS] [PF] Error: 0x0000000000000007
+[OS] [PF] Access: write, mode: user, reserved: no, exec: no
+[OS] [PF] pte=0x00000000000000E3 P=0x0000000000000001 RW=0x0000000000000001 U=0x0000000000000000 EXT=0x0000000000000000 COW=0x0000000000000000
+[OS] [PF] Terminating process pid=0x00000006 (mode=user)
+[OS] [PF] user stack: 0x00000041008791B4 0x0000000000000000 0x00000044FDF91D90 0x0000000000000001 0x00000044FEBF3BE0 0x00000044FEBE17F0 0x00000044FDF92318 0x0000000001000001
+[OS] [PF] fault-regs fsbase=0x0000010000390B00
+[OS] [PF] regs: r15=0x00000100006D9820 r14=0x00000044FDF90410 r13=0x00000100006DE270 r12=0x0000000000000000 r11=0x0000000000000010 r10=0x0000000000000000 r9=0x0000000000000008 r8=0x0000000000000004 rbp=0x0000000000000000 rdi=0x0000000000000000 rsi=0x02A8040000000000 rdx=0x0000000000000008 rcx=0x02A8040000000000 rbx=0x00000044FEB042C0 rax=0x0000000000000000
+[OS] [PF] insn: 0x0000000000000048 0x0000000000000089 0x0000000000000037 0x0000000000000048 0x0000000000000089 0x000000000000004C 0x0000000000000017 0x00000000000000F8 0x00000000000000C3 0x000000000000000F 0x0000000000000010 0x0000000000000054 0x0000000000000016 0x00000000000000F0 0x000000000000000F 0x0000000000000010
+(EE)[    27.167] (EE)  
+
+(EE)[    27.180] (EE)  Backtrace:
+Backtrace:
+(EE)[    27.249] (EE)  0: Xorg (?+0x0) [0x40001e1c6d]
+0: Xorg (?+0x0) [0x40001e1c6d]
+(EE)[    27.253] (EE)  1: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x1000018fdf0]
+1: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x1000018fdf0]
+(EE)[    27.281] (EE)  2: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x100001fdfd8]
+2: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x100001fdfd8]
+(EE)[    27.372] (EE)  3: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x41008791b4]
+3: /usr/lib/xorg/modules/libglamoregl.so (?+0x0) [0x41008791b4]
+(EE)[    27.482] (EE)  4: Xorg (?+0x0) [0x400014abeb]
+4: Xorg (?+0x0) [0x400014abeb]
+(EE)[    27.544] (EE)  5: Xorg (?+0x0) [0x40001c0294]
+5: Xorg (?+0x0) [0x40001c0294]
+(EE)[    27.576] (EE)  6: Xorg (?+0x0) [0x40001bff31]
+6: Xorg (?+0x0) [0x40001bff31]
+(EE)[    27.644] (EE)  7: Xorg (?+0x0) [0x40000b9ab3]
+7: Xorg (?+0x0) [0x40000b9ab3]
+(EE)[    27.672] (EE)  8: Xorg (?+0x0) [0x40000934f9]
+8: Xorg (?+0x0) [0x40000934f9]
+(EE)[    27.719] (EE)  9: Xorg (?+0x0) [0x4000068c75]
+9: Xorg (?+0x0) [0x4000068c75]
+(EE)[    27.721] (EE)  10: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179ca8]
+10: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179ca8]
+(EE)[    27.737] (EE)  11: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179d65]
+11: /usr/lib/x86_64-linux-gnu/libc.so.6 (?+0x0) [0x10000179d65]
+(EE)[    27.769] (EE)  12: Xorg (?+0x0) [0x4000051641]
+12: Xorg (?+0x0) [0x4000051641]
+(EE)[    27.773] (EE)  
+
+(EE)[    27.775] (EE)  Segmentation fault at address 0x0
+Segmentation fault at address 0x0
+(EE)[    27.789] (EE)  
+Fatal server error:
+
+Fatal server error:
+(EE)[    27.791] (EE)  Caught signal 11 (Segmentation fault). Server aborting
+Caught signal 11 (Segmentation fault). Server aborting
+(EE)[    27.806] (EE)  
+
+(EE)[    27.818] (EE)  
+Please consult the The X.Org Foundation support 
+	 at http://wiki.x.org
+ for help. 
+
+Please consult the The X.Org Foundation support 
+	 at http://wiki.x.org
+ for help. 
+(EE)[    27.880] (EE)  Please also check the log file at "/dev/tty" for additional information.
+Please also check the log file at "/dev/tty" for additional information.
+(EE)[    27.939] (EE)  
+
+(II)[    27.951] (II)  AIGLX: Suspending AIGLX clients for VT switch
+AIGLX: Suspending AIGLX clients for VT switch
+(EE)[    27.967] (EE)  Server terminated with error (1). Closing log file.
+Server terminated with error (1). Closing log file.
+[exit-cause] signaled pid=0x00000006 signum=0x00000006
+[app] exit pid=6 status=134 lived=21424ms
+[drm] render close pid=0x00000006 dumbs=0x00000004
+[12:12:1113/003359.281666:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[1:1:1113/003359.289089:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[lxsys] ENOSYS #0x000000000000013D (0x0000000000000001,0x0000000000000001,0x0000000000000000)
+[procfs] write_at offset=0x0000000000000000 size=0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[exit-cause] status pid=0x0000000E status=0x00000000
+[app] exit pid=14 status=0
+[7:19:1113/003359.574042:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:24:1113/003359.629702:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/nonexistent'
+[7:24:1113/003359.644842:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[tmpfs] slots in use reached 0x000000C0 of 0x00001000
+[usock] connect FAILED '@/tmp/.X11-unix/X0'
+[usock] connect FAILED '/tmp/.X11-unix/X0'
+[usock] connect FAILED '/var/run/nscd/socket'
+[usock] connect FAILED '/var/run/nscd/socket'
+[7:7:1113/003402.107952:ERROR:ui/ozone/platform/x11/ozone_platform_x11.cc:257] Missing X server or $DISPLAY
+[7:7:1113/003402.120288:ERROR:ui/aura/env.cc:246] The platform failed to initialize.  Exiting.
+[exit-cause] status pid=0x00000007 status=0x00000001
+[app] exit pid=7 status=1 lived=25685ms
+[exit-cause] status pid=0x00000005 status=0x00000001

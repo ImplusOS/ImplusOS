@@ -1,0 +1,434 @@
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;042;160t[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x2,0x0)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x2,0x0)/Sata(0x0,0xFFFF,0x0)
+[disp] pick=null
+[pat] power-on MSR 0x277 = 0x0007040600070406
+[pat] entries 1,5 -> WC on bsp; this cpu now 0x0007010600070106
+[disp] pick=null
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[lapic] timer initial=0x0003CFFF hz=0x000000FA
+[IntelGen9] module init
+[PS2] init 1ms kbd=1 mouse=1
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[USB] sweep tried=20 failed=18 431ms done
+[USB] init 817ms (hc-wait 385ms)
+[UDF] mounted, root FE LBA 0x00000103
+[vgpu] init enter
+[vgpu] find bus=0x00000000 dev=0x00000005 func=0x00000000 bar4=0x0000007000004000 mem4=0x00000001
+[vgpu] caps common=0xffff800000004000 notify=0xffff800000007000 devcfg=0xffff800000006000
+[vgpu] features dev0=0x0000000030000013 dev1=0x0000000000000101 negotiated=0x0000000000000013
+[vgpu] queue qsize=0x00000100 ring=0x0000000079fcb000 desc=0x0000000079fcb000 notify=0xffff800000007000
+[vgpu] submit t=0x00000100 avail=0x00000000 used=0x00000000 resp=0x0000000039665680
+[vgpu] submit t=0x0000010A avail=0x00000001 used=0x00000001 resp=0x0000000039665260
+[vgpu] submit t=0x00000101 avail=0x00000002 used=0x00000002 resp=0x0000000039664ba8
+[vgpu] submit t=0x00000106 avail=0x00000003 used=0x00000003 resp=0x0000000039664ae8
+[vgpu] submit t=0x00000103 avail=0x00000004 used=0x00000004 resp=0x0000000039664ba8
+[vgpu] apply layout w=0x00000280 h=0x000001E0 fb=0x000000003a5eb940 bytes=0x0012C000 nmon=0x00000001 mon0fb=0x000000003a5eb940
+[vgpu] ready w=0x00000280 h=0x000001E0 fb=0x000000003a5eb940 bytes=0x0012C000 nmon=0x00000001
+[drm] published /dev/dri/card0 (226:0) and /dev/dri/renderD128 (226:128)
+[drm] render backend: virtio_gpu ready
+[vgpu] init enter
+[vgpu] find bus=0x00000000 dev=0x00000005 func=0x00000000 bar4=0x0000007000004000 mem4=0x00000001
+[vgpu] caps common=0xffff800000004000 notify=0xffff800000007000 devcfg=0xffff800000006000
+[vgpu] features dev0=0x0000000030000013 dev1=0x0000000000000101 negotiated=0x0000000000000013
+[vgpu] queue qsize=0x00000100 ring=0x0000000079fcb000 desc=0x0000000079fcb000 notify=0xffff800000007000
+[vgpu] submit t=0x00000100 avail=0x00000000 used=0x00000000 resp=0x00000000396656f0
+[disp] pick name=VirtIO_Driver.ELF w=0x0000000000000000 h=0x0000000000000000
+[disp] init r=0x0000000000000001 w=0x0000000000000280 h=0x00000000000001E0 fb=0x000000003B5BD9A0
+[disp] shadow r=0x0000000000000001 fb=0x000000003B5BD9A0
+52:54:00:12:34:56
+[disp] present
+[disp] getfb ptr=0x000000003ADD4970 w=0x0000000000000280 h=0x00000000000001E0
+[loginui] up 640x480 users=0 font=1
+[loginui] autologin
+[loginui] session for tester uid=1000
+[loginui] wm spawn -> 3
+[wm] launcher: 18 app(s) from 18 desktop entr(y|ies), 10 running Linux binaries
+[loginui] wm_pid=3
+[autostart] /Userland/Chromium/Chromium.ELF -> 0x00000005
+[xsession] X redirected into a window
+[app] spawn pid=6 path=Xorg args=':0 -config /etc/X11/xorg.conf -nolisten tcp -novtswitch -keeptty +iglx -dumbSched -ac -logfile /dev/tty' at=5062ms
+[     5.792] (WW) Failed to open p[xsession] Xorg ready after 676 ms
+rotocol nam[chromium] using /Userland/Chromium/Resource/launch.args
+es file /usr/lib/xorg/protocol.txt
+[config] failed to pre-init udev
+[     5.804] [[elfload] path=c/Userland/Chromium/Resource/chromeo total_ms=n7f read_ms=ig] 1f copy_ms=ai0l map_ms=ed0  eager_mb=t0 demand_mb=o3 3p2r chunks=e1-i0n
+it[app] spawn pid=7 path=chrome args='--ozone-platform=x11 --window-position=0,0 --window-size=1024,680 --user-data-dir=/tmp/chrome-profile  --ignore-gpu-blocklist --enable-logging=stderr --v=0 file:///Userland/Chromium/Resource/gputest.html ' at=5809ms
+ udev
+
+X.Org X Server 1.21.1[     5.833] 
+X.Org X Server 1.21.1.16.16
+X Protocol Version 11, Revision 0
+
+X Protocol Version 11, Revision 0
+Current Operating System: Linux implus 6.1.0-implus #1 SMP ImplusOS x86_64
+[     5.846] Current Operating System: Linux implus 6.1.0-implus #1 SMP ImplusOS x86_64
+xorg-server 2:21.1.16-1.3 (https://www.debian.org/support) 
+[     5.856] xorg-server 2:21.1.16-1.3 (https://www.debian.org/support) 
+Current version of pixman: 0.44.0
+[     5.862] Current version of pixman: 0.44.0
+	Before reporting problems, check http://wiki.x.org
+	to make sure that you have the latest version.
+[     5.872] 	Before reporting problems, check http://wiki.x.org
+	to make sure that you have the latest version.
+Markers: [     5.882] Markers: (--) probed, (--) probed, (**) from config file, (**) from config file, (==) default setting,
+	(==) default setting,
+	(++) from command line, (++) from command line, (!!) notice, (!!) notice, (II) informational,
+	(II) informational,
+	(WW) warning, (WW) warning, (EE) error, (EE) error, (NI) not implemented, (NI) not implemented, (??) unknown.
+(??) unknown.
+(++) Log file: "/dev/tty", Time: Thu Nov 12 23:44:27 2026
+[     5.924] (++) Log file: "/dev/tty", Time: Thu Nov 12 23:44:27 2026
+(++) Using config file: "/etc/X11/xorg.conf"
+[     5.940] (++) Using config file: "/etc/X11/xorg.conf"
+[     5.950] (==) ServerLayout "layout0"
+[     5.952] (**) |-->Screen "scr0" (0)
+[     5.955] (**) |   |-->Monitor "mon0"
+[     5.958] (**) |   |-->Device "kms0"
+[     5.966] (**) |   |-->GPUDevice "kms1"
+[     5.969] (**) |-->Input Device "kbd0"
+[     5.971] (**) |-->Input Device "mouse0"
+[     5.973] (**) Option "DontVTSwitch" "true"
+[     5.977] (**) Option "DontZap" "false"
+[     5.981] (**) Option "AutoAddDevices" "false"
+[     5.985] (**) Option "AutoAddGPU" "false"
+[     5.998] (**) Allowing byte-swapped clients
+[     6.007] (**) Not automatically adding devices
+[     6.011] (==) Automatically enabling devices
+[     6.015] (**) Not automatically adding GPU devices
+[     6.018] (==) Automatically binding GPU devices
+[     6.020] (==) Max clients allowed: 256, resource mask: 0x1fffff
+[     6.026] (WW) `fonts.dir' not found (or not valid) in "/usr/share/fonts/X11/misc".
+[     6.034] 	Entry deleted from font path.
+[     6.036] 	(Run 'mkfontdir' on "/usr/share/fonts/X11/misc").
+[     6.052] (WW) The directory "/usr/share/fonts/X11/cyrillic" does not exist.
+[     6.055] 	Entry deleted from font path.
+[     6.060] (WW) The directory "/usr/share/fonts/X11/100dpi/" does not exist.
+[     6.065] 	Entry deleted from font path.
+[     6.072] (WW) The directory "/usr/share/fonts/X11/75dpi/" does not exist.
+[     6.087] 	Entry deleted from font path.
+[     6.097] (WW) The directory "/usr/share/fonts/X11/Type1" does not exist.
+[     6.102] 	Entry deleted from font path.
+[     6.105] (WW) The directory "/usr/share/fonts/X11/100dpi" does not exist.
+[     6.109] 	Entry deleted from font path.
+[     6.111] (WW) The directory "/usr/share/fonts/X11/75dpi" does not exist.
+[     6.127] 	Entry deleted from font path.
+[     6.130] (==) FontPath set to:
+	built-ins
+[     6.133] (==) ModulePath set to "/usr/lib/xorg/modules"
+[     6.137] (II) Loader magic: 0x4000276f00
+[     6.140] (II) Module ABI versions:
+[     6.142] 	X.Org ANSI C Emulation: 0.4
+[     6.144] 	X.Org Video Driver: 25.2
+[     6.149] 	X.Org XInput driver : 24.4
+[     6.151] 	X.Org Server Extension : 10.0
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[     6.155] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[     6.179] (II) no primary bus or device found
+[     6.184] (II) "glx" will be loaded. This was enabled by default and also specified in the config file.
+[     6.192] (II) LoadModule: "glx"
+[     6.203] (II) Loading /usr/lib/xorg/modules/extensions/libglx.so
+[     6.304] (II) Module glx: vendor="X.Org Foundation"
+[     6.307] 	compiled for 1.21.1.16, module version = 1.0.0
+[     6.314] 	ABI class: X.Org Server Extension, version 10.0
+[     6.317] (II) LoadModule: "modesetting"
+[     6.323] (II) Loading /usr/lib/xorg/modules/drivers/modesetting_drv.so
+[     6.337] (II) Module modesetting: vendor="X.Org Foundation"
+[     6.349] 	compiled for 1.21.1.16, module version = 1.21.1
+[     6.352] 	Module class: X.Org Video Driver
+[     6.355] 	ABI class: X.Org Video Driver, version 25.2
+[     6.358] (II) LoadModule: "evdev"
+[     6.364] (II) Loading /usr/lib/xorg/modules/input/evdev_drv.so
+[     6.373] (II) Module evdev: vendor="X.Org Foundation"
+[     6.377] 	compiled for 1.21.1.15, module version = 2.11.0
+[     6.382] 	Module class: X.Org XInput Driver
+[     6.393] 	ABI class: X.Org XInput driver, version 24.4
+[     6.400] (II) modesetting: Driver for Modesetting Kernel Drivers: kms
+[     6.407] (WW) Falling back to old probe method for modesetting
+[     6.412] (II) modeset(0): using /dev/dri/card0
+[     6.418] (EE) open /dev/dri/card9: No such file or directory
+[     6.421] (II) modeset(0): using /dev/dri/card9
+[     6.424] (WW) VGA arbiter: cannot open kernel arbiter, no multi-card support
+[     6.434] (**) modeset(0): Depth 24, (--) framebuffer bpp 32
+[     6.448] (DB) xf86MergeOutputClassOptions unsupported bus type 0
+[     6.453] (**) modeset(0): Option "kmsdev" "/dev/dri/card0"
+[     6.457] (**) modeset(0): Option "ShadowFB" "false"
+[     6.460] (**) modeset(0): Option "AccelMethod" "glamor"
+[     6.464] (**) modeset(0): Option "PageFlip" "true"
+[     6.466] (**) modeset(0): Option "Atomic" "true"
+[     6.469] (==) modeset(0): RGB weight 888
+[     6.472] (==) modeset(0): Default visual is TrueColor
+[     6.476] (II) Loading sub module "glamoregl"
+[     6.478] (II) LoadModule: "glamoregl"
+[     6.490] (II) Loading /usr/lib/xorg/modules/libglamoregl.so
+[     6.576] (II) Module glamoregl: vendor="X.Org Foundation"
+[     6.578] 	compiled for 1.21.1.16, module version = 1.0.1
+[     6.581] 	ABI class: X.Org ANSI C Emulation, version 0.4
+[     7.723] (EE) modeset(0): eglInitialize() failed
+[     7.726] (II) modeset(0): glamor initialization failed
+[     7.730] (II) modeset(0): ShadowFB: preferred YES, enabled NO
+[     7.734] (II) modeset(0): Output DVI-I-1 using monitor section mon0
+[     7.739] (II) modeset(0): EDID for output DVI-I-1
+[     7.742] (II) modeset(0): Printing probed modes for output DVI-I-1
+[     7.747] (II) modeset(0): Modeline "612x380"x55.8   13.95  612 620 628 644  380 382 384 388 (21.7 kHz P)
+[     7.752] (II) modeset(0): Output DVI-I-1 connected
+[     7.755] (II) modeset(0): Using exact sizes for initial modes
+[     7.759] (II) modeset(0): Output DVI-I-1 using initial mode 612x380 +0+0
+[     7.764] (==) modeset(0): Using gamma correction (1.0, 1.0, 1.0)
+[     7.769] (==) modeset(0): DPI set to (96, 96)
+[     7.771] (II) Loading sub module "fb"
+[     7.774] (II) LoadModule: "fb"
+[     7.778] (II) Module "fb" already built-in
+[     7.781] (==) modeset(0): Backing store enabled
+[     7.785] (==) modeset(0): Silken mouse disabled
+[     7.789] (II) modeset(0): Initializing kms color map for depth 24, 8 bpc.
+[     7.795] (II) Initializing extension Generic Event Extension
+[     7.802] (II) Initializing extension SHAPE
+[     7.804] (II) Initializing extension MIT-SHM
+[     7.807] (II) Initializing extension XInputExtension
+[     7.811] (II) Initializing extension XTEST
+[     7.814] (II) Initializing extension BIG-REQUESTS
+[     7.818] (II) Initializing extension SYNC
+[     7.820] (II) Initializing extension XKEYBOARD
+[     7.822] (II) Initializing extension XC-MISC
+[     7.824] (II) Initializing extension SECURITY
+[     7.826] (II) Initializing extension XFIXES
+[     7.828] (II) Initializing extension RENDER
+[     7.830] (II) Initializing extension RANDR
+[     7.832] (II) Initializing extension COMPOSITE
+[     7.833] (II) Initializing extension DAMAGE
+[     7.835] (II) Initializing extension MIT-SCREEN-SAVER
+[     7.837] (II) Initializing extension DOUBLE-BUFFER
+[     7.839] (II) Initializing extension RECORD
+[     7.8[exit-cause] status pid=40x00] 0(0I0I0) 0I0n8i status=t0xia0lizi0n0g0 0e0x0te0nsio
+n[app] exit pid=8 status=0
+ DPMS
+[     7.848] (II) Initializing extension Present
+[     7.853] (II) Initializing extension DRI3
+[     7.858] (II) Initializing extension X-Resource
+[     7.86[app] exec pid=9 path=/Userland/Chromium/Resource/chrome_crashpad_handler at=7862ms
+2] (II) Initializing extension XVideo
+[     7.866] (II) Initializing extension XVideo-MotionCompensation
+[     7.871] (II) Initializing extension SELinux
+[     7.874] (II) SELinux: Disabled on system
+[     7.878] (II) Initializing extension GLX
+[     7.883] (II) AIGLX: Screen 0 is not DRI2 capable
+[     7.893] (II) IGLX: Loaded and initialized swrast
+[     7.907] (II) GLX: Initialized DRISWRAST GL provider for screen 0
+[     7.910] (II) Initializing extension XFree86-VidModeExtension
+[     7.914] (II) Initializing extension XFree86-DGA
+[     7.917] (II) Initializing extension XFree86-DRI
+[     7.919] (II) Initializing extension DRI2
+[exit-cause] status pid=0x0000000[8  status=0x00000000
+[app] exit pid=8 status=0
+    7.922] (II) modeset(0): Damage tracking initialized
+[     7.926] (II) modeset(0): Setting screen physical size to 161 x 100
+[app] exec pid=10 path=/Userland/Chromium/Resource/chrome_crashpad_handler at=7940ms
+[app] exec pid=8 path=/bin/sh at=7957ms
+[1112/234429.559126:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[7:7:1112/234429.594231:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[app] exec pid=12 path=/usr/bin/xkbcomp at=8007ms
+[procfs] write_at offset=0x0000000000000000 size=0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[exit-cause] status pid=0x0000000E status=0x00000000
+[app] exit pid=14 status=0
+[exit-cause] status pid=0x0000000C status=0x00000000
+[app] exit pid=12 status=0 lived=151ms
+[exit-cause] status pid=0x00000008 status=0x00000000
+[app] exit pid=8 status=0 lived=207ms
+[14:14:1112/234429.762365:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:440] prctl: Operation not supported (95)
+[     8.174] (II) Using input driver 'evdev' for 'kbd0'
+[     8.184] (**) Option "CoreKeyboard"
+[     8.185] (**) kbd0: always reports core events
+[     8.189] (**) evdev: kbd0: Device: "/dev/input/event0"
+[     8.191] (--) evdev: kbd0: Vendor 0x1234 Product 0x1
+[     8.193] (--) evdev: kbd0: Found keys
+[     8.196] (II) evdev: kbd0: Configuring as keyboard
+[     8.198] (I[lxsys] ENOSYS #I0x)0 [procfs] write_at offset=X0I00xN0P0U0T0: 00A0000d0d000in0000g e0x0t010eBn0d00e0Cd ( size= 0xi000xn00pu0t00 000d00000e0000vi00c0e0000 [elfload] path=00"/Userland/Chromium/Resource/chromek total_ms=bd0"2 (type9: read_ms= K1E7YBO copy_ms=A0R map_ms=D,1 id 06 eager_mb=)0
+ demand_mb=332 chunks=10
+[app] exec pid=14 path=/Userland/Chromium/Resource/chrome at=8218ms
+,0x[0  0  0 080.2020000000]0 00(0*00*,)0 0x4O000p
+t0[procfs] write_at offset=0i0x0000000o0000n000 00"0000100)
+xk0b_000r size=u0xl0e000s" "evdev"
+00000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[elfload] path=/Userland/Chromium/Resource/chrome total_ms=28 read_ms=0 copy_ms=0 map_ms=0 eager_mb=0 demand_mb=332 chunks=10
+[app] exec pid=8 path=/Userland/Chromium/Resource/chrome at=8282ms
+[app] exec pid=12 path=/bin/sh at=8300ms
+[app] exec pid=15 path=/usr/bin/xkbcomp at=8407ms
+[exit-cause] status pid=0x0000000F status=0x00000000
+[app] exit pid=15 status=0 lived=484ms
+[lxproc] syscall 0x000000000000003D failed -> 0xFFFFFFFFFFFFFFF6
+[exit-cause] status pid=0x0000000C status=0x00000000
+[app] exit pid=12 status=0 lived=610ms
+[     8.919] (II) Using input driver 'evdev' for 'mouse0'
+[     8.924] (**) Option "CorePointer"
+[     8.926] (**) mouse0: always reports core events
+[     8.929] (**) evdev: mouse0: Device: "/dev/input/event1"
+[     8.935] (--) evdev: mouse0: Vendor 0x1234 Product 0x2
+[     8.941] (**) Option "IgnoreRelativeAxes" "true"
+[     8.943] (**) Option "IgnoreAbsoluteAxes" "false"
+[     8.945] (--) evdev: mouse0: Found 3 mouse buttons
+[     8.947] (--) evdev: mouse0: Found scroll wheel(s)
+[     8.950] (II) evdev: mouse0: Relative axes present but ignored.
+[     8.954] (--) evdev: mouse0: Found absolute axes
+[     8.958] (--) evdev: mouse0: Found x and y absolute axes
+[     8.961] (II) evdev: mouse0: Configuring as mouse
+[     8.963] (II) evdev: mouse0: Adding scrollwheel support
+[     8.969] (**) evdev: mouse0: YAxisMapping: buttons 4 and 5
+[     8.973] (**) evdev: mouse0: EmulateWheelButton: 4, EmulateWheelInertia: 10, EmulateWheelTimeout: 200
+[     8.981] (II) XINPUT: Adding extended input device "mouse0" (type: MOUSE, id 7)
+[     8.985] (II) evdev: mouse0: initialized for relative axes.
+[     8.988] (II) evdev: mouse0: initialized for absolute axes.
+[     8.996] (**) mouse0: (accel) keeping acceleration scheme 1
+[     8.999] (**) mouse0: (accel) acceleration profile 0
+[     9.010] (**) mouse0: (accel) acceleration factor: 2.000
+[     9.013] (**) mouse0: (accel) acceleration threshold: 4
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[     9.026] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[14:14:1112/234432.878974:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[1:1:1112/234432.879973:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[lxsys] ENOSYS #0x000000000000013D (0x0000000000000001,0x0000000000000001,0x0000000000000000)
+[procfs] write_at offset=0x0000000000000000 size=0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[exit-cause] status pid=0x0000000C status=0x00000000
+[app] exit pid=12 status=0
+[7:19:1112/234433.118193:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:24:1112/234433.141372:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/nonexistent'
+[7:24:1112/234433.149189:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[tmpfs] slots in use reached 0x00000020 of 0x00001000
+[tmpfs] slots in use reached 0x00000040 of 0x00001000
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:24:1112/234434.606909:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:24:1112/234434.620119:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:21:1112/234434.625873:ERROR:net/base/address_tracker_linux.cc:224] Could not create NETLINK socket: Address family not supported by protocol (97)
+[usock] connect FAILED '/nonexistent'
+[7:24:1112/234434.639207:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:19:1112/234434.759274:ERROR:device/udev_linux/udev_watcher.cc:51] Failed to initialize a udev monitor.
+[7:31:1112/234434.813152:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 35: Input/output error (5)
+[35:35:1112/234434.834920:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[usock] connect FAILED '/nonexistent'
+[usock] (further connect failures silenced)
+[7:7:1112/234435.233304:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:24:1112/234435.242293:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[41:31:1112/234435.349040:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:440] prctl: Operation not supported (95)
+[elfload] path=/Userland/Chromium/Resource/chrome total_ms=17 read_ms=2 copy_ms=0[7:7:1112/234435.402753:WARNING:device/bluetooth/dbus/bluez_dbus_manager.cc:209] Floss manager service not available, cannot set Floss enable/disable.
+ map_ms=0 eager_mb=[7:7:1112/234435.412344:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:24:1112/234435.424983:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+0 demand_mb=332 chunks=10
+[app] exec pid=41 path=/Userland/Chromium/Resource/chrome at=13839ms
+[7:7:1112/234435.443213:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:24:1112/234435.523150:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:7:1112/234435.534687:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:24:1112/234435.543003:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:7:1112/234435.554202:WARNING:dbus/property.cc:94] Failed to connect to PropertiesChangedsignal.
+[7:24:1112/234435.560835:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1112/234435.568150:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.Properties.GetAll: object_path= /org/freedesktop/UPower/devices/DisplayDevice: unknown error type: 
+[7:7:1112/234435.580545:WARNING:dbus/property.cc:174] GetAll request failed for: org.freedesktop.UPower.Device
+[7:7:1112/234435.586075:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:24:1112/234435.594034:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1112/234435.607225:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:24:1112/234435.617869:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1112/234435.654527:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:7:1112/234435.662016:WARNING:ui/base/idle/idle_linux.cc:111] None of the known D-Bus ScreenSaver services could be used.
+[tmpfs] slots in use reached 0x00000060 of 0x00001000
+[tmpfs] slots in use reached 0x00000080 of 0x00001000
+[tmpfs] slots in use reached 0x000000A0 of 0x00001000
+[tmpfs] slots in use reached 0x000000C0 of 0x00001000
+[tmpfs] slots in use reached 0x000000E0 of 0x00001000
+[sysvshm] shmget-create a=0x0000000000000000 b=0x0000000000004000 c=0x0000000000000101
+[sysvshm] shmat a=0x0000000000000101 b=0x00000041039B5000 c=0x0000000000000000
+[sysvshm] shmctl-rmid a=0x0000000000000101 b=0x0000000000000000 c=0x0000000000000000
+[35:35:1112/234437.229471:WARNING:sandbox/policy/linux/sandbox_linux.cc:405] InitializeSandbox() called with multiple threads in process gpu-process.
+[35:35:1112/234437.611857:WARNING:ui/gfx/linux/gbm_support_x11.cc:48] dri3 extension not supported.
+[sysvshm] shmget-create a=0x0000000000000000 b=0x0000000000140000 c=0x0000000000000102
+[sysvshm] shmat a=0x0000000000000102 b=0x00000041044F5000 c=0x0000000000000000
+[sysvshm] shmctl-rmid a=0x0000000000000102 b=0x0000000000000000 c=0x0000000000000000
+[tmpfs] slots in use reached 0x00000100 of 0x00001000
+[41:41:1112/234439.182358:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[sysvshm] shmat a=0x0000000000000102 b=0x0000004100B92000 c=0x0000000000000000
+[41:64:1112/234439.565450:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[    19.039] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    29.050] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    39.061] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    49.071] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    59.082] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    69.093] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    79.102] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    89.113] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[    99.122] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   109.132] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   119.141] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   129.150] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   139.161] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   149.172] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   159.181] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   169.194] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   179.206] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   189.224] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   199.234] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   209.247] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   219.260] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   229.271] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   239.279] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   249.290] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   259.301] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   269.310] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   279.319] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   289.331] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   299.341] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   309.352] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   319.362] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   329.373] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   339.383] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   349.394] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   359.403] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   369.413] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   379.423] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   389.437] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   399.446] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   409.457] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   419.466] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   429.475] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   439.484] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   449.512] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   459.523] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   469.535] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   479.545] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   489.555] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   499.564] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   509.575] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   519.585] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   529.596] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   539.621] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   549.633] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   559.645] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   569.656] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   579.671] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   589.684] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   599.695] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   609.704] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   619.715] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   629.733] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   639.746] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   649.758] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   663.540] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   673.551] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   683.560] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   693.570] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   703.583] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   713.625] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   723.636] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   733.646] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   743.656] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   753.669] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   764.246] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   774.259] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[   784.274] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)

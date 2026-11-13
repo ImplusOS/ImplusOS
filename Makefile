@@ -818,6 +818,22 @@ endif
 endif
 
 QEMU_DISPLAY ?= gtk
+# Host-GPU (virgl) rendering for Mesa/Xorg/Chromium inside the guest:
+#   make run_uefi_cdrom QEMU_GPU=virgl
+# adds a virtio-gpu-gl device (the firmware keeps the plain VGA) and switches
+# the display to an OpenGL-capable backend. The guest then reports
+# SYSTEM_GRAPHICS_ACCEL_3D, Xorg's glamor and Chromium's GPU process run on
+# the host GPU, and WebGL reports "ANGLE (Mesa, virgl (<host GPU>), ...)".
+# sdl,gl=es is the backend that works under WSLg (gtk,gl=on aborts there with
+# EGL_BAD_ACCESS once the virgl scanout is shown); override QEMU_DISPLAY if
+# gtk,gl=on works on your host.
+QEMU_GPU ?=
+ifeq ($(QEMU_GPU),virgl)
+QEMU_DISPLAY := sdl,gl=es
+QEMU_GPU_DEVICES := -vga none -device virtio-gpu-gl-pci -device VGA
+else
+QEMU_GPU_DEVICES :=
+endif
 QEMU_EXTRA ?= 
 QEMU_DISK_SIZE ?= 128M
 
@@ -845,6 +861,7 @@ QEMU_COMMON := \
 	$(QEMU_INPUT_DEVICES) \
 	$(QEMU_NET_DEVICES) \
 	$(QEMU_AUDIO_DEVICES) \
+	$(QEMU_GPU_DEVICES) \
 	-display $(QEMU_DISPLAY) \
 	-serial stdio \
 	$(QEMU_EXTRA)

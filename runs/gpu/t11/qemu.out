@@ -1,0 +1,6 @@
+virtio_gpu_virgl_process_cmd: ctrl 0x204, error 0x1203
+virtio_gpu_virgl_process_cmd: ctrl 0x207, error 0x1205
+vrend_create_query: context error reported 2 "ImplusOS Mesa" Illegal resource 159
+context 2 failed to dispatch CREATE_OBJECT: 22
+vrend_decode_ctx_submit_cmd: context error reported 2 "ImplusOS Mesa" Illegal command buffer 264449
+qemu-system-x86_64: terminating on signal 15 from pid 127604 (/bin/bash)

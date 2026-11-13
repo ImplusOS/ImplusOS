@@ -1,0 +1,37 @@
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;042;160t[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x1,0x0)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x1,0x0)/Sata(0x0,0xFFFF,0x0)
+[disp] pick=null
+[pat] power-on MSR 0x277 = 0x0007040600070406
+[pat] entries 1,5 -> WC on bsp; this cpu now 0x0007010600070106
+[disp] pick=null
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[lapic] timer initial=0x0003D010 hz=0x000000FA
+[IntelGen9] module init
+[PS2] init 10ms kbd=1 mouse=1
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[USB] sweep tried=20 failed=18 422ms done
+[USB] init 807ms (hc-wait 383ms)
+[UDF] mounted, root FE LBA 0x00000103
+[vgpu] init enter
+[vgpu] find bus=0x00000000 dev=0x00000004 func=0x00000000 bar4=0x0000000080881000 mem4=0x00000001
+[vgpu] caps common=0xffff800000005000 notify=0xffff800000007000 devcfg=0xffff800000006000
+[vgpu] features dev0=0x0000000030000013 dev1=0x0000000000000101 negotiated=0x0000000000000013
+[vgpu] queue qsize=0x00000100 ring=0x000000005ca49000 desc=0x000000005ca49000 notify=0xffff800000007000
+[vgpu] submit t=0x00000100 avail=0x00000000 used=0x00000000 resp=0x000000001c066680
+[vgpu] submit t=0x0000010A avail=0x00000001 used=0x00000001 resp=0x000000001c066260
+[vgpu] submit t=0x00000101 avail=0x00000002 used=0x00000002 resp=0x000000001c065ba8
+[vgpu] submit t=0x00000106 avail=0x00000003 used=0x00000003 resp=0x000000001c065ae8
+[vgpu] submit t=0x00000103 avail=0x00000004 used=0x00000004 resp=0x000000001c065ba8
+[vgpu] apply layout w=0x00000280 h=0x000001E0 fb=0x000000001cfec940 bytes=0x0012C000 nmon=0x00000001 mon0fb=0x000000001cfec940
+[vgpu] ready w=0x00000280 h=0x000001E0 fb=0x000000001cfec940 bytes=0x0012C000 nmon=0x00000001
+[drm] published /dev/dri/card0 (226:0) and /dev/dri/renderD128 (226:128)
+[drm] render backend: virtio_gpu ready
+[vgpu] init enter
+[vgpu] find bus=0x00000000 dev=0x00000004 func=0x00000000 bar4=0x0000000080881000 mem4=0x00000001
+[vgpu] caps common=0xffff800000005000 notify=0xffff800000007000 devcfg=0xffff800000006000
+[vgpu] features dev0=0x0000000030000013 dev1=0x0000000000000101 negotiated=0x0000000000000013
+[vgpu] queue qsize=0x00000100 ring=0x000000005ca49000 desc=0x000000005ca49000 notify=0xffff800000007000
+[vgpu] submit t=0x00000100 avail=0x00000000 used=0x00000000 resp=0x000000001c0666f0

@@ -133,6 +133,7 @@ the `CLANGDWARF` toolchain (`EDK2_TOOLCHAIN=`, `EDK2_TARGET=RELEASE`).
 | `make run_uefi_usb` | Boot the LiveCD image in QEMU via UEFI, as a USB disk |
 | `make run_uefi_cdrom` | Boot the LiveCD image in QEMU via UEFI, as a CD-ROM |
 | `make run_bios_cdrom` | Boot the LiveCD image in QEMU via legacy BIOS (x86_64 only) |
+| `make run_uefi_cdrom QEMU_GPU=virgl` | Same, with a virtio-gpu-gl device: Xorg/glamor and Chromium render on the host GPU (see `Docs/Others/TODO_Chromium_LinuxABI.md` §16) |
 | `make clean` | Remove `Build/` and `Image/` |
 
 The `run_*` targets boot `Image/ImplusOS-$(ARCH)-LiveCD.iso`, so run

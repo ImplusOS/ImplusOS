@@ -1,0 +1,843 @@
+[2J[001;001H[=3h[2J[001;001H[2J[001;001H[8;042;160t[2J[001;001H[2J[001;001H[8;056;240t[2J[001;001HBdsDxe: loading Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x1,0x0)/Sata(0x0,0xFFFF,0x0)
+BdsDxe: starting Boot0002 "UEFI QEMU DVD-ROM QM00013 " from PciRoot(0x0)/Pci(0x1,0x0)/Sata(0x0,0xFFFF,0x0)
+[disp] pick=null
+[pat] power-on MSR 0x277 = [disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+[disp] pick=null
+0x0007040600070406
+[pat] entries 1,5 -> WC on bsp; this cpu now 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[pat] ap now MSR 0x277 = 0x0007010600070106
+[lapic] timer initial=0x0003CFFA hz=0x000000FA
+[IntelGen9] module init
+[PS2] init [vgpu] init enter
+[vgpu] find bus=0x00000000 dev=0x00000004 func=0x00000000 bar4=0x0000007000004000 mem4=0x00000001
+[vgpu] caps common=0xffff800000004000 notify=0xffff800000007000 devcfg=0xffff800000006000
+[vgpu] features dev0=0x0000000030000013 dev1=0x0000000000000101 negotiated=0x0000000000000013
+[vgpu] queue qsize=0x00000100 ring=0x0000000041107000 desc=0x0000000041107000 notify=0xffff800000007000
+[vgpu] submit t=0x00000100 avail=0x00000000 used=0x00000000 resp=0x0000000047adeab0
+[vgpu] submit t=0x0000010A avail=0x00000001 used=0x00000001 resp=0x0000000047ade690
+[vgpu] submit t=0x00000101 avail=0x00000002 used=0x00000002 resp=0x0000000047addfc8
+[vgpu] submit t=0x00000106 avail=0x00000003 used=0x00000003 resp=0x0000000047addf08
+[vgpu] submit t=0x00000103 avail=0x00000004 used=0x00000004 resp=0x0000000047addfc8
+[vgpu] apply layout w=0x00000500 h=0x00000320 fb=0x00000000018860e0 bytes=0x003E8000 nmon=0x00000001 mon0fb=0x00000000018860e0
+[vgpu] ready w=0x00000500 h=0x00000320 fb=0x00000000018860e0 bytes=0x003E8000 nmon=0x00000001
+230ms kbd=1 mouse=1
+[vgpu] present rects=0x00000001 fb=0x00000000018860e0 nmon=0x00000001
+[vgpu] submit t=0x00000105 avail=0x00000005 used=0x00000005 resp=0x0000000047ae1330
+[vgpu] submit t=0x00000104 avail=0x00000006 used=0x00000006 resp=0x0000000047ae1330
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[vgpu] present rects=0x00000001 fb=0x00000000018860e0 nmon=0x00000001
+[vgpu] submit t=0x00000105 avail=0x00000007 used=0x00000007 resp=0x0000000047ae0940
+[USB] dev vid=0627 pid=0001 configured vendor-ifaces=0
+[USB] sweep tried=20 failed=18 497ms done
+[USB] init 1014ms (hc-wait 497ms)
+[UDF] mounted, root FE LBA 0x00000103
+[drm] published /dev/dri/card0 (226:0) and /dev/dri/renderD128 (226:128)
+[drm] render backend: virtio_gpu ready
+52:54:00:12:34:56
+[loginui] up 1280x800 users=0 font=1
+[loginui] autologin
+[loginui] session for tester uid=1000
+[loginui] wm spawn -> 3
+[wm] launcher: 18 app(s) from 18 desktop entr(y|ies), 10 running Linux binaries
+[loginui] wm_pid=3
+[autostart] /Userland/Chromium/Chromium.ELF -> 0x00000005
+[xsession] X redirected into a window
+[app] spawn pid=6 path=Xorg args=':0 -config /etc/X11/xorg.conf -nolisten tcp -novtswitch -keeptty +iglx -dumbSched -ac -logfile /dev/tty' at=6591ms
+[     7.129] (WW) Failed to open protocol names file /usr/lib/xorg/protocol.txt
+[config] failed to pre-init udev
+[xsession] Xorg ready after 416 ms
+[     7.141][chromium] using /Userland/Chromium/Resource/launch.args
+ [config] failed to pre-init udev
+
+X.Org X Server 1.21.1[     7.158] 
+X.Org X Server 1.21.1.16.16
+X Protocol Version 11, Revision 0
+
+X Protocol Version 11, Revision 0
+Current Operating System: Linux implus 6.1.0-implus #1 SMP ImplusOS x86_64
+[     7.177] Current Operating System: Linux implus 6.1.0-implus #1 SMP ImplusOS x86_64
+xorg-server 2:21.1.16-1.3 (https://www.debian.org/support) 
+[elfload] path=/Userland/Chromium/Resource/chrome total_ms=8 read_ms=1 copy_ms=0 map_ms=3 eager_mb=0 demand_mb=332 chunks=10
+[app] spawn pid=7 path=chrome args='--ozone-platform=x11 --window-position=0,0 --window-size=1024,680 --user-data-dir=/tmp/chrome-profile  --ignore-gpu-blocklist --no-first-run --enable-logging=stderr --v=0 file:///Userland/Chromium/Resource/gputest.html [     7.182] xorg-server 2:21.1.16-1.3 (https://www.debian.org/support) 
+Current version of pixman: 0.44.0
+[     7.265] Current version of pixman: 0.44.0
+	Before reporting problems, check http://wiki.x.org
+	to make sure that you have the latest version.
+[     7.280] 	Before reporting problems, check http://wiki.x.org
+	to make sure that you have the latest version.
+Markers: [     7.285] Markers: (--) probed, (--) probed, (**) from config file, (**) from config file, (==) default setting,
+	(==) default setting,
+	(++) from command line, (++) from command line, (!!) notice, (!!) notice, (II) informational,
+	(II) informational,
+	(WW) warning, (WW) warning, (EE) error, (EE) error, (NI) not implemented, (NI) not implemented, (??) unknown.
+(??) unknown.
+(++) Log file: "/dev/tty", Time: Fri Nov 13 01:30:58 2026
+[     7.441] (++) Log file: "/dev/tty", Time: Fri Nov 13 01:30:58 2026
+(++) Using config file: "/etc/X11/xorg.conf"
+[     7.488] (++) Using config file: "/etc/X11/xorg.conf"
+[     7.497] (==) ServerLayout "layout0"
+[     7.500] (**) |-->Screen "scr0" (0)
+[     7.506] (**) |   |-->Monitor "mon0"
+[     7.508] (**) |   |-->Device "kms0"
+[     7.510] (**) |   |-->GPUDevice "kms1"
+[     7.523] (**) |-->Input Device "kbd0"
+[     7.525] (**) |-->Input Device "mouse0"
+[     7.538] (**) Option "DontVTSwitch" "true"
+[     7.546] (**) Option "DontZap" "false"
+[     7.554] (**) Option "AutoAddDevices" "false"
+[     7.556] (**) Option "AutoAddGPU" "false"
+[     7.558] (**) Allowing byte-swapped clients
+[     7.559] (**) Not automatically adding devices
+[     7.586] (==) Automatically enabling devices
+[     7.587] (**) Not automatically adding GPU devices
+[     7.589] (==) Automatically binding GPU devices
+[     7.591] (==) Max clients allowed: 256, resource mask: 0x1fffff
+[     7.642] (WW) `fonts.dir' not found (or not valid) in "/usr/share/fonts/X11/misc".
+[     7.664] 	Entry deleted from font path.
+[     7.666] 	(Run 'mkfontdir' on "/usr/share/fonts/X11/misc").
+[     7.691] (WW) The directory "/usr/share/fonts/X11/cyrillic" does not exist.
+[     7.710] 	Entry deleted from font path.
+[     7.752] (WW) The directory "/usr/share/fonts/X11/100dpi/" does not exist.
+[     7.764] 	Entry deleted from font path.
+[     7.766] (WW) The directory "/usr/share/fonts/X11/75dpi/" does not exist.
+[     7.771] 	Entry deleted from font path.
+[     7.774] (WW) The directory "/usr/share/fonts/X11/Type1" does not exist.
+[     7.781] 	Entry deleted from font path.
+[     7.784] (WW) The directory "/usr/share/fonts/X11/100dpi" does not exist.
+[     7.830] 	Entry deleted from font path.
+[     7.868] (WW) The directory "/usr/share/fonts/X11/75dpi" does not exist.
+[     7.873] 	Entry deleted from font path.
+[     7.895] (==) FontPath set to:
+	built-ins
+[     7.898] (==) ModulePath set to "/usr/lib/xorg/modules"
+[     7.900] (II) Loader magic: 0x4000276f00
+[     7.921] (II) Module ABI versions:
+[     7.924] 	X.Org ANSI C Emulation: 0.4
+[     7.942] 	X.Org Video Driver: 25.2
+[     7.944] 	X.Org XInput driver : 24.4
+[     7.946] 	X.Org Server Extension : 10.0
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[     7.964] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[     8.012] (II) no primary bus or device found
+[     8.025] (II) "glx" will be loaded. This was enabled by default and also specified in the config file.
+[     8.028] (II) LoadModule: "glx"
+[     8.072] (II) Loading /usr/lib/xorg/modules/extensions/libglx.so
+[     8.222] (II) Module glx: vendor="X.Org Foundation"
+[     8.234] 	compiled for 1.21.1.16, module version = 1.0.0
+[     8.236] 	ABI class: X.Org Server Extension, version 10.0
+[     8.238] (II) LoadModule: "modesetting"
+[     8.297] (II) Loading /usr/lib/xorg/modules/drivers/modesetting_drv.so
+[     8.347] (II) Module modesetting: vendor="X.Org Foundation"
+[     8.366] 	compiled for 1.21.1.16, module version = 1.21.1
+[     8.393] 	Module class: X.Org Video Driver
+[     8.412] 	ABI class: X.Org Video Driver, version 25.2
+[     8.415] (II) LoadModule: "evdev"
+[     8.453] (II) Loading /usr/lib/xorg/modules/input/evdev_drv.so
+[     8.484] (II) Module evdev: vendor="X.Org Foundation"
+[     8.486] 	compiled for 1.21.1.15, module version = 2.11.0
+[     8.500] 	Module class: X.Org XInput Driver
+[     8.501] 	ABI class: X.Org XInput driver, version 24.4
+[     8.537] (II) modesetting: Driver for Modesetting Kernel Drivers: kms
+[     8.566] (WW) Falling back to old probe method for modesetting
+[     8.570] (II) modeset(0): using /dev/dri/card0
+[     8.599] (EE) open /dev/dri/card9: No such file or directory
+[     8.622] (II) modeset(0): using /dev/dri/card9
+[     8.639] (WW) VGA arbiter: cannot open kernel arbiter, no multi-card support
+[     8.651] (**) modeset(0): Depth 24, (--) framebuffer bpp 32
+[     8.666] (DB) xf86MergeOutputClassOptions unsupported bus type 0
+[     8.694] (**) modeset(0): Option "kmsdev" "/dev/dri/card0"
+[     8.711] (**) modeset(0): Option "ShadowFB" "false"
+[     8.714] (**) modeset(0): Option "AccelMethod" "glamor"
+[     8.716] (**) modeset(0): Option "PageFlip" "true"
+[     8.718] (**) modeset(0): Option "Atomic" "true"
+[     8.732] (==) modeset(0): RGB weight 888
+[     8.733] (==) modeset(0): Default visual is TrueColor
+[     8.735] (II) Loading sub module "glamoregl"
+[     8.748] (II) LoadModule: "glamoregl"
+[     8.758] (II) Loading /usr/lib/xorg/modules/libglamoregl.so
+[     8.886] (II) Module glamoregl: vendor="X.Org Foundation"
+[     8.899] 	compiled for 1.21.1.16, module version = 1.0.1
+[     8.902] 	ABI class: X.Org ANSI C Emulation, version 0.4
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libEGL debug: No DRI config supports native format R8  
+libEGL debug: No DRI config supports native format R16 
+libEGL debug: No DRI config supports native format GR88
+libEGL debug: No DRI config supports native format GR32
+libEGL debug: No DRI config supports native format AR15
+libEGL debug: No DRI config supports native format BX24
+libEGL debug: No DRI config supports native format BA24
+libEGL debug: No DRI config supports native format RX24
+libEGL debug: No DRI config supports native format RA24
+libEGL debug: No DRI config supports native format XB24
+libEGL debug: No DRI config supports native format AB24
+libEGL debug: No DRI config supports native format XB30
+libEGL debug: No DRI config supports native format AB30
+libEGL debug: No DRI config supports native format XB48
+libEGL debug: No DRI config supports native format AB48
+[exit-cause] status pid=0x00000009 status=0x00000000
+[app] exit pid=9 status=0
+[    12.702] (II) [app] exec pid=10 path=/Userland/Chromium/Resource/chrome_crashpad_handler at=12703ms
+modeset(0): glamor X acceleration enabled on virgl (D3D12 (NVIDIA GeForce RTX 2060))
+[    12.717] (II) modeset(0): glamor initialized
+[    12.720] (==) modeset(0): VariableRefresh: disabled
+[    12.724] (==) modeset(0): AsyncFlipSecondaries: disabled
+[    12.737] (II) modeset(0): Output DVI-I-1 using monitor section mon0
+[    12.740] (II) modeset(0): EDID for output DVI-I-1
+[    12.743] (II) modeset(0): Printing probed modes for output DVI-I-1
+[    12.747] (II) modeset(0): Modeline "1024x680"x57.5   41.78  1024 1032 1040 1056  680 682 684 688 (39.6 kHz P)
+[    12.753] (II) modeset(0): Output DVI-I-1 connected
+[    12.778] (II) modeset(0): Using exact sizes for initial modes
+[    12.781] (II) modeset(0): Output DVI-I-1 using initial mode 1024x680 +0+0
+[    12.784] (==) modeset(0): Using gamma correction (1.0, 1.0, 1.0)
+[    12.797] (==) modeset(0): DPI set to (96, 96)
+[    12.799] (II) Loading sub module "fb"
+[    12.801] (II) LoadModule: "fb"
+[    12.802] (II) Module "fb" already built-in
+[exit-cause] status pid=0x00000009 status=0x00000000
+[app] exit pid=9 status=0
+[app] exec pid=11 path=/Userland/Chromium/Resource/chrome_crashpad_handler at=12985ms
+[tmpfs] slots in use reached 0x00000020 of 0x00001000
+[tmpfs] slots in use reached 0x00000040 of 0x00001000
+[1113/013104.389543:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[tmpfs] slots in use reached 0x00000060 of 0x00001000
+[tmpfs] slots in use reached 0x00000080 of 0x00001000
+[tmpfs] slots in use reached 0x000000A0 of 0x00001000
+[7:7:1113/013104.465604:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[procfs] write_at offset=0x0000000000000000 size=0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[exit-cause] status pid=0x0000000D status=0x00000000
+[app] exit pid=13 status=0
+[    13.497] (==) modeset(0): Backing store enabled
+[    13.499] (==) modeset(0): Silken mouse disabled
+[    13.501] (II) modeset(0): Initializing kms color map for depth 24, 8 bpc.
+[    13.514] (II) modeset(0): [DRI2] Setup complete
+[    13.516] (II) modeset(0): [DRI2]   DRI driver: virtio_gpu
+[    13.530] (II) modeset(0): [DRI2]   VDPAU driver: virtio_gpu
+[    13.533] (II) Initializing extension Generic Event Extension
+[    13.536] (II) Initializing extension SHAPE
+[    13.537] (II) Initializing extension MIT-SHM
+[    13.539] (II) Initializing extension XInputExtension
+[    13.544] (II) Initializing extension XTEST
+[    13.551] (II) Initializing extension BIG-REQUESTS
+[    13.553] (II) Initializing extension SYNC
+[    13.554] (II) Initializing extension XKEYBOARD
+[    13.580] (II) Initializing extension XC-MISC
+[    13.581] (II) Initializing extension SECURITY
+[    13.583] (II) Initializing extension XFIXES
+[    13.585] (II) Initializing extension RENDER
+[13:13:1113/013104.945434:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:440] prctl: Operation not supported (95)
+[    13.587] (II) Initializing extension RANDR
+[    13.607] (II) Initializing extension COMPOSITE
+[    13.609] (II) Initializing extension DAMAGE
+[    13.621] (II) Initializing extension MIT-SCREEN-SAVER
+[    13.624] (II) Initializing extension DOUBLE-BUFFER
+[    13.636] (II) Initializing extension RECORD
+[    13.637] (II) Initializing extension DPMS
+[    13.639] (II) Initializing extension Present
+[    13.641] (II) Initializing extension DRI3
+[    13.642] (II) Initializing extension X-Resource
+[    13.656] (II) Initializing extension XVideo
+[    13.657] (II) Initializing extension XVideo-MotionCompensation
+[    13.660] (II) Initializing extension SELinux
+[    13.661] (II) SELinux: Disabled on system
+[    13.663] (II) Initializing extension GLX
+[lxsys] ENOSYS #0x00000000000001BC (0x0000000000000000,0x0000000000000000,0x0000000000000001)
+[procfs] write_at offset=0x0000000000000000 size=0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[elfload] path=/Userland/Chromium/Resource/chrome[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver= total_ms=virtio_gpu1 version=0.0
+56 read_ms=0 copy_ms=0 map_ms=21 eager_mb=0 demand_mb=332 chunks=10
+[app] exec pid=13 path=/Userland/Chromium/Resource/chrome at=13797ms
+[elfload] path=/Userland/Chromium/Resource/chrome[drm-render] VERSION driver= total_ms=virtio_gpu18 version=0.0
+ read_ms=1 copy_ms=0 map_ms=0 eager_mb=0 demand_mb=[drm-render] VERSION driver=3virtio_gpu3 version=0.0
+2 chunks=10
+[app] exec pid=14 path=/Userland/Chromium/Resource/chrome at=13844ms
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libEGL debug: No DRI config supports native format R8  
+libEGL debug: No DRI config supports native format R16 
+libEGL debug: No DRI config supports native format GR88
+libEGL debug: No DRI config supports native format GR32
+libEGL debug: No DRI config supports native format AR15
+libEGL debug: No DRI config supports native format BX24
+libEGL debug: No DRI config supports native format BA24
+libEGL debug: No DRI config supports native format RX24
+libEGL debug: No DRI config supports native format RA24
+libEGL debug: No DRI config supports native format XB24
+libEGL debug: No DRI config supports native format AB24
+libEGL debug: No DRI config supports native format XB30
+libEGL debug: No DRI config supports native format AB30
+libEGL debug: No DRI config supports native format XB48
+libEGL debug: No DRI config supports native format AB48
+libEGL debug: eglPrintConfigDebug: nothing to print
+libEGL debug: ---------------
+libEGL debug: Configurations:
+libEGL debug: cho       bf lv colourbuffer dp st  ms           vis  cav  bi     renderable           supported
+libEGL debug: sen    id sz  l  r  g  b  a  th cl ns b           id  eat  nd  gl es es2 es3 vg         surfaces
+libEGL debug: ---------------
+libEGL debug:     0x001 32  0 10 10 10  2   0  0  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x002 32  0 10 10 10  2  16  0  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x003 32  0 10 10 10  2  24  0  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x004 32  0 10 10 10  2  24  8  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x005 32  0 10 10 10  2  32  0  0 0 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x006 32  0 10 10 10  2   0  0  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x007 32  0 10 10 10  2   0  0  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x008 32  0 10 10 10  2   0  0  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x009 32  0 10 10 10  2  16  0  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00a 32  0 10 10 10  2  16  0  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00b 32  0 10 10 10  2  16  0  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00c 32  0 10 10 10  2  24  0  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00d 32  0 10 10 10  2  24  0  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00e 32  0 10 10 10  2  24  0  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x00f 32  0 10 10 10  2  24  8  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x010 32  0 10 10 10  2  24  8  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x011 32  0 10 10 10  2  24  8  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x012 32  0 10 10 10  2  32  0  2 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x013 32  0 10 10 10  2  32  0  4 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x014 32  0 10 10 10  2  32  0  8 1 0x30335241--            y  y   y   y                win,
+libEGL debug:     0x015 30  0 10 10 10  0   0  0  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x016 30  0 10 10 10  0  16  0  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x017 30  0 10 10 10  0  24  0  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x018 30  0 10 10 10  0  24  8  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x019 30  0 10 10 10  0  32  0  0 0 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01a 30  0 10 10 10  0   0  0  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01b 30  0 10 10 10  0   0  0  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01c 30  0 10 10 10  0   0  0  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01d 30  0 10 10 10  0  16  0  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01e 30  0 10 10 10  0  16  0  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x01f 30  0 10 10 10  0  16  0  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x020 30  0 10 10 10  0  24  0  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x021 30  0 10 10 10  0  24  0  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x022 30  0 10 10 10  0  24  0  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x023 30  0 10 10 10  0  24  8  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x024 30  0 10 10 10  0  24  8  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x025 30  0 10 10 10  0  24  8  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x026 30  0 10 10 10  0  32  0  2 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x027 30  0 10 10 10  0  32  0  4 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x028 30  0 10 10 10  0  32  0  8 1 0x30335258--            y  y   y   y                win,
+libEGL debug:     0x029 32  0  8  8  8  8   0  0  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02a 32  0  8  8  8  8  16  0  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02b 32  0  8  8  8  8  24  0  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02c 32  0  8  8  8  8  24  8  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02d 32  0  8  8  8  8  32  0  0 0 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02e 32  0  8  8  8  8   0  0  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x02f 32  0  8  8  8  8   0  0  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x030 32  0  8  8  8  8   0  0  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x031 32  0  8  8  8  8  16  0  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x032 32  0  8  8  8  8  16  0  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x033 32  0  8  8  8  8  16  0  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x034 32  0  8  8  8  8  24  0  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x035 32  0  8  8  8  8  24  0  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x036 32  0  8  8  8  8  24  0  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x037 32  0  8  8  8  8  24  8  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x038 32  0  8  8  8  8  24  8  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x039 32  0  8  8  8  8  24  8  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x03a 32  0  8  8  8  8  32  0  2 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x03b 32  0  8  8  8  8  32  0  4 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x03c 32  0  8  8  8  8  32  0  8 1 0x34325241--            y  y   y   y                win,
+libEGL debug:     0x03d 24  0  8  8  8  0   0  0  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x03e 24  0  8  8  8  0  16  0  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x03f 24  0  8  8  8  0  24  0  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x040 24  0  8  8  8  0  24  8  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x041 24  0  8  8  8  0  32  0  0 0 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x042 24  0  8  8  8  0   0  0  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x043 24  0  8  8  8  0   0  0  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x044 24  0  8  8  8  0   0  0  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x045 24  0  8  8  8  0  16  0  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x046 24  0  8  8  8  0  16  0  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x047 24  0  8  8  8  0  16  0  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x048 24  0  8  8  8  0  24  0  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x049 24  0  8  8  8  0  24  0  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04a 24  0  8  8  8  0  24  0  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04b 24  0  8  8  8  0  24  8  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04c 24  0  8  8  8  0  24  8  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04d 24  0  8  8  8  0  24  8  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04e 24  0  8  8  8  0  32  0  2 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x04f 24  0  8  8  8  0  32  0  4 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x050 24  0  8  8  8  0  32  0  8 1 0x34325258--            y  y   y   y                win,
+libEGL debug:     0x051 16  0  5  6  5  0   0  0  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x052 16  0  5  6  5  0  16  0  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x053 16  0  5  6  5  0  24  0  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x054 16  0  5  6  5  0  24  8  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x055 16  0  5  6  5  0  32  0  0 0 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x056 16  0  5  6  5  0   0  0  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x057 16  0  5  6  5  0   0  0  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x058 16  0  5  6  5  0   0  0  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x059 16  0  5  6  5  0  16  0  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05a 16  0  5  6  5  0  16  0  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05b 16  0  5  6  5  0  16  0  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05c 16  0  5  6  5  0  24  0  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05d 16  0  5  6  5  0  24  0  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05e 16  0  5  6  5  0  24  0  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x05f 16  0  5  6  5  0  24  8  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x060 16  0  5  6  5  0  24  8  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x061 16  0  5  6  5  0  24  8  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x062 16  0  5  6  5  0  32  0  2 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x063 16  0  5  6  5  0  32  0  4 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x064 16  0  5  6  5  0  32  0  8 1 0x36314752--            y  y   y   y                win,
+libEGL debug:     0x065 64  0 16 16 16 16   0  0  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x066 64  0 16 16 16 16  16  0  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x067 64  0 16 16 16 16  24  0  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x068 64  0 16 16 16 16  24  8  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x069 64  0 16 16 16 16  32  0  0 0 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06a 64  0 16 16 16 16   0  0  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06b 64  0 16 16 16 16   0  0  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06c 64  0 16 16 16 16   0  0  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06d 64  0 16 16 16 16  16  0  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06e 64  0 16 16 16 16  16  0  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x06f 64  0 16 16 16 16  16  0  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x070 64  0 16 16 16 16  24  0  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x071 64  0 16 16 16 16  24  0  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x072 64  0 16 16 16 16  24  0  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x073 64  0 16 16 16 16  24  8  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x074 64  0 16 16 16 16  24  8  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x075 64  0 16 16 16 16  24  8  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x076 64  0 16 16 16 16  32  0  2 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x077 64  0 16 16 16 16  32  0  4 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x078 64  0 16 16 16 16  32  0  8 1 0x48344241--            y  y   y   y                win,
+libEGL debug:     0x079 48  0 16 16 16  0   0  0  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07a 48  0 16 16 16  0  16  0  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07b 48  0 16 16 16  0  24  0  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07c 48  0 16 16 16  0  24  8  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07d 48  0 16 16 16  0  32  0  0 0 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07e 48  0 16 16 16  0   0  0  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x07f 48  0 16 16 16  0   0  0  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x080 48  0 16 16 16  0   0  0  8 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x081 48  0 16 16 16  0  16  0  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x082 48  0 16 16 16  0  16  0  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x083 48  0 16 16 16  0  16  0  8 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x084 48  0 16 16 16  0  24  0  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x085 48  0 16 16 16  0  24  0  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x086 48  0 16 16 16  0  24  0  8 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x087 48  0 16 16 16  0  24  8  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x088 48  0 16 16 16  0  24  8  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x089 48  0 16 16 16  0  24  8  8 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x08a 48  0 16 16 16  0  32  0  2 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x08b 48  0 16 16 16  0  32  0  4 1 0x48344258--            y  y   y   y                win,
+libEGL debug:     0x08c 48  0 16 16 16  0  32  0  8 1 0x48344258--            y  y   y   y                win,
+[    16.990] (II) AIGLX: Loaded and initialized virtio_gpu
+[    17.003] (II) GLX: Initialized DRI2 GL provider for screen 0
+[    17.007] (II) Initializing extension XFree86-VidModeExtension
+[    17.010] (II) Initializing extension XFree86-DGA
+[    17.012] (II) Initializing extension XFree86-DRI
+[    17.025] (II) Initializing extension DRI2
+[    17.040] (II) modeset(0): Damage tracking initialized
+[    17.042] (II) modeset(0): Setting screen physical size to 270 x 179
+[app] exec pid=16 path=/bin/sh at=17249ms
+[app] exec pid=17 path=/usr/bin/xkbcomp at=18445ms
+[exit-cause] status pid=0x00000011 status=0x00000000
+[app] exit pid=17 status=0 lived=3139ms
+[lxproc] syscall 0x000000000000003D failed -> 0xFFFFFFFFFFFFFFF6
+[exit-cause] status pid=0x00000010 status=0x00000000
+[app] exit pid=16 status=0 lived=4355ms
+[    21.648] (II) Using input driver 'evdev' for 'kbd0'
+[    21.678] (**) Option "CoreKeyboard"
+[    21.680] (**) kbd0: always reports core events
+[    21.682] (**) evdev: kbd0: Device: "/dev/input/event0"
+[    21.737] (--) evdev: kbd0: Vendor 0x1234 Product 0x1
+[    21.739] (--) evdev: kbd0: Found keys
+[    21.755] (II) evdev: kbd0: Configuring as keyboard
+[    21.757] (II) XINPUT: Adding extended input device "kbd0" (type: KEYBOARD, id 6)
+[    21.792] (**) Option "xkb_rules" "evdev"
+[app] exec pid=16 path=/bin/sh at=22311ms
+[app] exec pid=17 path=/usr/bin/xkbcomp at=22538ms
+[exit-cause] status pid=0x00000011 status=0x00000000
+[app] exit pid=17 status=0 lived=481ms
+[lxproc] syscall 0x000000000000003D failed -> 0xFFFFFFFFFFFFFFF6
+[exit-cause] status pid=0x00000010 status=0x00000000
+[app] exit pid=16 status=0 lived=726ms
+[    23.074] (II) Using input driver 'evdev' for 'mouse0'
+[    23.077] (**) Option "CorePointer"
+[    23.078] (**) mouse0: always reports core events
+[    23.080] (**) evdev: mouse0: Device: "/dev/input/event1"
+[    23.094] (--) evdev: mouse0: Vendor 0x1234 Product 0x2
+[    23.109] (**) Option "IgnoreRelativeAxes" "true"
+[    23.112] (**) Option "IgnoreAbsoluteAxes" "false"
+[    23.125] (--) evdev: mouse0: Found 3 mouse buttons
+[    23.128] (--) evdev: mouse0: Found scroll wheel(s)
+[    23.142] (II) evdev: mouse0: Relative axes present but ignored.
+[    23.144] (--) evdev: mouse0: Found absolute axes
+[    23.156] (--) evdev: mouse0: Found x and y absolute axes
+[    23.159] (II) evdev: mouse0: Configuring as mouse
+[    23.178] (II) evdev: mouse0: Adding scrollwheel support
+[    23.182] (**) evdev: mouse0: YAxisMapping: buttons 4 and 5
+[    23.194] (**) evdev: mouse0: EmulateWheelButton: 4, EmulateWheelInertia: 10, EmulateWheelTimeout: 200
+[    23.209] (II) XINPUT: Adding extended input device "mouse0" (type: MOUSE, id 7)
+[    23.212] (II) evdev: mouse0: initialized for relative axes.
+[    23.215] (II) evdev: mouse0: initialized for absolute axes.
+[    23.228] (**) mouse0: (accel) keeping acceleration scheme 1
+[    23.258] (**) mouse0: (accel) acceleration profile 0
+[    23.260] (**) mouse0: (accel) acceleration factor: 2.000
+[    23.263] (**) mouse0: (accel) acceleration threshold: 4
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[    23.294] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[drm-dbg] blit n=0x00000001 bo h=0x00000002 rs=0x00000001 mirror=0x000002A8
+[drm-dbg] readback n=0x00000001 ok res=0x00000003 0x00000400x0x000002A8 pitch=0x00001000
+[13:13:1113/013118.293469:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[1:1:1113/013118.315767:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[lxsys] ENOSYS #0x000000000000013D (0x0000000000000001,0x0000000000000001,0x0000000000000000)
+[procfs] write_at offset=0x0000000000000000 size=0x0000000000000004
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[procfs] write_at offset=0x0000000000000000 size=0x000000000000000C
+[exit-cause] status pid=0x00000010 status=0x00000000
+[app] exit pid=16 status=0
+[7:21:1113/013119.012632:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:26:1113/013119.114744:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/nonexistent'
+[7:26:1113/013119.133035:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[tmpfs] slots in use reached 0x000000C0 of 0x00001000
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:26:1113/013122.365877:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/run/dbus/system_bus_socket'
+[7:26:1113/013122.383890:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[usock] connect FAILED '/nonexistent'
+[7:26:1113/013122.402183:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:23:1113/013122.489539:ERROR:net/base/address_tracker_linux.cc:224] Could not create NETLINK socket: Address family not supported by protocol (97)
+[tmpfs] slots in use reached 0x000000E0 of 0x00001000
+[7:21:1113/013123.198525:ERROR:device/udev_linux/udev_watcher.cc:51] Failed to initialize a udev monitor.
+[usock] connect FAILED '/nonexistent'
+[usock] (further connect failures silenced)
+[7:26:1113/013123.311893:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:36:1113/013123.432459:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 39: Input/output error (5)
+[39:39:1113/013123.502631:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[40:36:1113/013123.909170:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:440] prctl: Operation not supported (95)
+[elfload] path=/Userland/Chromium/Resource/chrome total_ms=86 read_ms=16 copy_ms=0 map_ms=0 eager_mb=0 demand_mb=332 chunks=10
+[app] exec pid=40 path=/Userland/Chromium/Resource/chrome at=32668ms
+[    33.315] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[7:7:1113/013125.713651:WARNING:chrome/browser/signin/account_consistency_mode_manager.cc:74] Desktop Identity Consistency cannot be enabled as no OAuth client ID and client secret have been configured.
+[7:36:1113/013125.950245:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 43: Input/output error (5)
+[7:26:1113/013126.069041:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[tmpfs] slots in use reached 0x00000100 of 0x00001000
+[tmpfs] slots in use reached 0x00000120 of 0x00001000
+[tmpfs] slots in use reached 0x00000140 of 0x00001000
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+using driver virtio_gpu for 27
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+pci id for fd 27: 1af4:1050, driver virtio_gpu
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[7:26:1113/013133.093909:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:26:1113/013133.113625:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+Using DRI3 for screen 0
+[drm] unhandled ioctl nr=0x000000000000003B type=0x0000000000000064
+[tmpfs] slots in use reached 0x00000160 of 0x00001000
+[    43.361] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[7:36:1113/013135.290339:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 65: Input/output error (5)
+[39:39:1113/013136.131920:WARNING:sandbox/policy/linux/sandbox_linux.cc:405] InitializeSandbox() called with multiple threads in process gpu-process.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[7:36:1113/013141.364451:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 83: Input/output error (5)
+[7:7:1113/013142.444663:WARNING:ui/aura/window.cc:1509] StackChildLayerRelativeTo called with unmanaged layer(s). child=WebContentsViewAura child_managed=0 target=WebContentsViewAura target_managed=0
+[7:7:1113/013142.464076:WARNING:ui/aura/window.cc:1509] StackChildLayerRelativeTo called with unmanaged layer(s). child=WebContentsViewAura child_managed=0 target=WebContentsViewAura target_managed=0
+[7:36:1113/013142.611544:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 84: Input/output error (5)
+[7:7:1113/013143.478800:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/013143.508756:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1113/013143.530096:WARNING:device/bluetooth/dbus/bluez_dbus_manager.cc:209] Floss manager service not available, cannot set Floss enable/disable.
+[7:7:1113/013143.565233:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/013143.672403:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:7:1113/013143.894580:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[43:1:1113/013143.721105:INFO:content/child/child_thread_impl.cc:931] Terminating current process after 15 seconds with no connection.
+[exit-cause] status pid=0x0000002B status=0x00000000
+[app] exit pid=43 status=0
+[7:7:1113/013144.119432:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/013144.282482:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[tmpfs] slots in use reached 0x00000180 of 0x00001000
+[    53.471] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[7:26:1113/013150.362357:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:26:1113/013150.711822:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:7:1113/013150.747123:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:7:1113/013151.648656:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/013151.667486:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[7:23:1113/013152.088194:ERROR:components/signin/public/webdata/token_service_table.cc:216] Failed to load tokens (invalid SQL statement).
+[7:7:1113/013152.124092:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:36:1113/013152.624388:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 101: Input/output error (5)
+[40:40:1113/013152.713527:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[7:7:1113/013153.929589:WARNING:dbus/property.cc:94] Failed to connect to PropertiesChangedsignal.
+[7:7:1113/013153.951473:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.Properties.GetAll: object_path= /org/freedesktop/UPower/devices/DisplayDevice: unknown error type: 
+[7:7:1113/013153.974776:WARNING:dbus/property.cc:174] GetAll request failed for: org.freedesktop.UPower.Device
+[7:7:1113/013154.012145:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/013154.306528:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[    63.896] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[7:36:1113/013156.141562:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 116: Input/output error (5)
+[40:112:1113/013156.534195:ERROR:base/files/file_path_watcher_inotify.cc:925] Failed to read /proc/sys/fs/inotify/max_user_watches
+[7:7:1113/013157.511730:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:26:1113/013157.984202:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /nonexistent: No such file or directory
+[tmpfs] slots in use reached 0x000001A0 of 0x00001000
+[7:7:1113/013159.789087:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+[7:7:1113/013159.869990:WARNING:ui/base/idle/idle_linux.cc:111] None of the known D-Bus ScreenSaver services could be used.
+[7:26:1113/013159.886869:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:7:1113/013201.253476:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.NetworkManager.GetDevices: object_path= /org/freedesktop/NetworkManager: unknown error type: 
+[7:7:1113/013201.469192:WARNING:services/device/geolocation/wifi_data_provider_linux.cc:171] Failed to get the device list
+[tmpfs] slots in use reached 0x000001C0 of 0x00001000
+[    73.958] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[7:36:1113/013207.958624:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 135: Input/output error (5)
+[7:7:1113/013211.169980:INFO:CONSOLE:5] "GPUTEST VERSION=WebGL 2.0 (OpenGL ES 3.0 Chromium)", source: file:///Userland/Chromium/Resource/gputest.html (5)
+[7:7:1113/013211.287930:INFO:CONSOLE:5] "GPUTEST RENDERER=WebKit WebGL", source: file:///Userland/Chromium/Resource/gputest.html (5)
+[7:7:1113/013211.303951:INFO:CONSOLE:5] "GPUTEST UNMASKED_VENDOR=Google Inc. (Mesa)", source: file:///Userland/Chromium/Resource/gputest.html (5)
+[7:7:1113/013211.332373:INFO:CONSOLE:5] "GPUTEST UNMASKED_RENDERER=ANGLE (Mesa, virgl (D3D12 (NVIDIA GeForce RTX 2060)), OpenGL 4.2)", source: file:///Userland/Chromium/Resource/gputest.html (5)
+[7:7:1113/013211.351891:INFO:CONSOLE:5] "GPUTEST UA=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36", source: file:///Userland/Chromium/Resource/gputest.html (5)
+[    83.985] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[39:39:1113/013215.958107:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 1 times!
+[39:39:1113/013216.084140:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 2 times!
+[39:39:1113/013216.205706:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 3 times!
+[7:7:1113/013216.562369:INFO:CONSOLE:5] "GPUTEST rAF fps=1.8", source: file:///Userland/Chromium/Resource/gputest.html (5)
+[    94.007] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[sysvshm] shmget-create a=0x0000000000000000 b=0x0000000000002AA8 c=0x0000000000000101
+[sysvshm] shmat a=0x0000000000000101 b=0x0000004106A59000 c=0x0000000000000000
+[sysvshm] shmctl-rmid a=0x0000000000000101 b=0x0000000000000000 c=0x0000000000000000
+[sysvshm] shmat a=0x0000000000000101 b=0x0000004101014000 c=0x0000000000000000
+[sysvshm] shmget-create a=0x0000000000000000 b=0x0000000000002AA8 c=0x0000000000000102
+[sysvshm] shmat a=0x0000000000000102 b=0x0000004106C59000 c=0x0000000000000000
+[sysvshm] shmctl-rmid a=0x0000000000000102 b=0x0000000000000000 c=0x0000000000000000
+[sysvshm] shmat a=0x0000000000000102 b=0x0000004101017000 c=0x0000000000000000
+[   104.038] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[7:36:1113/013237.163088:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 147: Input/output error (5)
+[7:7:1113/013237.267927:WARNING:ui/aura/window.cc:1509] StackChildLayerRelativeTo called with unmanaged layer(s). child=WebContentsViewAura child_managed=0 target=WebContentsViewAura target_managed=0
+[7:7:1113/013237.300869:WARNING:ui/aura/window.cc:1509] StackChildLayerRelativeTo called with unmanaged layer(s). child=WebContentsViewAura child_managed=0 target=WebContentsViewAura target_managed=0
+[sysvshm] shmdt a=0x0000004106A59000 b=0x0000000000000000 c=0x0000000000000000
+[sysvshm] shmdt a=0x0000004106C59000 b=0x0000000000000000 c=0x0000000000000000
+[7:26:1113/013237.673004:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[sysvshm] shmdt a=0x0000004101014000 b=0x0000000000000000 c=[7:7:1113/013237.777743:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.NetworkManager.GetDevices: object_path= /org/freedesktop/NetworkManager: unknown error type: 
+[7:7:1113/013237.808265:WARNING:services/device/geolocation/wifi_data_provider_linux.cc:171] Failed to get the device list
+0x0000000000000000
+[sysvshm] shmdt a=0x0000004101017000 b=0x0000000000000000 c=0x0000000000000000
+[   114.057] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[exit-cause] status pid=0x0000008D status=0x00000000
+[app] exit pid=135 status=0
+[7:7:1113/013248.088929:ERROR:chrome/browser/ui/webui/ntp/new_tab_ui.cc:54] Requested load of chrome://newtab/ for incorrect profile type.
+[7:7:1113/013250.521689:ERROR:chrome/browser/ui/webui/ntp/new_tab_ui.cc:54] Requested load of chrome://newtab/ for incorrect profile type.
+[7:7:1113/013252.923619:ERROR:chrome/browser/ui/webui/ntp/new_tab_ui.cc:54] Requested load of chrome://newtab/ for incorrect profile type.
+[7:26:1113/013253.683394:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory
+[7:7:1113/013253.782122:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.NetworkManager.GetDevices: object_path= /org/freedesktop/NetworkManager: unknown error type: 
+[7:7:1113/013253.812579:WARNING:services/device/geolocation/wifi_data_provider_linux.cc:171] Failed to get the device list
+[   124.083] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[drm-dbg] blit n=0x00000041 bo h=0x00000002 rs=0x00000001 mirror=0x000002A8
+[drm-dbg] readback n=0x00000041 ok res=0x00000003 0x00000400x0x000002A8 pitch=0x00001000
+[7:36:1113/013259.365821:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 141: Input/output error (5)
+[39:39:1113/013302.774904:WARNING:ui/gl/angle_platform_impl.cc:39] Debug.cpp:181 (insertMessage): GL error: HIGH: Error: 0x00000505, in ../../third_party/angle/src/libANGLE/renderer/gl/BufferGL.cpp, setData:128. Internal error: 0x00000505: Unexpected driver error.
+[39:39:1113/013302.810754:ERROR:ui/gl/angle_platform_impl.cc:34] renderergl_utils.cpp:3564 (HandleError): GL call functions->bufferData(gl::ToGLenum(DestBufferOperationTarget), size, uploadData, ToGLenum(usage)) generated error 0x00000505 in ../../third_party/angle/src/libANGLE/renderer/gl/BufferGL.cpp, setData:128. 
+ERR: renderergl_utils.cpp:3564 (HandleError): GL call functions->bufferData(gl::ToGLenum(DestBufferOperationTarget), size, uploadData, ToGLenum(usage)) generated error 0x00000505 in ../../third_party/angle/src/libANGLE/renderer/gl/BufferGL.cpp, setData:128. 
+[39:39:1113/013303.050741:ERROR:gpu/command_buffer/service/shared_context_state.cc:1355] SharedContextState context lost via Skia OOM.
+[39:39:1113/013303.091195:ERROR:components/viz/service/gl/exit_code.cc:13] Restarting GPU process due to unrecoverable error. Context was lost.
+[exit-cause] status pid=0x00000049 status=0x00000022
+[app] exit pid=39 status=34
+[7:7:1113/013303.933337:ERROR:content/browser/gpu/gpu_process_host.cc:1043] GPU process exited unexpectedly: exit_code=8704
+[7:7:1113/013303.950254:WARNING:content/browser/gpu/gpu_process_host.cc:1501] The GPU process has crashed 1 time(s)
+[7:7:1113/013304.022577:INFO:CONSOLE:0] "WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost", source: file:///Userland/Chromium/Resource/gputest.html (0)
+[tmpfs] slots in use reached 0x000001E0 of 0x000[7:36:1113/013304.109620:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 39: Input/output error (5)
+01000
+[39:39:1113/013304.194388:WARNING:third_party/crashpad/crashpad/client/crashpad_client_linux.cc:385] prctl: Operation not supported (95)
+[   134.326] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+using driver virtio_gpu for 27
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+pci id for fd 27: 1af4:1050, driver virtio_gpu
+[7:36:1113/013308.558376:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 68: Input/output error (5)
+[7:23:1113/013308.897477:ERROR:device/udev_linux/udev_watcher.cc:51] Failed to initialize a udev monitor.
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[tmpfs] slots in use reached 0x00000200 of 0x00001000
+Using DRI3 for screen 0
+[7:36:1113/013310.018354:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 93: Input/output error (5)
+[7:27:1113/013310.664198:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: DEPRECATED_ENDPOINT
+[39:39:1113/013311.032645:WARNING:sandbox/policy/linux/sandbox_linux.cc:405] InitializeSandbox() called with multiple threads in process gpu-process.
+[7:36:1113/013311.941307:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:312] Failed to adjust OOM score of renderer with pid 176: Input/output error (5)
+[7:7:1113/013311.973329:WARNING:content/browser/gpu/gpu_process_host.cc:1065] Reinitialized the GPU process after a crash. The reported initialization time was 7344 ms
+[exit-cause] status pid=0x0000005D status=0x00000000
+[app] exit pid=93 status=0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+[drm-render] 3D_FEATURES=1
+[drm-render] VERSION driver=virtio_gpu version=0.0
+[drm-render] VERSION driver=virtio_gpu version=0.0
+libGL: Can't open configuration file /etc/drirc: No such file or directory.
+libGL: Can't open configuration file /tmp/.drirc: No such file or directory.
+Warning: vkCreateInstance: Found no drivers!
+Warning: vkCreateInstance failed with VK_ERROR_INCOMPATIBLE_DRIVER
+    at CheckVkSuccessImpl (../../third_party/dawn/src/dawn/na[tmpfs] slots in use reached tive/vulkan/VulkanError.cpp:106)
+
+0x00000220 of 0x00001000
+Warning: EGL display does not support requested client API 'OpenGL' (supported: OpenGL_ES).
+ - While trying to discover a BackendType::OpenGL adapter.
+
+Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 72 to 16 to fit dynamic offset allocation limit.
+Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 32 to 16 to fit dynamic offset allocation limit.
+[exit-cause] status pid=0x000000B0 status=0x00000000
+[app] exit pid=176 status=0
+[   144.415] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[39:39:1113/013318.436289:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 1 times!
+[39:39:1113/013318.587703:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 2 times!
+[7:7:1113/013318.639855:WARNING:ui/aura/window.cc:1509] StackChildLayerRelativeTo called with unmanaged layer(s). child=WebContentsViewAura child_managed=0 target=WebContentsViewAura target_managed=0
+[7:7:1113/013318.674944:WARNING:ui/aura/window.cc:1509] StackChildLayerRelativeTo called with unmanaged layer(s). child=WebContentsViewAura child_managed=0 target=WebContentsViewAura target_managed=0
+[39:39:1113/013318.662935:ERROR:ui/gl/gl_surface_presentation_helper.cc:260] GetVSyncParametersIfAvailable() failed for 3 times!
+[exit-cause] status pid=0x00000053 status=0x000000F1
+[app] exit pid=83 status=241
+Warning: vkCreateInstance: Found no drivers!
+Warning: vkCreateInstance failed with VK_ERROR_INCOMPATIBLE_DRIVER
+    at CheckVkSuccessImpl (../../third_party/dawn/src/dawn/native/vulkan/VulkanError.cpp:106)
+
+Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 72 to 16 to fit dynamic offset allocation limit.
+Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 32 to 16 to fit dynamic offset allocation limit.
+[   154.605] (EE) dbus-core: error connecting to system bus: org.freedesktop.DBus.Error.FileNotFound (Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory)
+[7:7:1113/013329.384509:WARNING:ui/aura/window.cc:1509] StackChildLayerRelativeTo called with unmanaged layer(s). child=WebContentsViewAura child_managed=0 target=WebContentsViewAura target_managed=0
+[7:7:1113/013329.447407:WARNING:ui/aura/window.cc:1509] StackChildLayerRelativeTo called with unmanaged layer(s). child=WebContentsViewAura child_managed=0 target=WebContentsViewAura target_managed=0
