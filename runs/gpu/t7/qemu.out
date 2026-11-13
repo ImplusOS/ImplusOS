@@ -1,5 +1,0 @@
-libEGL warning: DRI3 error: Could not get DRI3 device
-libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering
-qemu: egl: eglMakeCurrent failed: EGL_BAD_ACCESS
-make_current: Error switching context: -1
-qemu-system-x86_64: ../src/dispatch_common.c:872: epoxy_get_proc_address: Assertion `0 && "Couldn't find current GLX or EGL context.\n"' failed.
