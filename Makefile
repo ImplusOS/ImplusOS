@@ -401,6 +401,7 @@ USERLAND_APP_C_SRCS := \
 	Userland/API/Source/MaterialTheme.c \
 	Userland/API/Source/ImUI.c \
 	Userland/API/Source/XSession.c \
+	Userland/API/Source/X11Wire.c \
 	Userland/API/Source/LinuxEnv.c \
 	Userland/Service/Source/service_client.c \
 	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c
@@ -472,9 +473,10 @@ vendor_libs:
 # winedata: the x86_64 Wine loader, wineserver, builtin PE DLLs and fonts.
 # every staged .deb carries, which is what the window manager builds its
 # application list from.
+# x11data: Xlib's locale data and the misc fonts' fonts.dir.
 linux_runtime_stage:
 ifeq ($(ARCH),x86_64)
-	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata alsadata desktopdata winedata locale \
+	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata x11data alsadata desktopdata winedata locale \
 		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
 		CHROME_BIN="$(abspath Userland/Application/Chromium/Resource/chrome)"
 else
@@ -502,7 +504,8 @@ service_build: vendor_libs $(USERLAND_INIT_OBJS)
 	done
 
 app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/ImUI.o \
-	$(BUILD_DIR)/Userland/API/XSession.o $(BUILD_DIR)/Userland/API/Material.o \
+	$(BUILD_DIR)/Userland/API/XSession.o $(BUILD_DIR)/Userland/API/X11Wire.o \
+	$(BUILD_DIR)/Userland/API/Material.o \
 	$(BUILD_DIR)/Userland/API/MaterialTheme.o \
 	$(BUILD_DIR)/Userland/API/LinuxEnv.o \
 	$(BUILD_DIR)/Userland/API/XMLParser.o
@@ -820,17 +823,18 @@ endif
 QEMU_DISPLAY ?= gtk
 # Host-GPU (virgl) rendering for Mesa/Xorg/Chromium inside the guest:
 #   make run_uefi_cdrom QEMU_GPU=virgl
-# adds a virtio-gpu-gl device (the firmware keeps the plain VGA) and switches
+# replaces the VGA with a virtio-gpu-gl device (the kernel drives it directly;
+# no plain VGA is needed for the boot screen) and switches
 # the display to an OpenGL-capable backend. The guest then reports
 # SYSTEM_GRAPHICS_ACCEL_3D, Xorg's glamor and Chromium's GPU process run on
 # the host GPU, and WebGL reports "ANGLE (Mesa, virgl (<host GPU>), ...)".
 # sdl,gl=es is the backend that works under WSLg (gtk,gl=on aborts there with
 # EGL_BAD_ACCESS once the virgl scanout is shown); override QEMU_DISPLAY if
 # gtk,gl=on works on your host.
-QEMU_GPU ?=
+QEMU_GPU ?= virgl
 ifeq ($(QEMU_GPU),virgl)
 QEMU_DISPLAY := sdl,gl=es
-QEMU_GPU_DEVICES := -vga none -device virtio-gpu-gl-pci -device VGA
+QEMU_GPU_DEVICES := -vga none -device virtio-gpu-gl-pci
 else
 QEMU_GPU_DEVICES :=
 endif
@@ -839,10 +843,14 @@ QEMU_DISK_SIZE ?= 128M
 
 QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
 QEMU_SYSTEM_X86_64 ?= qemu-system-x86_64
+# usb-tablet is an absolute pointer: the guest cursor follows the host cursor
+# with no grab. With only a relative mouse (PS/2 or usb-mouse), QEMU's SDL
+# backend grabs the pointer on click and warps it, which under WSLg shows up
+# as the cursor jumping on click and moving backwards.
 QEMU_INPUT_DEVICES := \
     -device qemu-xhci,id=xhci \
     -device usb-kbd,bus=xhci.0 \
-    -device usb-mouse,bus=xhci.0
+    -device usb-tablet,bus=xhci.0
 QEMU_NET_DEVICES ?= \
 	-netdev user,id=net0 \
 	-device virtio-net-pci,netdev=net0
@@ -885,10 +893,23 @@ qemu_input_status:
 	echo "QEMU network devices: $(QEMU_NET_DEVICES)"; \
 	[ -f "$(QEMU_BOOT_IMAGE)" ] || { echo "Missing $(QEMU_BOOT_IMAGE) -- build it first (make image_livecd)"; exit 1; }
 
+# OVMF stores boot and console device paths in the VARS file. Reused with a
+# different device layout (e.g. after QEMU_GPU switched VGA for virtio-gpu),
+# the firmware stalls on the TianoCore logo and never starts the boot
+# manager. So the VARS file is tied to the layout that created it and
+# recreated from the template whenever that layout changes.
+QEMU_VARS_LAYOUT = $(QEMU_MACHINE) | $(strip $(QEMU_INPUT_DEVICES)) | $(strip $(QEMU_NET_DEVICES)) | $(strip $(QEMU_AUDIO_DEVICES)) | $(strip $(QEMU_GPU_DEVICES))
+
 qemu_vars:
-	@if [ -n "$(QEMU_VARS_DRIVE)" ] && [ ! -f "$(QEMU_VARS)" ]; then \
-		mkdir -p "$(dir $(QEMU_VARS))"; \
-		cp "$(QEMU_VARS_TEMPLATE)" "$(QEMU_VARS)"; \
+	@if [ -n "$(QEMU_VARS_DRIVE)" ]; then \
+		layout='$(QEMU_VARS_LAYOUT)'; \
+		if [ ! -f "$(QEMU_VARS)" ] || \
+		   [ "$$(cat "$(QEMU_VARS).layout" 2>/dev/null)" != "$$layout" ]; then \
+			[ -f "$(QEMU_VARS)" ] && echo "QEMU device layout changed: resetting $(QEMU_VARS)"; \
+			mkdir -p "$(dir $(QEMU_VARS))"; \
+			cp "$(QEMU_VARS_TEMPLATE)" "$(QEMU_VARS)"; \
+			printf '%s\n' "$$layout" > "$(QEMU_VARS).layout"; \
+		fi; \
 	fi
 
 verify_usb:

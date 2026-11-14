@@ -210,6 +210,7 @@ libwebp7	1.5.0-0.1	https://snapshot.debian.org/archive/debian/20250901T000000Z/p
 libwebpmux3	1.5.0-0.1	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/libw/libwebp/libwebpmux3_1.5.0-0.1_amd64.deb	8bc86d509406ad496b6414c7068b3dadc0f8c502027973cbf1765c7bb54fabdf
 libwine	10.0~repack-6	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/w/wine/libwine_10.0~repack-6_amd64.deb	702c99d2fbaef2a4966667e0cdabd477ed1754c1b3b5d4476606eaf5fd6e1444
 libx11-6	2:1.8.12-1	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/libx/libx11/libx11-6_1.8.12-1_amd64.deb	b5a3fd3bf8c8fd0364bfb9bea00dcba7fc301229bd02dded084632d31f5b0fb3
+libx11-data	2:1.8.12-1	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/libx/libx11/libx11-data_1.8.12-1_all.deb	c54f87069888f80ba4da586da6147d74c7598ccdd8b90906dbc4271fa414c738
 libx11-xcb1	2:1.8.12-1	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/libx/libx11/libx11-xcb1_1.8.12-1_amd64.deb	e05f94d21a932fba5b09b9b13d99df776b155d3bc792c0e294451df9ffe1ba25
 libx264-164	2:0.164.3108+git31e19f9-2+b1	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/x/x264/libx264-164_0.164.3108+git31e19f9-2+b1_amd64.deb	325c90dc0888be316c8979b94aee546d223d4edf03b30927d1e9d431f67e33b2
 libx265-215	4.1-2	https://snapshot.debian.org/archive/debian/20250901T000000Z/pool/main/x/x265/libx265-215_4.1-2_amd64.deb	4bb075b465dbc136b0c5050b956432ea7e443a16d592aa89ef28bcaf4b0ad734

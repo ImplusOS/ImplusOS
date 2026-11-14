@@ -43,10 +43,10 @@ SEED      := $(SELF_DIR)/packages.seed.txt
 # ステージ先（イメージビルドが渡す）。既定は自ツリー内の確認用。
 STAGE_DIR ?= $(REPO_ROOT)/Build/x86_64/LinuxRuntime/stage
 
-.PHONY: all resolve fetch stage gtkdata xorgdata fastfetchdata xtermdata alsadata desktopdata winedata locale verify clean help
+.PHONY: all resolve fetch stage gtkdata xorgdata fastfetchdata xtermdata x11data alsadata desktopdata winedata locale verify clean help
 
 help:
-	@echo "targets: resolve | fetch | stage STAGE_DIR=<d> | gtkdata STAGE_DIR=<d> | xorgdata STAGE_DIR=<d> | fastfetchdata STAGE_DIR=<d> | xtermdata STAGE_DIR=<d> | alsadata STAGE_DIR=<d> | desktopdata STAGE_DIR=<d> | winedata STAGE_DIR=<d> | locale STAGE_DIR=<d> | verify | clean"
+	@echo "targets: resolve | fetch | stage STAGE_DIR=<d> | gtkdata STAGE_DIR=<d> | xorgdata STAGE_DIR=<d> | fastfetchdata STAGE_DIR=<d> | xtermdata STAGE_DIR=<d> | x11data STAGE_DIR=<d> | alsadata STAGE_DIR=<d> | desktopdata STAGE_DIR=<d> | winedata STAGE_DIR=<d> | locale STAGE_DIR=<d> | verify | clean"
 	@echo "vars:    DEBIAN_SUITE=$(DEBIAN_SUITE) DEBIAN_SNAPSHOT=$(DEBIAN_SNAPSHOT)"
 	@echo "         FOREIGN_BINS=$(FOREIGN_BINS)"
 
@@ -94,6 +94,12 @@ fastfetchdata: stage
 xtermdata: stage
 	CACHE_DIR='$(CACHE_DIR)' WORK_DIR='$(WORK_DIR)' STAGE_DIR='$(STAGE_DIR)' \
 	  ./stage-xterm.sh
+
+# Xlib ロケールデータと misc フォントの fonts.dir。xorgdata の後（misc
+# フォントに fonts.dir を作るので）。
+x11data: stage xorgdata
+	CACHE_DIR='$(CACHE_DIR)' WORK_DIR='$(WORK_DIR)' STAGE_DIR='$(STAGE_DIR)' \
+	  ./stage-x11data.sh
 
 # 閉包中の .deb が持つ .desktop とアプリアイコンを STAGE_DIR へ。これが
 # 「デスクトップ環境のアプリ一覧」の供給源になる（stage-desktop.sh 冒頭）。

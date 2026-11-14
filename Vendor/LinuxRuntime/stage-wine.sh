@@ -88,12 +88,35 @@ for tool in wine wineboot winecfg wineconsole winedbg winefile winepath \
 	ln -sf "${tool}-stable" "$STAGE_DIR/usr/bin/$tool"
 done
 
-# `wine64-preloader` is normally in /usr/lib/wine, but retain the canonical
-# executable path if a package version installs it directly in /usr/lib.
-for f in "$UNION/usr/lib/wine/wine64-preloader" \
-	         "$UNION/usr/lib/x86_64-linux-gnu/wine/wine64-preloader"; do
-	[ -e "$f" ] || [ -L "$f" ] || continue
-	copy_one "$f"
-done
+# No wine64-preloader in the image. The preloader is a tiny static-pie that
+# reserves Wine's fixed low address ranges with MAP_FIXED before loading
+# wine64; under ImplusOS that low range is the kernel's identity map, and the
+# preloader dies on its first relocation write. ntdll's process creation
+# (loader_exec() -> preloader_exec()) falls back to exec'ing wine64 itself
+# when the preloader cannot be exec'd, and wine64 started with
+# WINELOADERNOEXEC=1 (set by the launcher, inherited by every Windows
+# process) does not try to re-exec it. That is the path the first process
+# takes too, so remove the preloader rather than leave a binary that crashes.
+rm -f "$STAGE_DIR/usr/lib/wine/wine64-preloader" \
+      "$STAGE_DIR/usr/lib/wine/wine64-preloader.static" \
+      "$STAGE_DIR/usr/lib/x86_64-linux-gnu/wine/wine64-preloader"
+
+# Debian builds Wine's PE modules against the MinGW zlib (ZLIB_PE_LIBS=z), so
+# user32.dll imports zlib1.dll, which libz-mingw-w64 ships as an ordinary
+# native DLL under /usr/x86_64-w64-mingw32/lib. This build of Wine has no
+# system DLL path compiled in, and it ignores DLLs in its own module
+# directory unless they carry Wine's builtin signature ("... found in
+# WINEDLLPATH but not a builtin, ignoring"), so user32 -- and with it every
+# GUI program, winecfg included -- failed to load. Install a copy with the
+# signature written into the DOS stub (bytes 0x40.., which only a DOS loader
+# would execute) so Wine treats it like its other builtins, both while
+# wineboot bootstraps a prefix and afterwards.
+ZLIB_DLL="$EX/libz-mingw-w64/usr/x86_64-w64-mingw32/lib/zlib1.dll"
+[ -f "$ZLIB_DLL" ] || die "libz-mingw-w64 is not staged (user32.dll needs zlib1.dll); add it to packages.seed.txt and rerun 'make -C Vendor/LinuxRuntime resolve fetch'"
+ZLIB_OUT="$STAGE_DIR/usr/lib/x86_64-linux-gnu/wine/x86_64-windows/zlib1.dll"
+lfanew=$(od -An -t u4 -j 60 -N 4 "$ZLIB_DLL" | tr -d ' ')
+[ "$lfanew" -ge 96 ] || die "zlib1.dll: PE header at $lfanew leaves no DOS stub to sign"
+install -m 0644 "$ZLIB_DLL" "$ZLIB_OUT"
+printf 'Wine builtin DLL\0' | dd of="$ZLIB_OUT" bs=1 seek=64 conv=notrunc status=none
 
 log "staged x86_64 Wine runtime under $STAGE_DIR"

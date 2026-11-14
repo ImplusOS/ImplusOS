@@ -218,6 +218,7 @@ cat > "$STAGE_DIR/etc/X11/xorg.conf" <<'CONF'
 # ImplusOS 方法A+: Xorg を modesetting DDX + glamor で /dev/dri/card0 に固定。
 # atomic modesetting と DRI3 を有効化し、glamor で GPU アクセラレーションを有効化。
 # udev/logind/VT は無いので入力自動追加を切り、card0 は表示専用、renderD128 は Mesa 用。
+# 入力デバイスは定義しない（XSession.c が XTEST で注入する。X サーバはアプリごとに 1 つ）。
 
 Section "ServerFlags"
     Option "AutoAddDevices" "false"
@@ -230,26 +231,13 @@ Section "Module"
     Load "glx"
 EndSection
 
-Section "InputDevice"
-    Identifier  "kbd0"
-    Driver      "evdev"
-    Option      "Device"   "/dev/input/event0"
-    Option      "CoreKeyboard"
-EndSection
-
-Section "InputDevice"
-    Identifier  "mouse0"
-    Driver      "evdev"
-    Option      "Device"   "/dev/input/event1"
-    Option      "CorePointer"
-    # The kernel reports the hosting window's cursor as ABS_X/ABS_Y and also
-    # advertises REL_X/REL_Y so evdev treats it as a mouse (with the wheel)
-    # rather than a touchscreen; take position from the absolute axes.
-    Option      "IgnoreRelativeAxes" "true"
-    # Mice ignore absolute axes by default; setting this to false is what
-    # tells evdev to use them.
-    Option      "IgnoreAbsoluteAxes" "false"
-EndSection
+# No InputDevice sections. Input reaches the server through the XTEST
+# extension from the program's launcher (Userland/API/Source/XSession.c),
+# which is also its window manager: every launched program gets an X server
+# of its own, and evdev devices are shared by every reader -- two servers
+# reading /dev/input/event0 would each see half of the keystrokes. The
+# server's virtual core keyboard/pointer (and their XTEST slaves) are all
+# that is needed.
 
 Section "Device"
     Identifier  "kms0"
@@ -297,8 +285,6 @@ EndSection
 Section "ServerLayout"
     Identifier "layout0"
     Screen     "scr0"
-    InputDevice "kbd0"   "CoreKeyboard"
-    InputDevice "mouse0" "CorePointer"
 EndSection
 CONF
 log "wrote /etc/X11/xorg.conf (glamor + DRI3)"

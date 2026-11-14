@@ -29,6 +29,7 @@ Linux の動的リンカ・共有ライブラリ閉包・ロケールを **ビ�
 | `Makefile` | `resolve` / `fetch` / `stage` / `locale` / `verify` / `clean` |
 | `resolve.sh` | `Resource/chrome` の `DT_NEEDED` 閉包を Debian の `Contents`/`Packages` から解決し `packages.lock` と `closure.txt` を生成（開発時のみ） |
 | `fetch.sh` | `packages.lock` の `.deb` を `cache/` へ取得し sha256 照合 |
+| `stage-x11data.sh` | Xlib のロケールデータと misc フォントの `fonts.dir` の配置（後述） |
 | `stage.sh` | `cache/*.deb` を展開し `<STAGE>/lib64`・`<STAGE>/usr/lib/...` へ実体コピー（symlink 解決）、`LICENSES/` に copyright 収集、`closure.txt` の全 soname が揃うか自己検査 |
 | `packages.seed.txt` | 解決の起点にする Debian パッケージ名（`chrome` の直接依存に対応） |
 | `packages.lock` | 生成物・**コミット対象**。`pkg<TAB>version<TAB>deb-url<TAB>sha256` |
@@ -148,6 +149,23 @@ The BusyBox file itself does not need to be rebuilt as PIE. Verify that the
 check that `/bin/sh`, `ls`, and `rm` can all be launched. This path still
 requires runtime validation, including fork/COW and process teardown of the
 private fixed-address pages.
+
+## X11 アプリの表示（ルートレス）
+
+ImplusOS 上の X11 アプリは、ランチャーごとに専用の Xorg（`:N`）で動く
+（`Userland/API/Source/XSession.c`）。ランチャー自身がその X サーバの
+ウインドウマネージャーで、X のトップレベルウインドウ 1 つにつき ImplusOS の
+ウインドウ 1 つを作る（タイトルバー・タスクバー・フォーカス・閉じるボタンは
+ImplusOS のもの）。メニューやツールチップ（override-redirect）は装飾なしの
+ウインドウとして同じ位置に出る。X の画面はディスプレイ幅の 2 倍で、トップレベル
+同士が重ならないよう配置し、各ウインドウの領域をミラーから切り出して描く。
+
+- 入力は XTEST で注入するので `xorg.conf` に入力デバイスは無い（evdev は複数の
+  X サーバで共有できない）。
+- 閉じるボタンは WM_DELETE_WINDOW（未対応のクライアントは KillClient）。
+- `stage-x11data.sh`（`make x11data`）が Xlib のロケールデータ
+  （`libx11-data` → `/usr/share/X11/locale`）を配置し、ホストに `mkfontdir`
+  があれば misc フォントの `fonts.dir` を生成する。
 
 ## ライセンス
 
