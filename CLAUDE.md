@@ -72,7 +72,7 @@ ImplusOS/
 ├── Userland/
 │   ├── API/                 Typed syscall wrappers (File.h, Graphics.h, Input.h,
 │   │                        Socket.h, Audio.h, WiFi.h, OSDebug.h, ...) + helper
-│   │                        libs (FreeType.c, Jpeg.c, XMLParser.c, Zlib.h)
+│   │                        libs (FreeType.c), the UI toolkit (UI.c) and desktop theme (Theme.c)
 │   ├── Application/         com.ImplusOS.windowmanager, com.ImplusOS.sysnotif, BusyBox
 │   ├── Service/             Hot-loadable services, one ELF/.so each:
 │   │                        com.ImplusOS.ldso (dynamic linker), com.ImplusOS.dynmain,
@@ -88,7 +88,7 @@ ImplusOS/
 ├── RecoveryEnvironment/     Recovery.c + Makefile (minimal init used by the install media)
 ├── Vendor/
 │   ├── Header/              stb_truetype.h, stb_image.h
-│   └── Library/             git submodules: libpng, zlib, libjpeg, freetype
+│   └── Library/             freetype (built by Vendor/Library/Makefile)
 ├── Docs/                    Architecture/, Others/, Images/, OSS_License/
 ├── Makefile                 Top-level build orchestrator
 └── Doxyfile                 Doxygen configuration
@@ -119,7 +119,7 @@ the `CLANGDWARF` toolchain (`EDK2_TOOLCHAIN=`, `EDK2_TARGET=RELEASE`).
 
 | Command | Description |
 |---|---|
-| `make` | Build everything for `ARCH` (bootloader shim, kernel, vendor libs, apps, services, drivers, init) |
+| `make` | Build everything for `ARCH` (bootloader shim, kernel, vendor lib, apps, services, drivers, init) |
 | `make ARCH=arm64` | Build for AArch64 instead of x86_64 |
 | `make kernel` | Build the kernel ELF only |
 | `make app_build` | Build `Userland/Application/*` |
@@ -127,7 +127,7 @@ the `CLANGDWARF` toolchain (`EDK2_TOOLCHAIN=`, `EDK2_TARGET=RELEASE`).
 | `make driver_build` | Build all driver modules |
 | `make driver_stage` | Build drivers + copy `.ELF`s into the staging dir |
 | `make recovery_build` | Build the recovery-environment init |
-| `make vendor_libs` | Build the vendored libraries (libpng/zlib/libjpeg/freetype) |
+| `make vendor_libs` | Build the vendored library (freetype) |
 | `make image` | Build the install-media UDF-bridge ISO (`Image/ImplusOS-$(ARCH)-InstallMedia.iso`) via `genisoimage -udf` |
 | `make image_livecd` | Build the LiveCD UDF-bridge ISO (`Image/ImplusOS-$(ARCH)-LiveCD.iso`) via `genisoimage -udf` |
 | `make run_uefi_usb` | Boot the LiveCD image in QEMU via UEFI, as a USB disk |

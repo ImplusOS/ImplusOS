@@ -312,6 +312,26 @@ define STAGE_XDG_OPEN
 	fi
 endef
 
+# Environment files for Linux programs (Userland/API/Source/LinuxEnv.h):
+# every Environment/*.env under Userland/API and under each application or
+# service directory goes into $(1)/etc/ImplusOS/linux-env/. Generic over
+# whatever files exist -- no program name is baked in here; two sources
+# shipping the same file name is a build error rather than a silent override.
+LINUX_ENV_FILES := $(wildcard Userland/API/Environment/*.env \
+                              Userland/Application/*/Environment/*.env \
+                              Userland/Service/*/Environment/*.env)
+define STAGE_LINUX_ENV
+	mkdir -p "$(1)/etc/ImplusOS/linux-env"; \
+	for f in $(LINUX_ENV_FILES); do \
+		dst="$(1)/etc/ImplusOS/linux-env/$$(basename "$$f")"; \
+		if [ -e "$$dst" ] && ! cmp -s "$$f" "$$dst"; then \
+			echo "error: $$(basename "$$f") is shipped more than once ($$f)" >&2; \
+			exit 1; \
+		fi; \
+		cp "$$f" "$$dst"; \
+	done
+endef
+
 # Copies every immediate subdirectory of $(FIRMWARE_SRC_DIR) (e.g. AIC8800/)
 # verbatim into $(1)/Kernel/Driver/Firmware/<name>/, creating the
 # destination directory as needed. Generic over whatever subdirectories
@@ -368,7 +388,6 @@ USERLAND_C_SRCS := \
 	$(LIBRARY_C_SRCS) \
 	Userland/Source/Userland.c \
 	Userland/Source/Syscalls.c \
-	Userland/API/Source/XMLParser.c \
 	Userland/Service/Source/service_client.c \
 	Userland/Service/com.ImplusOS.netstack/DNS/DNS.c \
 	Userland/Service/com.ImplusOS.posix/src/posix_fdtable.c \
@@ -396,10 +415,8 @@ USERLAND_APP_C_SRCS := \
 	libc/I_libc/Source/src/sys/$(ARCH)/setjmp.c \
 	$(LIBRARY_C_SRCS) \
 	Userland/Source/Syscalls.c \
-	Userland/API/Source/XMLParser.c \
-	Userland/API/Source/Material.c \
-	Userland/API/Source/MaterialTheme.c \
-	Userland/API/Source/ImUI.c \
+	Userland/API/Source/Theme.c \
+	Userland/API/Source/UI.c \
 	Userland/API/Source/XSession.c \
 	Userland/API/Source/X11Wire.c \
 	Userland/API/Source/LinuxEnv.c \
@@ -441,8 +458,6 @@ USERLAND_CFLAGS := \
 	-IUserland/Service/com.ImplusOS.posix/include \
 	-ILibrary/Source \
 	-IVendor \
-	-IVendor/Library/libjpeg/src \
-	-I$(BUILD_DIR)/Vendor/Library/libjpeg/include \
 	-IVendor/Library/freetype/include \
 	-fno-stack-protector -ffreestanding -fno-pic -fno-builtin \
 	$(USERLAND_ARCH_CFLAGS) -nostdlib -nostartfiles -nodefaultlibs \
@@ -503,12 +518,10 @@ service_build: vendor_libs $(USERLAND_INIT_OBJS)
 			HOMEBREW_PREFIX="$(HOMEBREW_PREFIX)"; \
 	done
 
-app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/ImUI.o \
+app_build: vendor_libs $(USERLAND_INIT_OBJS) $(BUILD_DIR)/Userland/API/UI.o \
 	$(BUILD_DIR)/Userland/API/XSession.o $(BUILD_DIR)/Userland/API/X11Wire.o \
-	$(BUILD_DIR)/Userland/API/Material.o \
-	$(BUILD_DIR)/Userland/API/MaterialTheme.o \
-	$(BUILD_DIR)/Userland/API/LinuxEnv.o \
-	$(BUILD_DIR)/Userland/API/XMLParser.o
+	$(BUILD_DIR)/Userland/API/Theme.o \
+	$(BUILD_DIR)/Userland/API/LinuxEnv.o
 	@set -e; \
 	for dir in $(APP_DIRS); do \
 			$(MAKE) -C $$dir \
@@ -643,6 +656,7 @@ install_payload: all linux_runtime_stage
 	fi
 	@$(call STAGE_POSIX_SHELL,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_XDG_OPEN,$(INSTALL_PAYLOAD_ROOT))
+	@$(call STAGE_LINUX_ENV,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_AUTOSTART,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_DRIVER_ELFS,$(INSTALL_PAYLOAD_ROOT))
 	@$(call STAGE_FIRMWARE,$(INSTALL_PAYLOAD_ROOT))
@@ -779,6 +793,7 @@ image_livecd: all linux_runtime_stage
 	fi
 	@$(call STAGE_POSIX_SHELL,$(IMAGE_STAGE_DIR))
 	@$(call STAGE_XDG_OPEN,$(IMAGE_STAGE_DIR))
+	@$(call STAGE_LINUX_ENV,$(IMAGE_STAGE_DIR))
 	@$(call STAGE_AUTOSTART,$(IMAGE_STAGE_DIR))
 	@cp -a $(BOOT_RESOURCE_DIR)/* $(IMAGE_STAGE_DIR)/BootManager/Resource/
 	@if [ "$(ARCH)" = "x86_64" ]; then \

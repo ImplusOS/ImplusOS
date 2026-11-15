@@ -89,7 +89,7 @@ ImplusOS/
 │                            ECDSA/ECDHE, Ed25519, X25519, X509+verify, ASN1, Base64, CSPRNG,
 │                            TLS record + TLS1.3 key schedule), Unicode/{CP932,UTF8}, Identifier/UUID
 ├── Userland/
-│   ├── API/                 typed syscall wrappers + FreeType.c/Jpeg.c/XMLParser.c helpers
+│   ├── API/                 typed syscall wrappers + FreeType.c/XMLParser.c helpers
 │   ├── Application/          com.ImplusOS.windowmanager, com.ImplusOS.sysnotif, BusyBox
 │   ├── Service/              hot-loadable: com.ImplusOS.{ldso,dynmain,posix,netstack};
 │   │                        services.list, service_client.[ch]
@@ -98,8 +98,7 @@ ImplusOS/
 │   └── Userland.ld
 ├── libc/I_libc/             freestanding libc; src/sys/{x86_64,arm64}/hal_syscall.c
 ├── RecoveryEnvironment/     Recovery.c + Makefile (used by the install media)
-├── Vendor/                  Header/ (stb_truetype.h, stb_image.h), Library/ submodules
-│                            (libpng, zlib, libjpeg, freetype)
+├── Vendor/                  Header/ (stb_truetype.h, stb_image.h), Library/freetype
 ├── Docs/                    Architecture/, Others/, Images/, OSS_License/
 ├── Makefile
 └── Doxyfile

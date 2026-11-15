@@ -138,8 +138,8 @@ The `run_*` targets boot `Image/ImplusOS-$(ARCH)-LiveCD.iso`, so run
 - Linux syscall-ABI compatibility layer (`Kernel/Compat/Linux/`) for running
   `EI_OSABI == ELFOSABI_LINUX` binaries.
 - Berkeley socket API, pthreads, and a large POSIX surface in userland.
-- Helper userland libraries: FreeType, libjpeg, libpng/zlib, stb_truetype,
-  stb_image, an XML parser for UI layouts.
+- Helper userland libraries: FreeType, stb_truetype, stb_image, an XML
+  parser for UI layouts.
 
 ## Current Constraints
 
@@ -193,7 +193,7 @@ ImplusOS/
 ├── Userland/           Init, API wrappers, applications, hot-loadable services
 ├── libc/I_libc/        Minimal freestanding C library
 ├── RecoveryEnvironment/ Minimal init for the install media
-├── Vendor/             Header/ (stb) + Library/ submodules (libpng, zlib, libjpeg, freetype)
+├── Vendor/             Header/ (stb) + Library/freetype
 ├── Docs/               Documentation and images
 ├── Makefile            Top-level build orchestrator
 └── Doxyfile
