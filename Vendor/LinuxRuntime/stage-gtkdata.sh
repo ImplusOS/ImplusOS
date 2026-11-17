@@ -29,6 +29,11 @@ W="$WORK_DIR/gtkdata"; rm -rf "$W"; mkdir -p "$W"
 
 deb_of(){ ls "$CACHE_DIR"/"$1"_*.deb 2>/dev/null | head -n1; }
 
+# The loaders.cache / mime.cache steps run the vendored x86_64 Linux tools
+# through the vendored ld.so, which only works on an x86_64 Linux build host.
+# Elsewhere (macOS) those steps are skipped with a warning instead of failing.
+host_runs_linux_x86_64(){ [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; }
+
 extract(){ # tag deb
 	local d="$W/$1"
 	mkdir -p "$d"
@@ -139,14 +144,18 @@ if [ -n "$PBDEB" ]; then
 		q="$pbdir/$pbrel/gdk-pixbuf-query-loaders"
 		ld="$STAGE_DIR/lib64/ld-linux-x86-64.so.2"
 		cache="$STAGE_DIR/$pbrel/2.10.0/loaders.cache"
-		if [ -x "$q" ] && [ -x "$ld" ]; then
+		if ! host_runs_linux_x86_64; then
+			log "WARN: build host is not x86_64 Linux; cannot run gdk-pixbuf-query-loaders, no loaders.cache"
+		elif [ -x "$q" ] && [ -x "$ld" ]; then
 			# Run the vendored tool against the vendored loaders, using the
 			# vendored ld.so -- the build host's own gdk-pixbuf is a
 			# different version and would write a cache this one rejects.
 			GDK_PIXBUF_MODULEDIR="$STAGE_DIR/$pbrel/2.10.0/loaders" \
 			"$ld" --library-path "$STAGE_DIR/usr/lib/x86_64-linux-gnu" \
-			      "$q" > "$cache" 2>/dev/null || true
-			sed -i "s|$STAGE_DIR||g" "$cache"
+			      "$q" > "$cache.tmp" 2>/dev/null || true
+			# Not `sed -i`: its argument syntax differs between GNU and BSD sed.
+			sed "s|$STAGE_DIR||g" "$cache.tmp" > "$cache"
+			rm -f "$cache.tmp"
 			n=$(grep -c '^"/usr' "$cache" 2>/dev/null || echo 0)
 			[ "$n" -gt 0 ] || die "loaders.cache has no loaders"
 			log "gdk-pixbuf: $n loader(s) -> loaders.cache"
@@ -171,13 +180,25 @@ if [ -n "$SMIDEB" ]; then
 		      "$STAGE_DIR/usr/share/mime/packages/"
 		umd="$smidir/usr/bin/update-mime-database"
 		ld="$STAGE_DIR/lib64/ld-linux-x86-64.so.2"
-		if [ -x "$umd" ] && [ -x "$ld" ]; then
+		if ! host_runs_linux_x86_64; then
+			# Last resort off Linux: the host's own update-mime-database
+			# (e.g. `brew install shared-mime-info`). Its version may differ
+			# from the vendored one, but a cache beats none (see header).
+			if command -v update-mime-database >/dev/null 2>&1; then
+				log "WARN: build host is not x86_64 Linux; mime.cache from the host's update-mime-database"
+				update-mime-database "$STAGE_DIR/usr/share/mime" >/dev/null 2>&1 || true
+			else
+				log "WARN: build host is not x86_64 Linux and has no update-mime-database; no mime.cache"
+			fi
+		elif [ -x "$umd" ] && [ -x "$ld" ]; then
 			"$ld" --library-path "$STAGE_DIR/usr/lib/x86_64-linux-gnu" \
 			      "$umd" "$STAGE_DIR/usr/share/mime" >/dev/null 2>&1 || true
 		fi
-		[ -s "$STAGE_DIR/usr/share/mime/mime.cache" ] || \
-			die "mime.cache not produced"
-		log "mime.cache $(stat -c %s "$STAGE_DIR/usr/share/mime/mime.cache") bytes"
+		if host_runs_linux_x86_64 || [ -e "$STAGE_DIR/usr/share/mime/mime.cache" ]; then
+			[ -s "$STAGE_DIR/usr/share/mime/mime.cache" ] || \
+				die "mime.cache not produced"
+			log "mime.cache $(wc -c < "$STAGE_DIR/usr/share/mime/mime.cache" | tr -d ' ') bytes"
+		fi
 	fi
 else
 	log "WARN: shared-mime-info not in cache; gdk-pixbuf cannot sniff formats"

@@ -10,6 +10,12 @@ VERIFY_ONLY=0
 [ "${1:-}" = "--verify-only" ] && VERIFY_ONLY=1
 
 log(){ printf '[fetch] %s\n' "$*" >&2; }
+
+# coreutils sha256sum where present (Linux, macOS 14+), else macOS's shasum.
+sha256_of(){
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+	else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
 die(){ printf '[fetch] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -r "$LOCKFILE" ] || die "no lockfile: $LOCKFILE (run 'make resolve' first)"
@@ -27,7 +33,7 @@ while IFS=$'\t' read -r pkg ver url sha; do
 	fi
 	[ -s "$out" ] || { log "MISSING: $out"; rc=1; continue; }
 	if [ -n "$sha" ]; then
-		got="$(sha256sum "$out" | cut -d' ' -f1)"
+		got="$(sha256_of "$out")"
 		if [ "$got" != "$sha" ]; then
 			log "SHA MISMATCH $pkg"
 			log "  expected $sha"

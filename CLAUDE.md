@@ -10,10 +10,12 @@ C library, and userland applications that reach the kernel through an
 architecture-specific trap ABI.
 
 - **Architectures**: `x86_64` (Long Mode) — primary, regularly booted in QEMU —
-  and `arm64` (AArch64) — in progress. The default build target is `x86_64`;
-  pass `ARCH=arm64` to target AArch64. The arm64 kernel link is currently
-  blocked by a pre-existing freestanding-libc issue (`__trunctfdf2` from
-  `vsnprintf`'s `long double` path); see `Docs/Others/TODO_OS_Refactor.md` §8.
+  and `arm64` (AArch64) — boots to the desktop in QEMU `virt` (TCG and macOS
+  HVF; SMP via PSCI, GICv2/v3). Device registers on arm64 go through
+  `Kernel/Source/include/interfaces/mmio.h` (HVF cannot replay writeback MMIO). The default build target is `x86_64`; pass `ARCH=arm64` to
+  target AArch64. Everything that runs a foreign Linux binary (Xorg/xterm,
+  Chromium, BusyBox, Wine, ...) is x86_64-only, because those binaries are.
+  arm64 userland links libgcc for binary128 `long double` soft-fp.
 - **Boot paths**: UEFI (both architectures, EDK2-based loader + boot manager)
   and legacy BIOS (x86_64 only).
 - Development is expected to happen in an interactive Linux environment; builds
@@ -106,6 +108,16 @@ brew install aarch64-elf-gcc aarch64-elf-binutils   # only for ARCH=arm64
 brew install gptfdisk lld
 ```
 
+**macOS hosts**: run the build with `gmake` (`brew install make`; the
+system `/usr/bin/make` is 3.81 and is rejected). Also `brew install nasm
+mtools cdrtools qemu llvm lld glib` — cdrtools' `mkisofs` stands in for
+`genisoimage`, and `lld` must be the same version as `llvm` or the EDK2 LTO
+link crashes. `make run_*` uses TCG + cocoa + Homebrew's EDK2 firmware there.
+`linux_runtime_stage` works but cannot run Linux binaries on the host, so it
+stages no glibc C.UTF-8 locale-archive and no gdk-pixbuf `loaders.cache`
+(and no `mime.cache` unless `update-mime-database` is installed); it logs a
+WARN for each.
+
 Building the UEFI EFI binaries additionally needs a checkout of
 [EDK2](https://github.com/tianocore/edk2) at `$HOME/edk2` (override with
 `EDK2_DIR=`), built once with `make -C BaseTools`. The Makefile drives EDK2 with
@@ -150,7 +162,8 @@ once to produce the EFI binaries).
 - **Kernel**: `x86_64-elf-gcc -ffreestanding -fstack-protector-strong -fPIE
   -fno-plt -fno-builtin -nostdlib -nostartfiles -nodefaultlibs -mcmodel=small
   -mno-red-zone -O2 -DKERNEL -DPLATFORM_X86_64`
-  (`-DPLATFORM_ARM64` + `-mstrict-align -mno-outline-atomics` for arm64).
+  (`-DPLATFORM_ARM64` + `-mstrict-align -mno-outline-atomics
+  -mgeneral-regs-only` for arm64; driver modules use the same).
 - **Kernel link**: `x86_64-elf-ld -nostdlib --build-id=none -e kernel_main -pie
   --no-dynamic-linker -T Arch/x86_64/linker/linker.ld --gc-sections`
 - **Userland**: freestanding, `-mcmodel=large -mno-red-zone` (x86_64) /
@@ -291,7 +304,9 @@ arm64 uses different bases (see `Kernel/Arch/arm64/linker/linker.ld`).
 ## Testing
 
 - Primary testing is a QEMU boot in q35 / OVMF (x86_64) or AAVMF (arm64), 4 GiB
-  RAM, VirtIO-Net, XHCI USB, NVMe/AHCI storage.
+  RAM, VirtIO-Net, XHCI USB, NVMe/AHCI storage. On arm64 `run_uefi_cdrom`
+  attaches the image as virtio-blk (AAVMF cannot boot an AHCI CD) plus a
+  `ramfb` display; the PL011 UART at 0x09000000 is the serial port.
 - Serial (COM1, 115200 baud, mapped to `-serial stdio`) is the main debug
   channel; `boot_profile_dump("boot")` prints per-phase timings.
 - There is no automated test suite in-tree. `Docs/Architecture/CI_CD.md`

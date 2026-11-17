@@ -30,6 +30,17 @@ log(){ printf '[desktopdata] %s\n' "$*" >&2; }
 
 W="$WORK_DIR/desktopdata"; rm -rf "$W"; mkdir -p "$W"
 
+# File list of a .deb's data member. dpkg-deb where installed; otherwise (a
+# macOS build host has no dpkg) pull data.tar.* out with ar and list it with
+# tar, which detects the compression itself when reading from a file.
+deb_listing(){
+	if command -v dpkg-deb >/dev/null 2>&1; then dpkg-deb -c "$1"; return; fi
+	local m
+	m="$(ar t "$1" | grep '^data\.tar' | head -n1)"
+	[ -n "$m" ] || return 1
+	( cd "$W" && rm -f "$m" && ar x "$1" "$m" && tar -tf "$m"; rc=$?; rm -f "$m"; exit $rc )
+}
+
 entries=0
 icons=0
 
@@ -43,7 +54,7 @@ for deb in "$CACHE_DIR"/*.deb; do
 	# dpkg-deb は SIGPIPE で死ぬ。パイプライン全体は失敗扱いになるので、
 	# `if ! ...` と組み合わせると「該当あり」がそのまま「スキップ」に
 	# 化ける（実際それで 0 件になった）。
-	dpkg-deb -c "$deb" > "$W/listing.txt" 2>/dev/null || continue
+	deb_listing "$deb" > "$W/listing.txt" 2>/dev/null || continue
 	if ! grep -qE \
 		'(usr/share/applications/.*\.desktop|usr/share/pixmaps/.*\.png|usr/share/icons/hicolor/[^/]+/apps/.*\.png)$' \
 		"$W/listing.txt"; then

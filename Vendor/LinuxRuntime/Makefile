@@ -121,13 +121,22 @@ alsadata: stage
 	STAGE_DIR='$(STAGE_DIR)' ./stage-alsa.sh
 
 # C.UTF-8 locale-archive を STAGE_DIR/usr/lib/locale に生成
+#
+# glibc の localedef が必要。macOS の /usr/bin/localedef は BSD 版で
+# glibc 形式のアーカイブを書けない（--prefix も無い）ので、glibc 版が
+# 無いホストでは警告して飛ばす。その場合ゲストの外来プログラムは C ロケールで動く。
+GLIBC_LOCALEDEF := $(shell localedef --help 2>&1 | grep -q -- '--prefix' && echo yes)
+
 locale:
-	@command -v localedef >/dev/null || { echo "localedef not found on host" >&2; exit 1; }
+ifneq ($(GLIBC_LOCALEDEF),yes)
+	@echo "WARN: glibc localedef not found on host ($$(uname -s)); C.UTF-8 locale-archive NOT staged" >&2
+else
 	@mkdir -p '$(STAGE_DIR)/usr/lib/locale'
 	localedef -i C -f UTF-8 --no-archive '$(STAGE_DIR)/usr/lib/locale/C.UTF-8' || true
 	I18NPATH=/usr/share/i18n localedef -i C -f UTF-8 \
 	  --prefix='$(STAGE_DIR)' C.UTF-8
 	@echo "locale-archive: $$(ls -l '$(STAGE_DIR)/usr/lib/locale/locale-archive' 2>/dev/null || echo MISSING)"
+endif
 
 verify:
 	CACHE_DIR='$(CACHE_DIR)' LOCKFILE='$(LOCKFILE)' CLOSURE='$(CLOSURE)' \

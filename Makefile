@@ -1,3 +1,11 @@
+# GNU Make >= 3.82 is required (.ONESHELL, used throughout). macOS ships GNU
+# Make 3.81 as /usr/bin/make, which silently ignores .ONESHELL and then runs
+# every recipe line in its own shell -- install a current one with
+# `brew install make` and run it as `gmake`.
+ifeq ($(filter oneshell,$(.FEATURES)),)
+$(error GNU Make >= 3.82 is required (found $(MAKE_VERSION)). On macOS: brew install make, then run 'gmake')
+endif
+
 .ONESHELL:
 SHELL := /bin/bash
 .SHELLFLAGS := -euxo pipefail -c
@@ -29,7 +37,7 @@ endif
 
 export HOMEBREW_PREFIX
 
-ARCH ?= x86_64
+ARCH ?= arm64
 
 BUILD_ROOT ?= Build
 BUILD_DIR ?= $(BUILD_ROOT)/$(ARCH)
@@ -96,7 +104,25 @@ RECOVERY_ESP_IMAGE_SIZE_MB ?= 16
 # xorriso/libisofs cannot author UDF, so mastering uses genisoimage (cdrkit)
 # with -udf. Install it with: sudo apt install -y genisoimage
 # Override with ISO_MASTER=... if your genisoimage lives elsewhere.
-ISO_MASTER ?= genisoimage
+#
+# cdrkit is not packaged for macOS; there the Schily cdrtools mkisofs
+# (`brew install cdrtools`) is used instead. It also writes UDF, but spells
+# the EFI El Torito entry differently: -eltorito-platform efi -b <img>
+# instead of cdrkit's -e <img>, and it has no -allow-limited-size (it needs
+# none for files up to 4 GiB). Its default load size covers only part of a
+# 64 MiB ESP, so the entry gets -boot-load-size 1: EDK2's PartitionDxe
+# (ElTorito.c) treats a sector count below 2 as "the partition runs to the
+# end of the disc", which exposes the whole FAT32 image. genisoimage is
+# preferred when both are installed (on Debian, mkisofs is genisoimage).
+ISO_MASTER ?= $(firstword $(shell command -v genisoimage 2>/dev/null) \
+                          $(shell command -v mkisofs 2>/dev/null) genisoimage)
+ifneq ($(findstring genisoimage,$(shell $(ISO_MASTER) -version 2>&1)),)
+ISO_MASTER_FLAGS := -allow-limited-size
+ISO_EFI_BOOT     := -eltorito-alt-boot -e esp.img -no-emul-boot
+else
+ISO_MASTER_FLAGS :=
+ISO_EFI_BOOT     := -eltorito-platform efi -b esp.img -no-emul-boot -boot-load-size 1
+endif
 
 # $(call MASTER_UDF_ISO,<output-iso>,<staging-dir>) -- UEFI-only El Torito
 # boot via the staged esp.img, Rock Ridge + UDF over the tree.
@@ -129,9 +155,9 @@ define MASTER_UDF_ISO
 		-R -udf \
 		-iso-level 3 \
 		-input-charset utf-8 \
-		-allow-limited-size \
+		$(ISO_MASTER_FLAGS) \
 		-V IMPLUSOS \
-		-eltorito-alt-boot -e esp.img -no-emul-boot \
+		$(ISO_EFI_BOOT) \
 		-o $(1) \
 		$(2)
 	python3 $(CURDIR)/Tools/udf_promote.py $(1)
@@ -449,6 +475,14 @@ USERLAND_CXXFLAGS := \
 
 USERLAND_LDFLAGS := -T Userland/Source/Userland.ld -nostdlib --build-id=none --gc-sections
 
+# Appended after the objects. AArch64 needs libgcc for binary128 long double
+# soft-fp (see Userland/Source/AppCommon.mk); x86_64 needs nothing.
+ifeq ($(ARCH),arm64)
+USERLAND_LIBS := $(shell $(CC) -print-libgcc-file-name)
+else
+USERLAND_LIBS :=
+endif
+
 all: $(BOOTLOADER_EFI) $(BOOTMANAGER_EFI) kernel vendor_libs app_build driver_stage $(USERLAND_INIT_ELF)
 
 vendor_libs:
@@ -498,7 +532,10 @@ recovery_build: $(RECOVERY_INIT_ELF)
 edk2_bootloader:
 	@$(call EDK2_BUILD_MODULE,$(BOOTLOADER_DSC))
 
-edk2_bootmanager:
+# Ordered after edk2_bootloader: both source edksetup.sh, which rewrites the
+# shared $(EDK2_DIR)/Conf/BuildEnv.sh, and two concurrent writers under -j
+# interleave it into a script that no longer parses.
+edk2_bootmanager: | edk2_bootloader
 	@$(call EDK2_BUILD_MODULE,$(BOOTMANAGER_DSC))
 
 $(BOOTLOADER_EFI): edk2_bootloader
@@ -535,7 +572,7 @@ $(BUILD_DIR)/Userland/%.o: Userland/Source/%.cpp
 
 $(USERLAND_INIT_ELF): $(USERLAND_INIT_OBJS)
 	@mkdir -p $(dir $@)
-	$(LD) $(USERLAND_LDFLAGS) $^ -o $@.tmp
+	$(LD) $(USERLAND_LDFLAGS) $^ $(USERLAND_LIBS) -o $@.tmp
 	$(OBJCOPY) --strip-all -R .note -R .comment $@.tmp $@
 	@rm -f $@.tmp
 
@@ -546,7 +583,7 @@ $(BUILD_DIR)/RecoveryEnvironment/%.o: $(RECOVERY_DIR)/%.c
 
 $(RECOVERY_INIT_ELF): $(RECOVERY_OBJS)
 	@mkdir -p $(dir $@)
-	$(LD) $(USERLAND_LDFLAGS) $^ -o $@.tmp
+	$(LD) $(USERLAND_LDFLAGS) $^ $(USERLAND_LIBS) -o $@.tmp
 	$(OBJCOPY) --strip-all -R .note -R .comment $@.tmp $@
 	@rm -f $@.tmp
 
@@ -771,6 +808,40 @@ QEMU_VARS_DRIVE := -drive if=pflash,format=raw,file=$(QEMU_VARS)
 endif
 endif
 
+# macOS hosts: QEMU has no KVM, no gtk/sdl display and no virgl
+# (virtio-gpu-gl) there, and OVMF is not something the repo ships -- Homebrew's
+# qemu brings its own EDK2 builds, used when OVMF_CODE_4M.fd / AAVMF_CODE.fd
+# are not next to the Makefile. Hypervisor.framework (hvf) only runs a guest
+# of the host's own architecture; anything else falls back to TCG.
+QEMU_FIRMWARE_FALLBACK := $(HOMEBREW_PREFIX)/share/qemu/edk2-$(if $(filter arm64,$(ARCH)),aarch64,x86_64)-code.fd
+ifeq ($(wildcard $(QEMU_FIRMWARE)),)
+ifneq ($(wildcard $(QEMU_FIRMWARE_FALLBACK)),)
+QEMU_FIRMWARE := $(QEMU_FIRMWARE_FALLBACK)
+endif
+endif
+
+ifeq ($(HOST_OS),Darwin)
+QEMU_HOST_ARCH := $(if $(filter arm64 aarch64,$(UNAME_M)),arm64,x86_64)
+ifeq ($(ARCH),$(QEMU_HOST_ARCH))
+ifeq ($(ARCH),arm64)
+# kernel-irqchip=off: newer QEMU drives Apple's in-kernel vGIC (hv_gic) by
+# default under hvf, and with it the virtual timer interrupt never reaches
+# the guest -- AAVMF itself stalls at "Start boot option" before any
+# ImplusOS code runs. QEMU's own GICv3 emulation works. (A second -machine
+# merges into the first, so QEMU_MACHINE is left as it is.)
+QEMU_ACCEL ?= -accel hvf -cpu host -machine kernel-irqchip=off
+else
+QEMU_ACCEL ?= -accel hvf -cpu host
+endif
+else
+QEMU_ACCEL ?= -accel tcg,thread=multi -cpu max
+endif
+QEMU_DISPLAY ?= cocoa
+QEMU_GPU ?= none
+else
+QEMU_ACCEL ?= -cpu host -enable-kvm
+endif
+
 QEMU_DISPLAY ?= gtk
 # Host-GPU (virgl) rendering for Mesa/Xorg/Chromium inside the guest:
 #   make run_uefi_cdrom QEMU_GPU=virgl
@@ -786,6 +857,11 @@ QEMU_GPU ?= virgl
 ifeq ($(QEMU_GPU),virgl)
 QEMU_DISPLAY := sdl,gl=es
 QEMU_GPU_DEVICES := -vga none -device virtio-gpu-gl-pci
+else ifeq ($(ARCH),arm64)
+# The virt machine has no default display adapter: without one there is no
+# GOP framebuffer and the boot manager has nothing to draw on. ramfb is the
+# plain framebuffer AAVMF publishes as GOP and the kernel takes over as is.
+QEMU_GPU_DEVICES := -device ramfb
 else
 QEMU_GPU_DEVICES :=
 endif
@@ -812,8 +888,7 @@ QEMU_SMP ?= 2
 
 QEMU_COMMON := \
 	-machine $(QEMU_MACHINE) \
-	-cpu host \
-	-enable-kvm \
+	$(QEMU_ACCEL) \
 	-m 8192 \
 	-smp $(QEMU_SMP) \
 	-device ich9-ahci,id=sata \
@@ -829,9 +904,18 @@ QEMU_USB := \
 	-drive if=none,id=usbstick,format=raw,file=$(QEMU_BOOT_IMAGE) \
 	-device usb-storage,bus=xhci.0,drive=usbstick,bootindex=0
 
+ifeq ($(ARCH),arm64)
+# AAVMF has no AHCI/ATAPI driver, so an ide-cd on the ICH9 AHCI never shows up
+# as a boot option there (and the kernel has no virtio-scsi driver for a
+# scsi-cd). virtio-blk is the read-only disc both of them can drive.
+QEMU_DISK := \
+	-drive if=none,id=cdrom0,file=$(QEMU_BOOT_IMAGE),format=raw,readonly=on \
+	-device virtio-blk-pci,drive=cdrom0,bootindex=0
+else
 QEMU_DISK := \
 	-drive if=none,id=cdrom0,file=$(QEMU_BOOT_IMAGE),media=cdrom,format=raw \
 	-device ide-cd,drive=cdrom0,bus=sata.0,bootindex=0
+endif
 
 qemu_disks:
 	@[ -f disk1.qcow2 ] || qemu-img create -f qcow2 disk1.qcow2 $(QEMU_DISK_SIZE)
