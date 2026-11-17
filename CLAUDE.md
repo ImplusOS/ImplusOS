@@ -74,10 +74,6 @@ ImplusOS/
 │   │                        Socket.h, Audio.h, WiFi.h, OSDebug.h, ...) + helper
 │   │                        libs (FreeType.c), the UI toolkit (UI.c) and desktop theme (Theme.c)
 │   ├── Application/         com.ImplusOS.windowmanager, com.ImplusOS.sysnotif, BusyBox
-│   ├── Service/             Hot-loadable services, one ELF/.so each:
-│   │                        com.ImplusOS.ldso (dynamic linker), com.ImplusOS.dynmain,
-│   │                        com.ImplusOS.posix (POSIX layer), com.ImplusOS.netstack (DNS);
-│   │                        services.list, service_client.[ch]
 │   ├── Syscalls.c/.h        Unified syscall wrapper
 │   ├── Userland.c           Init process (_start entry point)
 │   └── Userland.ld          Linker script for userland ELFs
@@ -119,11 +115,10 @@ the `CLANGDWARF` toolchain (`EDK2_TOOLCHAIN=`, `EDK2_TARGET=RELEASE`).
 
 | Command | Description |
 |---|---|
-| `make` | Build everything for `ARCH` (bootloader shim, kernel, vendor lib, apps, services, drivers, init) |
+| `make` | Build everything for `ARCH` (bootloader shim, kernel, vendor lib, apps, drivers, init) |
 | `make ARCH=arm64` | Build for AArch64 instead of x86_64 |
 | `make kernel` | Build the kernel ELF only |
 | `make app_build` | Build `Userland/Application/*` |
-| `make service_build` | Build `Userland/Service/*` (posix, netstack, ldso, dynmain) |
 | `make driver_build` | Build all driver modules |
 | `make driver_stage` | Build drivers + copy `.ELF`s into the staging dir |
 | `make recovery_build` | Build the recovery-environment init |
@@ -147,7 +142,7 @@ once to produce the EFI binaries).
 - `Build/$(ARCH)/Kernel/Kernel_Main.ELF` — kernel binary
 - `Build/$(ARCH)/Userland/Userland.ELF` — init process
 - `Build/Modules/$(ARCH)/<name>/<name>.ELF` — driver modules
-- `Build/$(ARCH)/Userland/<app-or-service>/<name>.ELF` — apps and services
+- `Build/$(ARCH)/Userland/<app>/<name>.ELF` — apps
 - `Image/ImplusOS-$(ARCH)-InstallMedia.iso`, `Image/ImplusOS-$(ARCH)-LiveCD.iso`
 
 ### Compiler / Linker Flags (`Kernel/config/arch.mk`, top-level `Makefile`)
@@ -232,9 +227,7 @@ once to produce the EFI binaries).
 ### Userland
 
 - **Init process**: `Userland/Source/Userland.c` (`_start`) — renders the boot
-  screen, calls `service_load_all()` to load the services in
-  `Userland/Service/Source/services.list` (`com.ImplusOS.posix`,
-  `com.ImplusOS.netstack`), then spawns `com.ImplusOS.loginui`, which owns the
+  screen, then spawns `com.ImplusOS.loginui`, which owns the
   rest of the session (falls back to launching the window manager directly if
   the login app is missing from the image).
 - **Login screen**: `com.ImplusOS.loginui` — graphical, drawn straight to the
@@ -267,11 +260,11 @@ once to produce the EFI binaries).
   `Docs/Architecture/Userland_Specification.md` §6.
   `Resource/Apps/apps.list` is now only a fallback for an image whose entries
   are missing, and `Resource/Apps/desktop.icons` seeds the desktop grid.
-- **Services** (`Userland/Service/`): hot-loadable `.so`s managed by
-  `service_client.h` (`service_load`/`service_unload`). `com.ImplusOS.posix` maps
-  native syscalls to POSIX (open/read/write/fork/exec/socket/pthread/...);
-  `com.ImplusOS.netstack` is the userland DNS resolver; `com.ImplusOS.ldso` +
-  `com.ImplusOS.dynmain` provide dynamic linking.
+- **POSIX layer**: `libc/I_libc/Source/src/posix.c` maps native syscalls to
+  POSIX (open/read/write/fork/exec/socket/pthread/...). Name lookup goes through
+  `getaddrinfo()`/`gethostbyname()`, backed by the DNS stub resolver in
+  `libc/I_libc/Source/src/resolv.c` (UDP, TCP fallback on truncation, TTL
+  cache). Applications resolve names only through `<netdb.h>`.
 - **Syscall wrappers**: `Userland/API/*.h` call `Userland/Syscalls.c`, which
   dispatches to `libc/I_libc/src/sys/$(ARCH)/hal_syscall.c`.
 
@@ -324,9 +317,8 @@ arm64 uses different bases (see `Kernel/Arch/arm64/linker/linker.ld`).
 | `Kernel/Drivers/Module/DriverBinary.h` | Driver module API vtable |
 | `Kernel/Core/process/ProcessManager.h` | Process API + capabilities |
 | `Userland/Userland.c` | Init process |
-| `Userland/Service/services.list` | Services loaded at init |
 | `Userland/Application/com.ImplusOS.windowmanager/Linux/WM_DesktopEntry.c` | Desktop-entry + icon-theme reader behind the Start menu |
-| `Userland/Service/com.ImplusOS.posix/README_POSIX.md` | POSIX layer docs |
+| `libc/I_libc/Source/src/posix.c` | POSIX layer (incl. `getaddrinfo`) |
 | `Kernel/config/arch.mk` | Per-architecture compiler/linker flags |
 | `Docs/Architecture/Boot_Sequence.md` | Canonical boot-phase reference |
 | `Docs/Others/TODO_OS_Refactor.md` | Repo-wide refactor plan + status |

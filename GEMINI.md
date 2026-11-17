@@ -32,7 +32,7 @@ make run_bios_cdrom  # boot LiveCD in QEMU, legacy BIOS (x86_64 only)
 make clean
 ```
 
-Other targets: `kernel`, `app_build`, `service_build`, `driver_build`,
+Other targets: `kernel`, `app_build`, `driver_build`,
 `driver_stage`, `recovery_build`, `vendor_libs`, `edk2_bootloader`,
 `edk2_bootmanager`. The `run_*` targets boot the LiveCD image, so build it first.
 
@@ -91,8 +91,6 @@ ImplusOS/
 ├── Userland/
 │   ├── API/                 typed syscall wrappers + FreeType.c/XMLParser.c helpers
 │   ├── Application/          com.ImplusOS.windowmanager, com.ImplusOS.sysnotif, BusyBox
-│   ├── Service/              hot-loadable: com.ImplusOS.{ldso,dynmain,posix,netstack};
-│   │                        services.list, service_client.[ch]
 │   ├── Syscalls.c/.h        unified syscall wrapper
 │   ├── Userland.c           init process (_start)
 │   └── Userland.ld
@@ -184,19 +182,19 @@ driver_module_deferred → audio_network_init
   `DEVICE_TYPE_NET_PROTOCOL` with a real vtable + `deps[]`
   (`Kernel/Drivers/Module/NetworkBuiltinDrivers.c`) — a hybrid step toward
   fully modular protocol drivers (`Docs/Architecture/Network_Stack.md`).
-- Userland: Berkeley sockets via `com.ImplusOS.posix`; DNS via
-  `com.ImplusOS.netstack`. TLS primitives live in `Library/Crypto/`.
+- Userland: Berkeley sockets and DNS (`getaddrinfo`/`gethostbyname`) via the
+  libc POSIX layer (`libc/I_libc/Source/src/{posix,resolv}.c`). TLS primitives live in `Library/Crypto/`.
 
-### POSIX Compatibility (`Userland/Service/com.ImplusOS.posix/`)
+### POSIX Compatibility (`libc/I_libc/Source/src/posix.c`)
 
-Hot-loadable service mapping native syscalls to POSIX: file I/O (open, read,
+libc layer mapping native syscalls to POSIX: file I/O (open, read,
 write, lseek, stat, pipe, dup/dup2, mkdir, unlink, opendir/readdir), process
 (getpid, fork, execve, waitpid, kill, _exit), signals (signal, sigaction,
 sigprocmask, raise), threads (pthread create/join/mutex/cond/key), sockets
 (socket, bind, connect, listen, accept, send/recv, AF_INET), time
 (clock_gettime, nanosleep, gettimeofday, gmtime_r, mktime), memory (mmap), I/O
-mux (select, poll, fcntl, ioctl). Details:
-`Userland/Service/com.ImplusOS.posix/README_POSIX.md`.
+mux (select, poll, fcntl, ioctl), name lookup (getaddrinfo, gethostbyname;
+DNS stub resolver in `resolv.c`).
 
 ## Coding Style
 
@@ -219,7 +217,7 @@ mux (select, poll, fcntl, ioctl). Details:
 | `Kernel/Drivers/Module/DriverBinary.h` | Driver API vtable |
 | `Kernel/Core/process/ProcessManager.h` | Process API + capabilities |
 | `Userland/Userland.c` | Init process |
-| `Userland/Service/com.ImplusOS.posix/README_POSIX.md` | POSIX layer docs |
+| `libc/I_libc/Source/src/posix.c` | POSIX layer (incl. `getaddrinfo`) |
 | `Docs/Architecture/Boot_Sequence.md` | Canonical boot-phase reference |
 
 ## Testing

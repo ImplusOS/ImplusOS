@@ -39,7 +39,7 @@ Most of the code has been written with the help of AI coding tools.
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                     Userland (Ring 3 / EL0)                   │
-│  Init → services (POSIX, netstack) → WindowManager, sysnotif  │
+│  Init → loginui → WindowManager, sysnotif                     │
 ├───────────────────────── SYSCALL / SVC ──────────────────────┤
 │                     Kernel (Ring 0 / EL1)                     │
 │  Process │ VFS (FAT32/exFAT/ISO9660/pseudo) │ IPC │ Network   │
@@ -100,7 +100,7 @@ make clean
 
 The `run_*` targets boot `Image/ImplusOS-$(ARCH)-LiveCD.iso`, so run
 `make image_livecd` first. Other useful targets: `kernel`, `app_build`,
-`service_build`, `driver_build`, `driver_stage`, `recovery_build`, `vendor_libs`,
+`driver_build`, `driver_stage`, `recovery_build`, `vendor_libs`,
 `edk2_bootloader`, `edk2_bootmanager`.
 
 > Building in non-interactive environments (CI containers, restricted sandboxes)
@@ -132,9 +132,8 @@ The `run_*` targets boot `Image/ImplusOS-$(ARCH)-LiveCD.iso`, so run
 - SMP (x86_64: APIC + AP trampoline; arm64: PSCI + GIC).
 - NX paging, kernel `-fstack-protector-strong`, `-fPIE` kernel.
 - Graphical userland: compositing window manager, notification daemon, BusyBox.
-- Hot-loadable userland services: POSIX layer (`com.ImplusOS.posix`), DNS
-  (`com.ImplusOS.netstack`), dynamic linker (`com.ImplusOS.ldso` +
-  `com.ImplusOS.dynmain`).
+- POSIX layer in libc (`libc/I_libc`), including `getaddrinfo` backed by a
+  DNS stub resolver.
 - Linux syscall-ABI compatibility layer (`Kernel/Compat/Linux/`) for running
   `EI_OSABI == ELFOSABI_LINUX` binaries.
 - Berkeley socket API, pthreads, and a large POSIX surface in userland.
@@ -190,7 +189,7 @@ ImplusOS/
 │   ├── config/arch.mk   Per-architecture flags
 │   └── include/          Shared headers (arch_ops.h, status.h, config.h, ...)
 ├── Library/            Shared crypto / Unicode / UUID source, built into kernel + userland
-├── Userland/           Init, API wrappers, applications, hot-loadable services
+├── Userland/           Init, API wrappers, applications
 ├── libc/I_libc/        Minimal freestanding C library
 ├── RecoveryEnvironment/ Minimal init for the install media
 ├── Vendor/             Header/ (stb) + Library/freetype
