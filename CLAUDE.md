@@ -128,7 +128,10 @@ and Chromium runs without GPU acceleration (WebGL unavailable) on a Mac --
 `Docs/Others/TODO_Chromium_LinuxABI.md` §21. UTM does have virgl (ANGLE),
 but its host offers no multisample textures, so Mesa caps at ES 3.0 with
 GL_MAX_SAMPLES 1, ANGLE at ES 2.0, and Chromium (ES 3.0 required) still
-falls back to software (§23).
+falls back to software (§23). When `milesbuckton/qemu-virgl` is installed,
+arm64 `run_*` use it with `QEMU_GPU=virgl` (`virtio-gpu-gl-pci`,
+`cocoa,gl=es`); its host GL is the same ANGLE ES 3.0, so the same applies
+-- the host-side virglrenderer bugs behind it are in §25.
 `linux_runtime_stage` works but cannot run Linux binaries on the host, so it
 stages no glibc C.UTF-8 locale-archive and no gdk-pixbuf `loaders.cache`
 (and no `mime.cache` unless `update-mime-database` is installed); it logs a

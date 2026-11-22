@@ -820,8 +820,8 @@ QEMU_VARS_DRIVE := -drive if=pflash,format=raw,file=$(QEMU_VARS)
 endif
 endif
 
-# macOS hosts: QEMU has no KVM, no gtk/sdl display and no virgl
-# (virtio-gpu-gl) there, and OVMF is not something the repo ships -- Homebrew's
+# macOS hosts: QEMU has no KVM and no gtk/sdl display there, Homebrew's core
+# qemu has no virgl (virtio-gpu-gl), and OVMF is not something the repo ships -- Homebrew's
 # qemu brings its own EDK2 builds, used when OVMF_CODE_4M.fd / AAVMF_CODE.fd
 # are not next to the Makefile. Hypervisor.framework (hvf) only runs a guest
 # of the host's own architecture; anything else falls back to TCG.
@@ -856,6 +856,10 @@ else
 QEMU_ACCEL ?= -accel tcg,thread=multi -cpu max
 endif
 QEMU_DISPLAY ?= cocoa
+ifeq ($(ARCH),arm64)
+QEMU_SYSTEM_AARCH64 ?= qemu-system-aarch64
+QEMU_GPU ?= virgl
+endif
 QEMU_GPU ?= none
 # Name the host backend explicitly: Core Audio is output-only in QEMU, so the
 # hda-duplex codec used elsewhere logs "Can not open `adc' (no host audio
@@ -879,10 +883,15 @@ QEMU_DISPLAY ?= gtk
 # the host GPU, and WebGL reports "ANGLE (Mesa, virgl (<host GPU>), ...)".
 # sdl,gl=es is the backend that works under WSLg (gtk,gl=on aborts there with
 # EGL_BAD_ACCESS once the virgl scanout is shown); override QEMU_DISPLAY if
-# gtk,gl=on works on your host.
+# gtk,gl=on works on your host. On macOS it is cocoa,gl=es (ANGLE's EGL only
+# does GLES).
 QEMU_GPU ?= virgl
 ifeq ($(QEMU_GPU),virgl)
+ifeq ($(HOST_OS),Darwin)
+QEMU_DISPLAY := cocoa,gl=es
+else
 QEMU_DISPLAY := sdl,gl=es
+endif
 QEMU_GPU_DEVICES := -vga none -device virtio-gpu-gl-pci
 else ifeq ($(ARCH),arm64)
 # The virt machine has no default display adapter: without one there is no
