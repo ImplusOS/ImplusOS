@@ -13,8 +13,16 @@ architecture-specific trap ABI.
   and `arm64` (AArch64) — boots to the desktop in QEMU `virt` (TCG and macOS
   HVF; SMP via PSCI, GICv2/v3). Device registers on arm64 go through
   `Kernel/Source/include/interfaces/mmio.h` (HVF cannot replay writeback MMIO). The default build target is `x86_64`; pass `ARCH=arm64` to
-  target AArch64. Everything that runs a foreign Linux binary (Xorg/xterm,
-  Chromium, BusyBox, Wine, ...) is x86_64-only, because those binaries are.
+  target AArch64. The bundled foreign Linux binaries (Xorg/xterm, Chromium,
+  dash, Wine, ...) are x86_64 builds; the arm64 image bundles the same
+  x86_64 runtime and runs it under the translator (below), slowly.
+  The kernel itself runs three Linux ABIs: x86_64 and i386 (32-bit
+  compatibility mode, `int $0x80`) on x86_64, AArch64 (PIE only) on arm64 --
+  see `Docs/Architecture/Compat_Layers.md` §6. A Linux ELF for the *other*
+  CPU (x86_64 on arm64, AArch64 on x86_64) is run by the user-mode CPU
+  translator `Userland/Application/Translator` (interpreter + syscall
+  translation, qemu-user style), which exec/spawn start in its place --
+  `Compat_Layers.md` §7.
   arm64 userland links libgcc for binary128 `long double` soft-fp.
 - **Boot paths**: UEFI (both architectures, EDK2-based loader + boot manager)
   and legacy BIOS (x86_64 only).
@@ -75,7 +83,8 @@ ImplusOS/
 │   ├── API/                 Typed syscall wrappers (File.h, Graphics.h, Input.h,
 │   │                        Socket.h, Audio.h, WiFi.h, OSDebug.h, ...) + helper
 │   │                        libs (FreeType.c), the UI toolkit (UI.c) and desktop theme (Theme.c)
-│   ├── Application/         com.ImplusOS.windowmanager, com.ImplusOS.sysnotif, BusyBox
+│   ├── Application/         com.ImplusOS.windowmanager, com.ImplusOS.sysnotif, BusyBox,
+│   │                        Translator (x86_64 <-> AArch64 Linux program translator)
 │   ├── Syscalls.c/.h        Unified syscall wrapper
 │   ├── Userland.c           Init process (_start entry point)
 │   └── Userland.ld          Linker script for userland ELFs
@@ -112,7 +121,14 @@ brew install gptfdisk lld
 system `/usr/bin/make` is 3.81 and is rejected). Also `brew install nasm
 mtools cdrtools qemu llvm lld glib` — cdrtools' `mkisofs` stands in for
 `genisoimage`, and `lld` must be the same version as `llvm` or the EDK2 LTO
-link crashes. `make run_*` uses TCG + cocoa + Homebrew's EDK2 firmware there.
+link crashes. `make run_*` uses TCG + cocoa + Homebrew's EDK2 firmware there,
+and Core Audio (`-audiodev coreaudio` + `hda-output`) for sound. Homebrew's
+QEMU has no virgl (`virtio-gpu-gl-pci`), so the guest never reports a 3D GPU
+and Chromium runs without GPU acceleration (WebGL unavailable) on a Mac --
+`Docs/Others/TODO_Chromium_LinuxABI.md` §21. UTM does have virgl (ANGLE),
+but its host offers no multisample textures, so Mesa caps at ES 3.0 with
+GL_MAX_SAMPLES 1, ANGLE at ES 2.0, and Chromium (ES 3.0 required) still
+falls back to software (§23).
 `linux_runtime_stage` works but cannot run Linux binaries on the host, so it
 stages no glibc C.UTF-8 locale-archive and no gdk-pixbuf `loaders.cache`
 (and no `mime.cache` unless `update-mime-database` is installed); it logs a
@@ -137,6 +153,7 @@ the `CLANGDWARF` toolchain (`EDK2_TOOLCHAIN=`, `EDK2_TARGET=RELEASE`).
 | `make vendor_libs` | Build the vendored library (freetype) |
 | `make image` | Build the install-media UDF-bridge ISO (`Image/ImplusOS-$(ARCH)-InstallMedia.iso`) via `genisoimage -udf` |
 | `make image_livecd` | Build the LiveCD UDF-bridge ISO (`Image/ImplusOS-$(ARCH)-LiveCD.iso`) via `genisoimage -udf` |
+| `make image_livecd ARCH=arm64 LINUX_RUNTIME_TRANSLATED=0` | arm64 image without the (translated) x86_64 Linux runtime |
 | `make run_uefi_usb` | Boot the LiveCD image in QEMU via UEFI, as a USB disk |
 | `make run_uefi_cdrom` | Boot the LiveCD image in QEMU via UEFI, as a CD-ROM |
 | `make run_bios_cdrom` | Boot the LiveCD image in QEMU via legacy BIOS (x86_64 only) |
@@ -194,10 +211,25 @@ once to produce the EFI binaries).
   R10, R8, R9`); arm64 `SVC #0` (num in `X8`; args `X0`–`X5`). Numbers in
   `Kernel/Core/syscall/Syscall_Main.h`; dispatch in `Syscall_Dispatch.c`.
 - **Foreign ABIs**: `Kernel/Compat/` registers per-ABI syscall-number
-  translators via `compat_registry`. `Kernel/Compat/Linux/` implements the Linux
-  x86_64 ABI; a binary is routed there when `ELF_Loader.c` sees
-  `EI_OSABI == ELFOSABI_LINUX`. `Syscall_Dispatch.c` contains no ABI-specific
-  identifiers.
+  translators via `compat_registry`. `Kernel/Compat/Linux/` implements Linux
+  once in the x86_64 numbering (`Syscall_LinuxCompat.c`); `i386/` (x86_64
+  kernel, `int $0x80`, ILP32) and `arm64/` (arm64 kernel, generic numbering)
+  are front ends that translate into it through `linux_syscall_core()`
+  (`Linux_CompatCore.h`). `ELF_Loader.c` picks `process_t.abi_mode`
+  (`PROCESS_ABI_LINUX`, `_LINUX_I386` for ELFCLASS32 EM_386, `_LINUX_ARM64`);
+  `PROCESS_ABI_IS_LINUX()` covers all three. i386 programs live in a reserved
+  low window (`OS_CONFIG_LINUX_I386_WINDOW_*`, 256 MiB of RAM withheld at
+  boot). Details: `Docs/Architecture/Compat_Layers.md` §6.
+- **Foreign CPUs**: exec/spawn of an ELFCLASS64 Linux binary for the other
+  CPU loads `OS_CONFIG_TRANSLATOR_DIR/<x86_64|aarch64>.ELF` instead
+  (`process_foreign_translator()` in `ProcessManager_Create.c`), with argv
+  `{translator, "-0", argv0, path, argv1..}`; the process keeps the guest's
+  name and exe path. The translator is a static host-Linux-ABI program that
+  loads and runs the guest: x86_64 guests on arm64 through a JIT to AArch64
+  code (`guest/x86_64/x86_jit.c`; it needs EL0 cache maintenance, which the
+  arm64 kernel enables via `SCTLR_EL1.UCI`/`UCT`), AArch64 guests on x86_64
+  through a uop block engine. Details: `Compat_Layers.md` §7 and
+  `Userland/Application/Translator/README.md`.
 - **Error model**: kernel subsystems return `os_status_t` (int64_t); negative =
   error, mapping to errno via `os_status_to_errno()`. See
   `Kernel/include/kernel/status.h`. (Some older VFS/driver APIs still return
@@ -229,8 +261,10 @@ once to produce the EFI binaries).
 | `OS_CONFIG_PENDING_SIGNAL_MAX_PER_PROCESS` | 32 | |
 | `OS_CONFIG_LOG_FILE_MAX_BYTES` | 512 KiB | |
 | `OS_CONFIG_BOOT_FADE` | 0 | fade-to-black transition disabled |
-| `KERNEL_COW_FORK` | 1 | copy-on-write fork (needed by multi-process Chromium); `-DKERNEL_COW_FORK=0` for eager copy |
+| `KERNEL_COW_FORK` | 1 | copy-on-write fork on both architectures (needed by multi-process Chromium); `-DKERNEL_COW_FORK=0` for eager copy |
 | `OS_CONFIG_NET_IPV4_ADDR` / `MASK` / `GATEWAY` | 10.0.2.15 / 255.255.255.0 / 10.0.2.2 | QEMU user-net defaults |
+| `OS_CONFIG_LINUX_I386_WINDOW_BASE` / `_SIZE` | 0x08000000 / 256 MiB | x86_64: address window for Linux i386 programs; its RAM is withheld at boot (0 disables) |
+| `OS_CONFIG_TRANSLATOR_DIR` | `/Userland/Translator` | where exec/spawn look for `<isa>.ELF` to run a Linux program for the other CPU (`""` disables) |
 
 ### Process Capabilities (`Kernel/Core/process/ProcessManager.h`)
 
@@ -262,7 +296,9 @@ once to produce the EFI binaries).
   downloads — to the editor or file manager), and `com.ImplusOS.linuxapp` (the
   generic X11 host: takes `[Title|][WxH|]/usr/bin/prog --flags` and runs any
   foreign program through `Userland/API/XSession.c`). Each has its own
-  `Makefile` that pulls in `Userland/Source/AppCommon.mk`.
+  `Makefile` that pulls in `Userland/Source/AppCommon.mk` -- except
+  `Translator`, a static host-Linux-ABI program with its own build (staged
+  as `/Userland/Translator/x86_64.ELF` on arm64, `aarch64.ELF` on x86_64).
 - **Application list**: the window manager builds the Start menu and the
   desktop icons from freedesktop.org desktop entries — `/var/System/applications`,
   `.../windowmanager/Resource/Applications`, `/usr/local/share/applications`,

@@ -167,11 +167,21 @@ define MASTER_UDF_ISO
 endef
 
 # External Linux runtime (glibc dynamic linker + .so closure + C.UTF-8) staged
-# for external Linux-ABI binaries such as Chromium. x86_64 only; always bundled
-# (Docs/Others/TODO_glibc_Port.md §7-3 -- no opt-out). Build rules live in
-# Vendor/LinuxRuntime/Makefile; this file only delegates.
+# for external Linux-ABI binaries such as Chromium. The packages are x86_64;
+# always bundled on x86_64 (Docs/Others/TODO_glibc_Port.md §7-3 -- no
+# opt-out). On arm64 the same x86_64 runtime is bundled too, and its programs
+# run under the translator (Userland/Application/Translator,
+# Docs/Architecture/Compat_Layers.md §7); LINUX_RUNTIME_TRANSLATED=0 leaves
+# it out of the arm64 image. Build rules live in Vendor/LinuxRuntime/Makefile;
+# this file only delegates.
 LINUX_RUNTIME_DIR   := Vendor/LinuxRuntime
-LINUX_RUNTIME_STAGE := $(BUILD_DIR)/LinuxRuntime/stage
+LINUX_RUNTIME_TRANSLATED ?= 1
+LINUX_RUNTIME_STAGE := $(BUILD_ROOT)/x86_64/LinuxRuntime/stage
+ifeq ($(ARCH),x86_64)
+LINUX_RUNTIME_SHIP := 1
+else
+LINUX_RUNTIME_SHIP := $(LINUX_RUNTIME_TRANSLATED)
+endif
 # Size of the LiveCD ESP (esp.img inside the ISO, and its copy on the USB
 # GPT). It is formatted FAT32 (mformat -F), and UEFI FAT drivers decide the
 # FAT type from the cluster count: below 65525 clusters (~33 MiB with
@@ -489,9 +499,11 @@ vendor_libs:
 	@$(MAKE) -C Vendor/Library ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) TOP_BUILD_DIR="$(abspath $(BUILD_DIR))"
 
 # Stage the external Linux runtime (fetch pinned Debian .debs, extract .so
-# closure, generate C.UTF-8) into $(LINUX_RUNTIME_STAGE). x86_64 only; on
-# arm64 it is a no-op (Chromium/chrome is an x86_64 binary). The first run
-# needs network; afterwards Vendor/LinuxRuntime/cache/ satisfies it offline.
+# closure, generate C.UTF-8) into $(LINUX_RUNTIME_STAGE). Always the x86_64
+# runtime: on arm64 it is staged for the translator (a no-op with
+# LINUX_RUNTIME_TRANSLATED=0), into the same directory an x86_64 build uses.
+# The first run needs network; afterwards Vendor/LinuxRuntime/cache/
+# satisfies it offline.
 # gtkdata: GTK3 demo runtime data;  xorgdata: Xorg + Mesa-DRI + xkb + fonts +
 # xorg.conf for the Doom (Method A) X path;  fastfetchdata: /usr/bin/fastfetch
 # plus its presets;  desktopdata: the .desktop entries and application icons;
@@ -500,12 +512,12 @@ vendor_libs:
 # application list from.
 # x11data: Xlib's locale data and the misc fonts' fonts.dir.
 linux_runtime_stage:
-ifeq ($(ARCH),x86_64)
+ifeq ($(LINUX_RUNTIME_SHIP),1)
 	@$(MAKE) -C $(LINUX_RUNTIME_DIR) stage gtkdata xorgdata fastfetchdata xtermdata x11data alsadata desktopdata winedata locale \
 		STAGE_DIR="$(abspath $(LINUX_RUNTIME_STAGE))" \
 		CHROME_BIN="$(abspath Userland/Application/Chromium/Resource/chrome)"
 else
-	@echo "linux_runtime_stage: skipped for ARCH=$(ARCH)"
+	@echo "linux_runtime_stage: skipped (LINUX_RUNTIME_TRANSLATED=0)"
 endif
 
 kernel:
@@ -628,7 +640,7 @@ install_payload: all linux_runtime_stage
 		cp -a "$(BUILD_DIR)/Userland/$$name" "$(INSTALL_PAYLOAD_ROOT)/Userland/"; \
 	done
 	@cp -a $(BOOT_RESOURCE_DIR) $(INSTALL_PAYLOAD_ROOT)/BootManager/
-	@if [ "$(ARCH)" = "x86_64" ]; then \
+	@if [ "$(LINUX_RUNTIME_SHIP)" = "1" ]; then \
 		cp -a $(LINUX_RUNTIME_STAGE)/lib64 $(INSTALL_PAYLOAD_ROOT)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(INSTALL_PAYLOAD_ROOT)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(INSTALL_PAYLOAD_ROOT)/; \
@@ -759,7 +771,7 @@ image_livecd: all linux_runtime_stage
 		name=$$(basename "$$dir"); \
 		cp -a "$(BUILD_DIR)/Userland/$$name" "$(IMAGE_STAGE_DIR)/Userland/"; \
 	done
-	@if [ "$(ARCH)" = "x86_64" ]; then \
+	@if [ "$(LINUX_RUNTIME_SHIP)" = "1" ]; then \
 		cp -a $(LINUX_RUNTIME_STAGE)/lib64 $(IMAGE_STAGE_DIR)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/usr   $(IMAGE_STAGE_DIR)/; \
 		cp -a $(LINUX_RUNTIME_STAGE)/etc   $(IMAGE_STAGE_DIR)/; \
@@ -833,11 +845,26 @@ QEMU_ACCEL ?= -accel hvf -cpu host -machine kernel-irqchip=off
 else
 QEMU_ACCEL ?= -accel hvf -cpu host
 endif
+else ifeq ($(ARCH),x86_64)
+# -adx: with ADX in the guest's CPUID, BoringSSL's ADCX/ADOX code paths
+# (bignum, X25519) come out wrong under TCG on this setup (QEMU 11.1 on
+# Apple silicon), so every HTTPS connection Chromium makes fails
+# (ERR_SSL_PROTOCOL_ERROR) while plain HTTP works. Without ADX it falls
+# back to MULQ/ADC code, which TCG gets right. KVM is not affected.
+QEMU_ACCEL ?= -accel tcg,thread=multi -cpu max,-adx
 else
 QEMU_ACCEL ?= -accel tcg,thread=multi -cpu max
 endif
 QEMU_DISPLAY ?= cocoa
 QEMU_GPU ?= none
+# Name the host backend explicitly: Core Audio is output-only in QEMU, so the
+# hda-duplex codec used elsewhere logs "Can not open `adc' (no host audio
+# driver)" at start-up, which reads as if sound were broken. hda-output is
+# the same codec without the input pin.
+QEMU_AUDIO_DEVICES ?= \
+	-audiodev coreaudio,id=snd0 \
+	-device ich9-intel-hda \
+	-device hda-output,audiodev=snd0
 else
 QEMU_ACCEL ?= -cpu host -enable-kvm
 endif
@@ -861,7 +888,7 @@ else ifeq ($(ARCH),arm64)
 # The virt machine has no default display adapter: without one there is no
 # GOP framebuffer and the boot manager has nothing to draw on. ramfb is the
 # plain framebuffer AAVMF publishes as GOP and the kernel takes over as is.
-QEMU_GPU_DEVICES := -device ramfb
+QEMU_GPU_DEVICES := -device virtio-gpu-pci
 else
 QEMU_GPU_DEVICES :=
 endif
