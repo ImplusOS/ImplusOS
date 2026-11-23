@@ -119,7 +119,7 @@ brew install gptfdisk lld
 
 **macOS hosts**: run the build with `gmake` (`brew install make`; the
 system `/usr/bin/make` is 3.81 and is rejected). Also `brew install nasm
-mtools cdrtools qemu llvm lld glib` — cdrtools' `mkisofs` stands in for
+mtools cdrtools qemu llvm lld glib shared-mime-info` — cdrtools' `mkisofs` stands in for
 `genisoimage`, and `lld` must be the same version as `llvm` or the EDK2 LTO
 link crashes. `make run_*` uses TCG + cocoa + Homebrew's EDK2 firmware there,
 and Core Audio (`-audiodev coreaudio` + `hda-output`) for sound. Homebrew's
@@ -135,7 +135,12 @@ arm64 `run_*` use it with `QEMU_GPU=virgl` (`virtio-gpu-gl-pci`,
 `linux_runtime_stage` works but cannot run Linux binaries on the host, so it
 stages no glibc C.UTF-8 locale-archive and no gdk-pixbuf `loaders.cache`
 (and no `mime.cache` unless `update-mime-database` is installed); it logs a
-WARN for each.
+WARN for each. `mime.cache` is not optional: without it gdk-pixbuf cannot
+tell a PNG from anything else and every GTK3 program (gtk3-demo,
+gtk3-widget-factory, gtk3-icon-browser) aborts on its first icon --
+Homebrew's `shared-mime-info` provides the `update-mime-database` the
+staging falls back to. (PNG/JPEG are built into Debian's gdk-pixbuf, so the
+missing `loaders.cache` only costs the rarer formats.)
 
 Building the UEFI EFI binaries additionally needs a checkout of
 [EDK2](https://github.com/tianocore/edk2) at `$HOME/edk2` (override with
